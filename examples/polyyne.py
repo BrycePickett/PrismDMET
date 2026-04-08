@@ -20,6 +20,7 @@
 import sys
 sys.path.append('../src')
 import local_integrals, dmet, qcdmet_paths
+from dmet import make_fragments
 from pyscf import gto, scf, mp
 from pyscf.cc import ccsd
 import numpy as np
@@ -70,20 +71,16 @@ for alpha in np.arange(0.88, 1.13, 0.02):
     myInts = local_integrals.localintegrals( mf, list(range( mol.nao_nr())), 'meta_lowdin' )
     myInts.molden( 'polyyne-loc.molden' )
 
-    atoms_per_imp = 4 # Impurity size counted in number of atoms
-    assert ( nat % atoms_per_imp == 0 )
-    orbs_per_imp = myInts.Norbs * atoms_per_imp / nat
+    # Build fragments with the helper: 4 atoms per impurity
+    atoms_per_imp = 4
+    atom_groups = [ list(range(i, i+atoms_per_imp)) for i in range(0, nat, atoms_per_imp) ]
+    impurityClusters = make_fragments( mol, myInts, atom_groups )
 
-    impurityClusters = []
-    for cluster in range( nat // atoms_per_imp ):
-        impurities = np.zeros( [ myInts.Norbs ], dtype=int )
-        for orb in range( int(orbs_per_imp) ):
-            impurities[ int(orbs_per_imp)*cluster + orb ] = 1
-        impurityClusters.append( impurities )
     isTranslationInvariant = False # Both in meta_lowdin (due to px, py) and Boys TI is not OK
     method = 'CC'
     SCmethod = 'NONE' #Don't do it self-consistently
-    theDMET = dmet.dmet( myInts, impurityClusters, isTranslationInvariant, method, SCmethod )
-    theDMET.doselfconsistent()
+    theDMET = dmet.dmet( myInts, impurityClusters, isTranslationInvariant,
+                         method=method, SCmethod=SCmethod )
+    theDMET.selfconsistent()
     #theDMET.dump_bath_orbs( 'polyyne-bath.molden' )
 

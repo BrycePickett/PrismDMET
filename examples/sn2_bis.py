@@ -22,10 +22,11 @@
 import sys
 sys.path.append('../src')
 import local_integrals, dmet, qcdmet_paths
+from dmet import make_fragments
 from pyscf import gto, scf, symm
 from pyscf.cc import ccsd
 import numpy as np
-import sn2_struct_bis
+import sn2_struct_bis as sn2_structures_bis
 
 #############
 #   Input   #
@@ -42,7 +43,7 @@ casci_energy_formula = True         # CASCI or DMET energy formula
 #######################
 thebasis1 = 'cc-pvdz'       # Basis set for H and C
 thebasis2 = 'aug-cc-pvdz'   # Basis set for Cl and Br
-mol = sn2_structures.structure( thestructure, thebasis1, thebasis2 )
+mol = sn2_structures_bis.structure( thestructure, thebasis1, thebasis2 )
 mf = scf.RHF( mol )
 mf.verbose = 4
 mf.scf()
@@ -62,46 +63,39 @@ if ( False ):
     print("ECCSD for structure", thestructure, "=", ECCSD)
     
 if ( True ):
-    # myInts = local_integrals.localintegrals( mf, range( mol.nao_nr() ), 'boys', localization_threshold=1e-5 )
-    # myInts = local_integrals.localintegrals( mf, range( mol.nao_nr() ), 'meta_lowdin' )
     myInts = local_integrals.localintegrals( mf, list(range( mol.nao_nr())), 'iao' )
     myInts.molden( 'sn2-loc.molden' )
     
-    unit_sizes = None
-    if (( thebasis1 == 'cc-pvdz' ) and ( thebasis2 == 'aug-cc-pvdz' )):
-        unit_sizes = np.array([ 87, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 29 ]) # ClBr, 11xCH2, CH3 (356 orbs total)
-    assert( np.sum( unit_sizes ) == mol.nao_nr() )
+    # Define physical units by atom index for sn2_bis (Cl, Br, C12H25 chain): 
+    # Unit 0: (C, H, H, Cl, Br) -> Atoms [0,1,2,3,4]
+    # Units 1-10: (C, H, H) 
+    # Unit 11: (C, H, H, H)
+    atom_units = [ [0,1,2,3,4] ] + [ [5+3*i, 6+3*i, 7+3*i] for i in range(10) ] + [ [35, 36, 37, 38] ]
 
     for carbons_in_cluster in cluster_sizes:
-        impurityClusters = []
         if ( casci_energy_formula ): # Do only 1 impurity at the edge
-            num_orb_in_imp = np.sum( unit_sizes[ 0 : carbons_in_cluster ] )
-            impurity_orbitals = np.zeros( [ mol.nao_nr() ], dtype=int )
-            impurity_orbitals[ 0 : num_orb_in_imp ] = 1
-            impurityClusters.append( impurity_orbitals )
-        else: # Partition
-            atoms_passed = 0
-            jump = 0
-            while ( atoms_passed < len( unit_sizes ) ):
-                num_carb_in_imp = min( carbons_in_cluster, len( unit_sizes ) - atoms_passed )
-                num_orb_in_imp = np.sum( unit_sizes[ atoms_passed : atoms_passed + num_carb_in_imp ] )
-                impurity_orbitals = np.zeros( [ mol.nao_nr() ], dtype=int )
-                if ( single_impurity and atoms_passed > 0 ):
-                    impurity_orbitals[ jump : jump + num_orb_in_imp ] = -1
-                else:
-                    impurity_orbitals[ jump : jump + num_orb_in_imp ] = 1
-                impurityClusters.append( impurity_orbitals )
-                atoms_passed += num_carb_in_imp
-                jump += num_orb_in_imp
+            atom_groups = [ [item for sub in atom_units[0:carbons_in_cluster] for item in sub] ]
+        else: # Partition the whole system
+            atom_groups = []
+            for i in range(0, len(atom_units), carbons_in_cluster):
+                group = [item for sub in atom_units[i : i+carbons_in_cluster] for item in sub]
+                atom_groups.append(group)
+        
+        impurityClusters = make_fragments( mol, myInts, atom_groups )
 
-        theDMET = dmet.dmet( myInts, impurityClusters, isTranslationInvariant=False, method='CC', SCmethod='NONE' )
-        if ( casci_energy_formula == True ):
-            theDMET.CC_E_TYPE = 'CASCI'
+        # Apply freezing (RHF solver) for non-edge impurities if using single_impurity partitioning
+        if ( not casci_energy_formula and single_impurity ):
+            for i in range(1, len(impurityClusters)):
+                impurityClusters[i] *= -1
+
+        theDMET = dmet.dmet( myInts, impurityClusters, isTranslationInvariant=False, 
+                             method='CC', SCmethod='NONE',
+                             CC_E_TYPE='CASCI' if casci_energy_formula else 'CCSD' )
+
         if ( one_bath_orb_per_bond == True ):
             theDMET.BATH_ORBS = 2 * np.ones( [ len(impurityClusters) ], dtype=int )
             theDMET.BATH_ORBS[ 0 ] = 1
             theDMET.BATH_ORBS[ len(impurityClusters) - 1 ] = 1
-        the_energy = theDMET.doselfconsistent()
+            
+        the_energy = theDMET.selfconsistent()
         print("######  DMET(", carbons_in_cluster,"C , CCSD ) /", thebasis1, "/", thebasis2, " =", the_energy)
-
-    

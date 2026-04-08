@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.1.0] - 2026-04-07
+### Added
+- New `make_fragments` function in `dmet.py` for atom-based fragment definition.
+- New `utils.py` module with `silent_stdout` for output suppression.
+- New `oneshot()` method in `dmet.py` for one-shot DMET calculations.
+
+### Changed
+- Renamed `doselfconsistent()` to `selfconsistent()`
+- Post-init attributes (`doDET`, `SCmethod`, `print_u`, etc.) are now keyword arguments in `dmet.__init__`.
+- Solvers use `silent_stdout` for safer execution.
+- Uptdated example scripts 
+
+
 ## [1.0.0] - 2026-03-28
 ### Added
 - New `FCI` solver using PySCF's `pyscf.fci` module

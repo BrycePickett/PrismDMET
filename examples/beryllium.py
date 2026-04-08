@@ -20,6 +20,7 @@
 import sys
 sys.path.append('../src')
 import local_integrals, dmet, ring_helper, qcdmet_paths
+from dmet import make_fragments
 from pyscf import gto, scf
 from pyscf.cc import ccsd
 import numpy as np
@@ -83,23 +84,19 @@ for bl in thecases:
             myInts.TI_OK = True
         myInts.molden( 'Be-loc.molden' )
 
-        atoms_per_imp = 1
-        assert ( nat % atoms_per_imp == 0 )
-        orbs_per_imp = myInts.Norbs * atoms_per_imp / nat
+        # Build fragments with the helper: 1 atom per impurity
+        atom_groups = [ [i] for i in range(nat) ]
+        impurityClusters = make_fragments( mol, myInts, atom_groups )
 
-        impurityClusters = []
-        for cluster in range( nat // atoms_per_imp ):
-            impurities = np.zeros( [ myInts.Norbs ], dtype=int )
-            for orb in range( int(orbs_per_imp) ):
-                impurities[ int(orbs_per_imp)*cluster + orb ] = 1
-            impurityClusters.append( impurities )
         if (( localization_type == 'meta_lowdin' ) or ( localization_type == 'iao' )):
             isTranslationInvariant = True
         else:
             isTranslationInvariant = False # Boys TI is not OK
+
         method = 'CC'
         SCmethod = 'NONE' # NONE or LSTSQ for no self-consistency or least-squares fitting of the u-matrix, respectively
-        theDMET = dmet.dmet( myInts, impurityClusters, isTranslationInvariant, method, SCmethod )
-        theDMET.doselfconsistent()
+        theDMET = dmet.dmet( myInts, impurityClusters, isTranslationInvariant,
+                             method=method, SCmethod=SCmethod )
+        theDMET.selfconsistent()
         #theDMET.dump_bath_orbs( 'Be-bathorbs.molden' )
 

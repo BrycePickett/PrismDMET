@@ -25,30 +25,33 @@ import time
 
 class dmet:
 
-    def __init__( self, theInts, impurityClusters, isTranslationInvariant, method='ED', SCmethod='LSTSQ', fitImpBath=True, use_constrained_opt=False ):
-    
+    def __init__( self, theInts, impurityClusters, isTranslationInvariant, method='ED',
+                  SCmethod='LSTSQ', fitImpBath=True, use_constrained_opt=False,
+                  doDET=False, doDET_NO=False, CC_E_TYPE='LAMBDA',
+                  print_u=True, print_rdm=True ):
+
         if ( isTranslationInvariant == True ):
             assert( theInts.TI_OK == True )
-        
+
         assert (( method == 'ED' ) or ( method == 'FCI' ) or ( method == 'DMRG' ) or ( method == 'DMRG-CheMPS2' ) or ( method == 'CC' ) or ( method == 'MP2' ) or ( method == 'RHF' ))
         assert (( SCmethod == 'LSTSQ' ) or ( SCmethod == 'BFGS' ) or ( SCmethod == 'NONE' ))
-        
+
         self.ints       = theInts
         self.Norb       = self.ints.Norbs
         self.impClust   = impurityClusters
         self.umat       = np.zeros([ self.Norb, self.Norb ], dtype=float)
         self.relaxation = 0.0
-        
+
         self.NI_hack    = False
         self.method     = method
         self.doSCF      = False
         self.TransInv   = isTranslationInvariant
         self.SCmethod   = SCmethod
-        self.CC_E_TYPE  = 'LAMBDA' #'CASCI'
+        self.CC_E_TYPE  = CC_E_TYPE
         self.BATH_ORBS  = None
         self.fitImpBath = fitImpBath
-        self.doDET      = False
-        self.doDET_NO   = False
+        self.doDET      = doDET
+        self.doDET_NO   = doDET_NO
         self.NOrotation = None
         self.altcostfunc = use_constrained_opt
 
@@ -58,25 +61,25 @@ class dmet:
             assert (self.fitImpBath == False)
             assert (self.doDET == False)
             assert (self.SCmethod == 'BFGS' or self.SCmethod == 'NONE')
-        
+
         if (( self.method == 'CC' ) and ( self.CC_E_TYPE == 'CASCI' )):
             assert( len( self.impClust ) == 1 )
-        
+
         if ( self.doDET == True ):
             # Cfr Bulik, PRB 89, 035140 (2014)
             self.fitImpBath = False
             if ( self.doDET_NO == True ):
                 self.NOvecs = None
                 self.NOdiag = None
-        
-        self.print_u   = True
-        self.print_rdm = True
-        
+
+        self.print_u   = print_u
+        self.print_rdm = print_rdm
+
         allOne = self.testclusters()
         if ( allOne == False ): # One or more impurities which do not cover the entire system
             assert( self.TransInv == False ) # Make sure that you don't work translational invariant
             # Note on working with impurities which do no tile the entire system: they should be the first orbitals in the Hamiltonian!
-        
+
         self.energy   = 0.0
         self.imp_1RDM = []
         self.dmetOrbs = []
@@ -84,12 +87,12 @@ class dmet:
         self.mu_imp   = 0.0
         self.mask     = self.make_mask()
         self.helper   = qcdmet_helper.qcdmethelper( self.ints, self.makelist_H1(), self.altcostfunc, self.minFunc )
-        
+
         self.time_ed  = 0.0
         self.time_cf  = 0.0
         self.time_func= 0.0
         self.time_grad= 0.0
-        
+
         np.set_printoptions(precision=3, linewidth=160)
         
     def testclusters( self ):
@@ -599,7 +602,7 @@ class dmet:
         print("      (chemical potential , number of electrons) = (", chempot_imp, "," , Nelec_dmet ,")")
         return Nelec_dmet - Nelec_target
 
-    def doselfconsistent( self ):
+    def selfconsistent( self ):
     
         iteration = 0
         u_diff = 1.0
@@ -673,7 +676,13 @@ class dmet:
         print("Time dmet cf =", self.time_cf)
         
         return self.energy
-        
+
+    def doselfconsistent(self):
+        """Deprecated alias for selfconsistent()"""
+        from warnings import warn
+        warn("'doselfconsistent()' is deprecated; use 'selfconsistent()'", DeprecationWarning, stacklevel=2)
+        return self.selfconsistent()
+
     def print_umat( self ):
     
         print("The u-matrix =")
@@ -709,4 +718,91 @@ class dmet:
     
     def onedm_solution_rhf(self):
         return self.helper.construct1RDM_loc( self.doSCF, self.umat )
-    
+
+    def oneshot( self, mu_imp=0.0, optimize_mu=False ):
+        """
+        Perform a single DMET active space calculation.
+
+        Parameters
+        ----------
+        mu_imp : float
+            Chemical potential applied to the impurity orbitals. Default 0.0.
+        optimize_mu : bool
+            If True, optimize the chemical potential to match the target
+            number of electrons. If False, use the fixed mu_imp.
+
+        Returns
+        -------
+        energy : float
+            The correlated energy from the active space solvers.
+        """
+        if optimize_mu:
+            from scipy import optimize
+            try:
+                self.mu_imp = optimize.newton( self.numeleccostfunction, mu_imp )
+            except RuntimeError:
+                print("Warning: Newton solver for mu_imp did not converge. Using last value.")
+        else:
+            self.mu_imp = mu_imp
+            self.doexact( self.mu_imp )
+
+        return self.energy
+
+
+# ---------------------------------------------------------------------------
+# Standalone helper: fragment construction by atom groups
+# ---------------------------------------------------------------------------
+
+def make_fragments( mol, myInts, atom_groups ):
+    '''
+    Build the impurityClusters list required by dmet.__init__ by specifying
+    groups of atom indices rather than raw orbital indices.
+
+    Parameters
+    ----------
+    mol : pyscf.gto.Mole
+        The PySCF Mole object used for the mean-field calculation.
+    myInts : local_integrals.localintegrals
+        The localintegrals object for the system.
+    atom_groups : list of lists
+        Each sub-list contains the integer indices (0-based) of the atoms
+        that form one impurity fragment. Every atom must appear in exactly
+        one group; all atoms must be covered.
+
+        Examples
+        --------
+        # 10-atom H ring, 2 atoms per impurity:
+        atom_groups = [[0,1],[2,3],[4,5],[6,7],[8,9]]
+
+        # Single large impurity containing atoms 0, 2, and 4:
+        atom_groups = [[0,2,4]]
+
+    Returns
+    -------
+    impurityClusters : list of np.ndarray
+        List of integer arrays of length Norbs, with 1 where the orbital
+        belongs to the impurity and 0 elsewhere.
+
+    Notes
+    -----
+    Uses pyscf.gto.Mole.aoslice_by_atom() to map atom indices to AO ranges,
+    making the mapping robust across all basis sets.
+    '''
+    ao_slices = mol.aoslice_by_atom()  # shape (natm, 4): (shl0, shl1, ao0, ao1)
+    Norbs = myInts.Norbs
+    impurityClusters = []
+    covered = np.zeros(Norbs, dtype=int)
+
+    for group in atom_groups:
+        mask = np.zeros(Norbs, dtype=int)
+        for atom_idx in group:
+            ao_start = ao_slices[atom_idx, 2]
+            ao_stop  = ao_slices[atom_idx, 3]
+            mask[ao_start:ao_stop] = 1
+        impurityClusters.append(mask)
+        covered += mask
+
+    if not np.all(covered >= 0):
+        raise ValueError("make_fragments: overlapping atom groups detected.")
+
+    return impurityClusters

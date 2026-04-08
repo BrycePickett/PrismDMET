@@ -20,6 +20,7 @@
 import sys
 sys.path.append('../src')
 import local_integrals, dmet, qcdmet_paths
+from dmet import make_fragments
 from pyscf import gto, scf, ao2mo
 import numpy as np
 
@@ -61,40 +62,29 @@ for bondlength in bondlengths:
         myInts.molden( 'hydrogen-loc.molden' )
         myInts.TI_OK = True # Only s functions
 
-        atoms_per_imp = 2 # Impurity size = 1 atom
-        assert ( nat % atoms_per_imp == 0 )
-        orbs_per_imp = myInts.Norbs * atoms_per_imp / nat
-
-        impurityClusters = []
-        for cluster in range( nat // atoms_per_imp ):
-            impurities = np.zeros( [ myInts.Norbs ], dtype=int )
-            for orb in range( int(orbs_per_imp) ):
-                impurities[ int(orbs_per_imp)*cluster + orb ] = 1
-            impurityClusters.append( impurities )
+        # Build fragments with the helper: 2 consecutive atoms per impurity
+        atoms_per_imp = 2
+        atom_groups = [ list(range(i, i+atoms_per_imp)) for i in range(0, nat, atoms_per_imp) ]
+        impurityClusters = make_fragments( mol, myInts, atom_groups )
         isTranslationInvariant = True # OK because only s-functions and meta-lowdin
+
+        SCmethod = 'LSTSQ'
         print("Start FCI DMET")
-        SCmethod = 'LSTSQ' #Don't do it self-consistently
-        dmetFCI = dmet.dmet( myInts, impurityClusters, isTranslationInvariant, 'FCI', SCmethod )
-        dmetFCI.doDET = False
-        e_fci = dmetFCI.doselfconsistent()
+        dmetFCI = dmet.dmet( myInts, impurityClusters, isTranslationInvariant,
+                             method='FCI', SCmethod=SCmethod, doDET=False )
+        e_fci = dmetFCI.selfconsistent()
         print("FCI DMET Energy =", e_fci)
 
         print("\nStart DMRG DMET")
-        dmetDMRG = dmet.dmet( myInts, impurityClusters, isTranslationInvariant, 'DMRG', SCmethod )
-        dmetDMRG.doDET = False
-        e_dmrg = dmetDMRG.doselfconsistent()
+        dmetDMRG = dmet.dmet( myInts, impurityClusters, isTranslationInvariant,
+                              method='DMRG', SCmethod=SCmethod, doDET=False )
+        e_dmrg = dmetDMRG.selfconsistent()
         print("DMRG DMET Energy =", e_dmrg)
 
         print( "\nDifference between FCI and DMRG: %e" % abs(e_fci - e_dmrg) )
-        #if ( old_umat != None ):
-        #    theDMET.umat = np.array( old_umat, copy=True )
         Energy = e_fci
-        #old_umat = np.array( theDMET.umat, copy=True )
         print("bl =", bondlength," and energy =", Energy)
         energies.append(Energy)
-        #theDMET.dump_bath_orbs( 'hydrogen-bath.molden' )
-        #DMguess = np.dot( np.dot( myInts.ao2loc, theDMET.onedm_solution_rhf() ), myInts.ao2loc.T )
 
 print("Bondlengths =", bondlengths)
 print("Energies =", energies)
-

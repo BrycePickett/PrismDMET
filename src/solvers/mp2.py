@@ -21,74 +21,59 @@ import numpy as np
 import ctypes
 import rhf
 import local_integrals
-import os  # for dev/null
-import sys # for sys.stdout
 import qcdmet_paths
 from pyscf import gto, scf, ao2mo, mp
+from utils import silent_stdout, nullcontext
 
 def solve( CONST, OEI, FOCK, TEI, Norb, Nel, Nimp, DMguessRHF, chempot_imp=0.0, printoutput=True ):
 
-    # Killing output if necessary
-    if ( printoutput==False ):
-        sys.stdout.flush()
-        old_stdout = sys.stdout.fileno()
-        new_stdout = os.dup(old_stdout)
-        devnull = os.open('/dev/null', os.O_WRONLY)
-        os.dup2(devnull, old_stdout)
-        os.close(devnull)
+    ctx = silent_stdout() if not printoutput else nullcontext()
 
     # Augment the FOCK operator with the chemical potential
     FOCKcopy = FOCK.copy()
     if (chempot_imp != 0.0):
         for orb in range(Nimp):
             FOCKcopy[ orb, orb ] -= chempot_imp
-    
-    # Get the RHF solution
-    assert( Nel % 2 == 0 )
-    mol = gto.Mole()
-    mol.build(verbose=0)
-    mol.atom.append(('H', (0, 0, 0)))
-    mol.nelectron = Nel
-    mf = scf.RHF( mol )
-    mf.get_hcore = lambda *args: FOCKcopy
-    mf.get_ovlp = lambda *args: np.eye( Norb )
-    mf._eri = ao2mo.restore(8, TEI, Norb)
-    mf.scf( DMguessRHF )
-    DMrhf = np.dot(np.dot( mf.mo_coeff, np.diag( mf.mo_occ )), mf.mo_coeff.T )
-    Erhf  = CONST + np.einsum('ij,ij->', FOCKcopy, DMrhf)
-    Erhf += 0.5 * np.einsum('ijkl,ij,kl->', TEI, DMrhf, DMrhf) - 0.25 * np.einsum('ijkl,ik,jl->', TEI, DMrhf, DMrhf)
-    numPairs = Nel // 2
-    print("mp2::solve : RHF homo-lumo gap =", mf.mo_energy[numPairs] - mf.mo_energy[numPairs-1])
-    
-    # Get the MP2 solution
-    myMP2 = mp.MP2( mf )
-    E_MP2, T_MP2 = myMP2.kernel()
-    OneRDM_mo = np.zeros( [Norb, Norb], dtype=float )
-    #OneRDM_mo = myMP2.make_rdm1() --------------> Carlos his remark
-    TwoRDM_mo = myMP2.make_rdm2() # 2-RDM is stored in chemistry notation!
-    #OneRDM_mo = 0.5 * ( OneRDM_mo + OneRDM_mo.T ) # Symmetrize
-    
-    # Check that we understand what is going on
-    Etotal = Erhf + E_MP2
-    for orb1 in range(numPairs):
-        OneRDM_mo[orb1, orb1] += 2.0
-        for orb2 in range(numPairs):
-            TwoRDM_mo[orb1,orb1,orb2,orb2] += 4.0
-            TwoRDM_mo[orb1,orb2,orb1,orb2] -= 2.0
-    OneRDM_loc = np.dot(mf.mo_coeff, np.dot( OneRDM_mo, mf.mo_coeff.T ))
-    TwoRDM_loc = np.einsum('ai,ijkl->ajkl', mf.mo_coeff, TwoRDM_mo )
-    TwoRDM_loc = np.einsum('bj,ajkl->abkl', mf.mo_coeff, TwoRDM_loc)
-    TwoRDM_loc = np.einsum('ck,abkl->abcl', mf.mo_coeff, TwoRDM_loc)
-    TwoRDM_loc = np.einsum('dl,abcl->abcd', mf.mo_coeff, TwoRDM_loc)
-    Etotal2 = Erhf - 0.5 * np.einsum('ijkl,ij,kl->', TEI, DMrhf, DMrhf) + 0.25 * np.einsum('ijkl,ik,jl->', TEI, DMrhf, DMrhf) + 0.5 * np.einsum('ijkl,ijkl->', TEI, TwoRDM_loc)
-    print("Etotal  =", Etotal)
-    print("Etotal2 =", Etotal2)
-    
-    # Reviving output if necessary
-    if ( printoutput==False ):
-        sys.stdout.flush()
-        os.dup2(new_stdout, old_stdout)
-        os.close(new_stdout)
+
+    with ctx:
+        # Get the RHF solution
+        assert( Nel % 2 == 0 )
+        mol = gto.Mole()
+        mol.build(verbose=0)
+        mol.atom.append(('H', (0, 0, 0)))
+        mol.nelectron = Nel
+        mf = scf.RHF( mol )
+        mf.get_hcore = lambda *args: FOCKcopy
+        mf.get_ovlp = lambda *args: np.eye( Norb )
+        mf._eri = ao2mo.restore(8, TEI, Norb)
+        mf.scf( DMguessRHF )
+        DMrhf = np.dot(np.dot( mf.mo_coeff, np.diag( mf.mo_occ )), mf.mo_coeff.T )
+        Erhf  = CONST + np.einsum('ij,ij->', FOCKcopy, DMrhf)
+        Erhf += 0.5 * np.einsum('ijkl,ij,kl->', TEI, DMrhf, DMrhf) - 0.25 * np.einsum('ijkl,ik,jl->', TEI, DMrhf, DMrhf)
+        numPairs = Nel // 2
+        print("mp2::solve : RHF homo-lumo gap =", mf.mo_energy[numPairs] - mf.mo_energy[numPairs-1])
+
+        # Get the MP2 solution
+        myMP2 = mp.MP2( mf )
+        E_MP2, T_MP2 = myMP2.kernel()
+        OneRDM_mo = np.zeros( [Norb, Norb], dtype=float )
+        TwoRDM_mo = myMP2.make_rdm2() # 2-RDM is stored in chemistry notation!
+
+        # Reconstruct HF reference contributions
+        Etotal = Erhf + E_MP2
+        for orb1 in range(numPairs):
+            OneRDM_mo[orb1, orb1] += 2.0
+            for orb2 in range(numPairs):
+                TwoRDM_mo[orb1,orb1,orb2,orb2] += 4.0
+                TwoRDM_mo[orb1,orb2,orb1,orb2] -= 2.0
+        OneRDM_loc = np.dot(mf.mo_coeff, np.dot( OneRDM_mo, mf.mo_coeff.T ))
+        TwoRDM_loc = np.einsum('ai,ijkl->ajkl', mf.mo_coeff, TwoRDM_mo )
+        TwoRDM_loc = np.einsum('bj,ajkl->abkl', mf.mo_coeff, TwoRDM_loc)
+        TwoRDM_loc = np.einsum('ck,abkl->abcl', mf.mo_coeff, TwoRDM_loc)
+        TwoRDM_loc = np.einsum('dl,abcl->abcd', mf.mo_coeff, TwoRDM_loc)
+        Etotal2 = Erhf - 0.5 * np.einsum('ijkl,ij,kl->', TEI, DMrhf, DMrhf) + 0.25 * np.einsum('ijkl,ik,jl->', TEI, DMrhf, DMrhf) + 0.5 * np.einsum('ijkl,ijkl->', TEI, TwoRDM_loc)
+        print("Etotal  =", Etotal)
+        print("Etotal2 =", Etotal2)
     
     # To calculate the impurity energy, rescale the JK matrix with a factor 0.5 to avoid double counting: 0.5 * ( OEI + FOCK ) = OEI + 0.5 * JK
     ImpurityEnergy = CONST

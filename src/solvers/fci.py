@@ -1,18 +1,9 @@
 import numpy as np
-import os
-import sys
 import qcdmet_paths
 from pyscf import gto, scf, ao2mo, fci
+from utils import silent_stdout, nullcontext
 
 def solve( CONST, OEI, FOCK, TEI, Norb, Nel, Nimp, chempot_imp=0.0, printoutput=False ):
-
-    if ( printoutput==False ):
-        sys.stdout.flush()
-        old_stdout = sys.stdout.fileno()
-        new_stdout = os.dup(old_stdout)
-        devnull = os.open('/dev/null', os.O_WRONLY)
-        os.dup2(devnull, old_stdout)
-        os.close(devnull)
 
     FOCKcopy = FOCK.copy()
     if (chempot_imp != 0.0):
@@ -28,22 +19,19 @@ def solve( CONST, OEI, FOCK, TEI, Norb, Nel, Nimp, chempot_imp=0.0, printoutput=
     mf.get_hcore = lambda *args: FOCKcopy
     mf.get_ovlp = lambda *args: np.eye( Norb )
     mf._eri = ao2mo.restore(8, TEI, Norb)
-    mf.scf()
 
-    assert( Nel % 2 == 0 )
-    cisolver = fci.direct_spin0.FCI()
-    cisolver.verbose = 0
-    cisolver.max_cycle = 200
-    cisolver.conv_tol = 1e-12
-    EnergyFCI, FCIvector = cisolver.kernel( FOCKcopy, TEI, Norb, Nel, ecore=CONST )
-    TwoRDM = cisolver.make_rdm2( FCIvector, Norb, Nel )
+    with silent_stdout() if not printoutput else nullcontext():
+        mf.scf()
+
+        assert( Nel % 2 == 0 )
+        cisolver = fci.direct_spin0.FCI()
+        cisolver.verbose = 0
+        cisolver.max_cycle = 200
+        cisolver.conv_tol = 1e-12
+        EnergyFCI, FCIvector = cisolver.kernel( FOCKcopy, TEI, Norb, Nel, ecore=CONST )
+        TwoRDM = cisolver.make_rdm2( FCIvector, Norb, Nel )
 
     OneRDM = np.einsum( 'ijkk->ij', TwoRDM ) / ( Nel - 1 )
-
-    if ( printoutput==False ):
-        sys.stdout.flush()
-        os.dup2(new_stdout, old_stdout)
-        os.close(new_stdout)
 
     ImpurityEnergy = CONST
     ImpurityEnergy += 0.5 * np.einsum( 'ij,ij->', OneRDM[:Nimp,:], OEI[:Nimp,:] + FOCK[:Nimp,:] )

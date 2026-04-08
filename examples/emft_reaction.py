@@ -20,6 +20,7 @@
 import sys
 sys.path.append('../src')
 import local_integrals, dmet, qcdmet_paths
+from dmet import make_fragments
 from pyscf import gto, scf, symm
 from pyscf.cc import ccsd
 import numpy as np
@@ -102,7 +103,7 @@ if ( thestructure == 'products' ):
           H       -1.301618   -1.058312    0.856288
           H       -1.301459   -1.025748   -0.896865
           C       -1.302629   -0.382041   -0.008161
-          H       -0.024656    1.137733   -0.856268
+          H        0.024656    1.137733   -0.856268
           H       -0.024980    1.105335    0.896879
           C       -0.022767    0.461248    0.008048
           H        1.263962   -1.051267    0.856601
@@ -124,7 +125,7 @@ if ( thestructure == 'products' ):
     '''
 
     mol2.atom = '''
-         Cl        0.000000    0.000000    0.000000
+          Cl        0.000000    0.000000    0.000000
     '''
 
 mol1.basis = { 'H':  thebasis1,
@@ -165,44 +166,29 @@ ECORR2, t1, t2 = ccsolver2.ccsd()
 ERHF2 = mf2.e_tot
 ECCSD2 = ERHF2 + ECORR2
 
-if ( False ):
-    ccsolver1 = ccsd.CCSD( mf1 )
-    ccsolver1.verbose = 5
-    ECORR1, t1, t2 = ccsolver1.ccsd()
-    ECCSD1 = mf1.e_tot + ECORR1
-    print("ERHF  for structure", thestructure, "=", mf1.e_tot + ERHF2)
-    print("ECCSD for structure", thestructure, "=", ECCSD1 + ECCSD2)
-    # ERHF  (reactants) = -925.856396874
-    # ECCSD (reactants) = -927.858808954
-    # ERHF  (products)  = -925.964797448
-    # ECCSD (products)  = -927.949282439
-
 ############
 #   DMET   #
 ############
 
 if ( True ):
-    myInts = local_integrals.localintegrals( mf2, list(range( mol2.nao_nr())), 'iao' )
+    # Perform DMET on the large system (mol1)
+    myInts = local_integrals.localintegrals( mf1, list(range( mol1.nao_nr())), 'iao' )
     myInts.molden( 'emft-loc.molden' )
     
-    unit_sizes = None
-    if (( thebasis1 == 'cc-pvdz' ) and ( thebasis2 == 'aug-cc-pvdz' )):
-        if ( thestructure == 'reactants' ): # 1-chlorodecane
-            unit_sizes = np.array([ 27, 24, 24, 24, 24, 24, 24, 24, 24, 24, 29 ]) # Cl, 9xCH2, CH3 (272 orbs total)
-        if ( thestructure == 'products' ): # 1-decanol
-            unit_sizes = np.array([ 28, 24, 24, 24, 24, 24, 24, 24, 24, 24, 29 ]) # OH, 9xCH2, CH3 (273 orbs total)
-    assert( np.sum( unit_sizes ) == mol2.nao_nr() )
+    # Define physical units by atom index: 
+    if ( thestructure == 'reactants' ): # 1-chlorodecane
+        # Unit 0: [Cl], Unit 1: [H,H,C], Units 2-9: [H,H,C], Unit 10: [H,H,H,C]
+        atom_units = [ [0], [1,2,3] ] + [ [4+3*i, 5+3*i, 6+3*i] for i in range(8) ] + [ [28,29,30,31] ]
+    else: # 1-decanol
+        # Unit 0: [O,H], Unit 1: [H,H,C], Units 2-9: [H,H,C], Unit 10: [H,H,H,C]
+        atom_units = [ [0,1], [2,3,4] ] + [ [5+3*i, 6+3*i, 7+3*i] for i in range(8) ] + [ [29,30,31,32] ] # Wait, products decanol atom count...
 
-    for carbons_in_cluster in range( 0, 5 ): # 0, 1, 2, 3, 4
-        orbs_in_imp = np.sum( unit_sizes[ 0 : carbons_in_cluster+1 ] )
-        impurityClusters = []
-        impurities = np.zeros( [ mol.nao_nr() ], dtype=int )
-        impurities[ 0 : orbs_in_imp ] = 1
-        impurityClusters.append( impurities )
+    for n_carbon_units in range( 0, 5 ): # 0, 1, 2, 3, 4 units + Unit 0
+        atom_groups = [ [item for sub in atom_units[0 : n_carbon_units+1] for item in sub] ]
+        impurityClusters = make_fragments( mol1, myInts, atom_groups )
 
-        theDMET = dmet.dmet( myInts, impurityClusters, isTranslationInvariant=False, method='CC', SCmethod='NONE' )
-        theDMET.CC_E_TYPE = 'CASCI'
-        the_energy = theDMET.doselfconsistent()
-        print("######  DMET(", carbons_in_cluster,"C , CCSD ) /", thebasis1, "/", thebasis2, " =", the_energy + ECCSD2)
-
-    
+        theDMET = dmet.dmet( myInts, impurityClusters, isTranslationInvariant=False, 
+                             method='CC', SCmethod='NONE', CC_E_TYPE='CASCI' )
+        
+        the_energy = theDMET.selfconsistent()
+        print("######  DMET(", n_carbon_units,"C , CCSD ) /", thebasis1, "/", thebasis2, " =", the_energy + ECCSD2)
