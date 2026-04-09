@@ -28,13 +28,37 @@ class dmet:
     def __init__( self, theInts, impurityClusters, isTranslationInvariant, method='ED',
                   SCmethod='LSTSQ', fitImpBath=True, use_constrained_opt=False,
                   doDET=False, doDET_NO=False, CC_E_TYPE='LAMBDA',
-                  print_u=True, print_rdm=True ):
+                  print_u=True, print_rdm=True, eom_nroots=3,
+                  eom_type='EE-Singlet', eom_koopmans=False, eom_kwargs=None,
+                  ncas=None, nelecas=None, sa_nstates=1, sa_weights=None,
+                  casscf_kwargs=None,
+                  mf_real=None, qdnevpt2_kwargs=None, nevpt2_kwargs=None ):
 
         if ( isTranslationInvariant == True ):
             assert( theInts.TI_OK == True )
 
-        assert (( method == 'ED' ) or ( method == 'FCI' ) or ( method == 'DMRG' ) or ( method == 'DMRG-CheMPS2' ) or ( method == 'CC' ) or ( method == 'MP2' ) or ( method == 'RHF' ))
+        _valid_methods = {'ED', 'FCI', 'DMRG', 'DMRG-CheMPS2', 'CC', 'MP2', 'RHF',
+                          'EOM-CC', 'CASSCF', 'QD-NEVPT2', 'NEVPT2'}
+        assert method in _valid_methods, \
+            f"dmet: unknown method='{method}'. Valid: {sorted(_valid_methods)}"
+        if method in ('QD-NEVPT2', 'NEVPT2'):
+            if mf_real is None:
+                raise ValueError(
+                    f"method='{method}' requires mf_real: a converged RHF object on the "
+                    f"REAL physical molecule. Pass it as mf_real=mf to dmet.__init__."
+                )
+            if ncas is None or nelecas is None:
+                raise ValueError(
+                    f"method='{method}' requires ncas and nelecas (active space size)."
+                )
+        if method == 'QD-NEVPT2':
+            if sa_nstates < 2:
+                raise ValueError(
+                    "method='QD-NEVPT2' requires sa_nstates >= 2 for state-averaging."
+                )
         assert (( SCmethod == 'LSTSQ' ) or ( SCmethod == 'BFGS' ) or ( SCmethod == 'NONE' ))
+        _valid_cc_etypes = {'LAMBDA', 'LAMBDA_AMP', 'LAMBDA_ZERO', 'CASCI', 'CCSD(T)', 'CCSD(T)_RDM', 'EOM-CCSD'}
+        assert CC_E_TYPE in _valid_cc_etypes, f"dmet: unknown CC_E_TYPE='{CC_E_TYPE}'. Valid: {_valid_cc_etypes}"
 
         self.ints       = theInts
         self.Norb       = self.ints.Norbs
@@ -47,7 +71,23 @@ class dmet:
         self.doSCF      = False
         self.TransInv   = isTranslationInvariant
         self.SCmethod   = SCmethod
-        self.CC_E_TYPE  = CC_E_TYPE
+        self.CC_E_TYPE   = CC_E_TYPE
+        self.eom_nroots  = eom_nroots
+        self.eom_type    = eom_type
+        self.eom_koopmans = eom_koopmans
+        self.eom_kwargs  = eom_kwargs or {}
+        self.eom_results   = []   # populated by doexact() when method='EOM-CC'
+        self.ncas          = ncas
+        self.nelecas       = nelecas
+        self.sa_nstates    = sa_nstates
+        self.sa_weights    = sa_weights
+        self.casscf_kwargs = casscf_kwargs or {}
+        self.cas_results   = []   # populated by doexact() when method='CASSCF'
+        self.mf_real       = mf_real
+        self.qdnevpt2_kwargs   = qdnevpt2_kwargs or {}
+        self.qdnevpt2_results  = []  # populated by doexact() when method='QD-NEVPT2'
+        self.nevpt2_kwargs     = nevpt2_kwargs or {}
+        self.nevpt2_results    = []  # populated by doexact() when method='NEVPT2'
         self.BATH_ORBS  = None
         self.fitImpBath = fitImpBath
         self.doDET      = doDET
@@ -64,6 +104,14 @@ class dmet:
 
         if (( self.method == 'CC' ) and ( self.CC_E_TYPE == 'CASCI' )):
             assert( len( self.impClust ) == 1 )
+        if (( self.method == 'CC' ) and ( self.CC_E_TYPE == 'EOM-CCSD' )):
+            assert eom_nroots >= 1, "eom_nroots must be >= 1 when using CC_E_TYPE='EOM-CCSD'"
+        if self.method == 'EOM-CC':
+            from solvers.eomcc import _VALID_EOM_TYPES as _EOM_SET
+            if eom_type not in _EOM_SET:
+                raise ValueError(
+                    f"dmet: unknown eom_type='{eom_type}'. Valid: {sorted(_EOM_SET)}"
+                )
 
         if ( self.doDET == True ):
             # Cfr Bulik, PRB 89, 035140 (2014)
@@ -257,12 +305,82 @@ class dmet:
                 from solvers import cc
                 assert( Nelec_in_imp % 2 == 0 )
                 DMguessRHF = self.ints.dmet_init_guess_rhf( loc2dmet, Norb_in_imp, Nelec_in_imp// 2, numImpOrbs, chempot_imp )
-                IMP_energy, IMP_1RDM = cc.solve( 0.0, dmetOEI, dmetFOCK, dmetTEI, Norb_in_imp, Nelec_in_imp, numImpOrbs, DMguessRHF, self.CC_E_TYPE, chempot_imp )
+                IMP_energy, IMP_1RDM = cc.solve( 0.0, dmetOEI, dmetFOCK, dmetTEI, Norb_in_imp, Nelec_in_imp, numImpOrbs, DMguessRHF, self.CC_E_TYPE, chempot_imp, eom_nroots=self.eom_nroots )
             elif ( self.method == 'MP2' ):
                 from solvers import mp2
                 assert( Nelec_in_imp % 2 == 0 )
                 DMguessRHF = self.ints.dmet_init_guess_rhf( loc2dmet, Norb_in_imp, Nelec_in_imp// 2, numImpOrbs, chempot_imp )
                 IMP_energy, IMP_1RDM = mp2.solve( 0.0, dmetOEI, dmetFOCK, dmetTEI, Norb_in_imp, Nelec_in_imp, numImpOrbs, DMguessRHF, chempot_imp )
+            elif ( self.method == 'EOM-CC' ):
+                from solvers import eomcc
+                assert( Nelec_in_imp % 2 == 0 )
+                DMguessRHF = self.ints.dmet_init_guess_rhf( loc2dmet, Norb_in_imp, Nelec_in_imp// 2, numImpOrbs, chempot_imp )
+                IMP_energy, IMP_1RDM, eom_res = eomcc.solve(
+                    0.0, dmetOEI, dmetFOCK, dmetTEI, Norb_in_imp, Nelec_in_imp, numImpOrbs,
+                    DMguessRHF, chempot_imp=chempot_imp,
+                    eom_type=self.eom_type, nroots=self.eom_nroots,
+                    koopmans=self.eom_koopmans, **self.eom_kwargs
+                )
+                self.eom_results.append( eom_res )
+            elif ( self.method == 'CASSCF' ):
+                from solvers import casscf as _casscf
+                assert( Nelec_in_imp % 2 == 0 )
+                DMguessRHF = self.ints.dmet_init_guess_rhf( loc2dmet, Norb_in_imp, Nelec_in_imp// 2, numImpOrbs, chempot_imp )
+                IMP_energy, IMP_1RDM, cas_res = _casscf.solve(
+                    0.0, dmetOEI, dmetFOCK, dmetTEI, Norb_in_imp, Nelec_in_imp, numImpOrbs,
+                    DMguessRHF,
+                    ncas=self.ncas, nelecas=self.nelecas,
+                    chempot_imp=chempot_imp,
+                    sa_nstates=self.sa_nstates, sa_weights=self.sa_weights,
+                    **self.casscf_kwargs
+                )
+                self.cas_results.append( cas_res )
+            elif ( self.method == 'QD-NEVPT2' ):
+                from solvers import qdnevpt2 as _qdnevpt2
+                # QD-NEVPT2 runs on the REAL molecular integrals via Prism.
+                # The DMET embedding selects which active space to use.
+                # IMP_1RDM is taken from the SA-CASSCF optimized on the real mol.
+                e_tot_states, e_corr_states, osc, mc_real, nevpt_obj = _qdnevpt2.solve(
+                    self.mf_real,
+                    ncas=self.ncas, nelecas=self.nelecas,
+                    sa_nstates=self.sa_nstates, sa_weights=self.sa_weights,
+                    casscf_kwargs=self.casscf_kwargs,
+                    **self.qdnevpt2_kwargs
+                )
+                # Use ground-state QD-NEVPT2 energy as fragment energy
+                IMP_energy = e_tot_states[0]
+                # Build DMET 1-RDM from real-molecule SA-CASSCF for consistency
+                # (projects the real-space RDM into the local orbital basis)
+                IMP_1RDM = mc_real.make_rdm1()
+                self.qdnevpt2_results.append({
+                    'e_tot'   : e_tot_states,
+                    'e_corr'  : e_corr_states,
+                    'osc'     : osc,
+                    'mc'      : mc_real,
+                    'nevpt'   : nevpt_obj,
+                })
+            elif ( self.method == 'NEVPT2' ):
+                from solvers import nevpt2 as _nevpt2
+                e_tot_states, e_corr_states, mc_nevpt, nevpt_objs = _nevpt2.solve(
+                    self.mf_real,
+                    ncas=self.ncas, nelecas=self.nelecas,
+                    nstates=self.sa_nstates,
+                    sa_weights=self.sa_weights,
+                    casscf_kwargs=self.casscf_kwargs,
+                    **self.nevpt2_kwargs
+                )
+                IMP_energy = e_tot_states[0]
+                if hasattr(nevpt_objs[0], 'onerdm') and nevpt_objs[0].onerdm is not None:
+                    IMP_1RDM = nevpt_objs[0].onerdm
+                else:
+                    IMP_1RDM = mc_nevpt.make_rdm1()
+                self.nevpt2_results.append({
+                    'e_tot'     : e_tot_states,
+                    'e_corr'    : e_corr_states,
+                    'mc'        : mc_nevpt,
+                    'nevpt_objs': nevpt_objs,
+                })
+
             self.energy += IMP_energy
             self.imp_1RDM.append( IMP_1RDM )
             if ( self.doDET == True ) and ( self.doDET_NO == True ):
@@ -603,7 +721,21 @@ class dmet:
         return Nelec_dmet - Nelec_target
 
     def selfconsistent( self ):
-    
+
+        if self.method in ('EOM-CC', 'QD-NEVPT2', 'NEVPT2'):
+            _labels = {
+                'EOM-CC'    : ("EOM-CCSD",  "provides excited-state energies, not a ground-state u-matrix"),
+                'QD-NEVPT2' : ("QD-NEVPT2", "Prism operates on the real molecular integrals and cannot be "
+                               "embedded in the u-matrix self-consistency loop"),
+                'NEVPT2'    : ("NEVPT2",    "NEVPT2 operates on the real molecular integrals and cannot be "
+                               "embedded in the u-matrix self-consistency loop"),
+            }
+            label, reason = _labels[self.method]
+            raise RuntimeError(
+                f"method='{self.method}' is only compatible with one-shot DMET (oneshot()). "
+                f"Self-consistent DMET with {label} is not supported: {reason}."
+            )
+
         iteration = 0
         u_diff = 1.0
         convergence_threshold = 1e-5
