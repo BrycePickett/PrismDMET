@@ -44,8 +44,9 @@ class localintegrals:
         self.the_mf  = the_mf
         self.fullEhf = the_mf.e_tot
         self.fullDMao   = np.dot(np.dot(the_mf.mo_coeff, np.diag(the_mf.mo_occ)), the_mf.mo_coeff.T)
-        self.fullJKao   = scf.hf.get_veff(self.mol, self.fullDMao, 0, 0, 1)
-        self.fullFOCKao = self.mol.intor('cint1e_kin_sph') + self.mol.intor('cint1e_nuc_sph') + self.fullJKao
+        _v              = the_mf.get_veff(self.mol, self.fullDMao)
+        self.fullJKao   = _v[0] if _v.ndim == 3 else _v
+        self.fullFOCKao = the_mf.get_hcore() + self.fullJKao
 
         # Spin potential (F_alpha - F_beta)/2 in LMO basis; None for RHF
         self.activeVSPIN = self._compute_spin_oei(the_mf)
@@ -94,11 +95,12 @@ class localintegrals:
         self.frozenDMmo  = np.array(the_mf.mo_occ, copy=True)
         self.frozenDMmo[self.active == 1] = 0
         self.frozenDMao  = np.dot(np.dot(the_mf.mo_coeff, np.diag(self.frozenDMmo)), the_mf.mo_coeff.T)
-        self.frozenJKao  = scf.hf.get_veff(self.mol, self.frozenDMao, 0, 0, 1)
+        _v_frozen        = the_mf.get_veff(self.mol, self.frozenDMao)
+        self.frozenJKao  = _v_frozen[0] if _v_frozen.ndim == 3 else _v_frozen
         self.frozenOEIao = self.fullFOCKao - self.fullJKao + self.frozenJKao
 
         # Active-space integrals in LMO basis
-        self.activeCONST = self.mol.energy_nuc() + np.einsum('ij,ij->', self.frozenOEIao - 0.5 * self.frozenJKao, self.frozenDMao)
+        self.activeCONST = the_mf.energy_nuc() + np.einsum('ij,ij->', self.frozenOEIao - 0.5 * self.frozenJKao, self.frozenDMao)
         self.activeOEI   = np.dot(np.dot(self.ao2loc.T, self.frozenOEIao), self.ao2loc)
         self.activeFOCK  = np.dot(np.dot(self.ao2loc.T, self.fullFOCKao), self.ao2loc)
         if self.Norbs <= 150:
@@ -186,7 +188,8 @@ class localintegrals:
             return self.activeFOCK
         if not self.ERIinMEM:
             DM_ao  = np.dot(np.dot(self.ao2loc, DMloc), self.ao2loc.T)
-            JK_ao  = scf.hf.get_veff(self.mol, DM_ao, 0, 0, 1)
+            _v_ao  = self.the_mf.get_veff(self.mol, DM_ao)
+            JK_ao  = _v_ao[0] if _v_ao.ndim == 3 else _v_ao
             JK_loc = np.dot(np.dot(self.ao2loc.T, JK_ao), self.ao2loc)
         else:
             JK_loc = (np.einsum('ijkl,ij->kl', self.activeERI, DMloc)
