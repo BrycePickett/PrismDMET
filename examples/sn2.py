@@ -20,8 +20,7 @@
 # C12H25F + F-  -->  C12H25F + F-
 
 import sys
-sys.path.append('../src')
-import local_integrals, dmet, qcdmet_paths
+import local_integrals, dmet
 from dmet import make_fragments
 from pyscf import gto, scf, symm
 from pyscf.cc import ccsd

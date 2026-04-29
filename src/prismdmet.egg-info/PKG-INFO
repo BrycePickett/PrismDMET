@@ -1,0 +1,16 @@
+Metadata-Version: 2.4
+Name: prismdmet
+Version: 1.3.0
+Summary: PrismDMET: Advanced Density Matrix Embedding Theory for Materials
+Author: PrismDMET Team
+Requires-Python: >=3.8
+License-File: LICENSE
+License-File: LICENSE.GPL-v2
+Requires-Dist: numpy
+Requires-Dist: scipy
+Requires-Dist: pyscf
+Dynamic: author
+Dynamic: license-file
+Dynamic: requires-dist
+Dynamic: requires-python
+Dynamic: summary

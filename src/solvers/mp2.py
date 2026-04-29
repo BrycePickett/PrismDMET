@@ -21,7 +21,6 @@ import numpy as np
 import ctypes
 import rhf
 import local_integrals
-import qcdmet_paths
 from pyscf import gto, scf, ao2mo, mp
 from utils import silent_stdout, nullcontext
 

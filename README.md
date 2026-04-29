@@ -1,4 +1,4 @@
-QC-DMET: a python implementation of density matrix embedding theory for ab initio quantum chemistry
+PrismDMET: a python implementation of density matrix embedding theory for ab initio quantum chemistry
 ===================================================================================================
 
 This is a modernized fork of [sebwouters/qc-dmet](https://github.com/sebwouters/qc-dmet), updated for Python 3.10+ and PySCF 2.0+.
@@ -26,18 +26,18 @@ Building and testing
 **Environment setup (Python 3.10 + PySCF 2.0+):**
 
     > module load miniconda3/24.1.2-py310
-    > conda create -n qcdmet python=3.10 -y
-    > conda activate qcdmet
+    > conda create -n prismdmet python=3.10 -y
+    > conda activate prismdmet
     > conda install -y numpy scipy pyscf -c conda-forge
 
-QC-DMET requires numpy, scipy, and [pyscf](https://github.com/sunqm/pyscf).
+PrismDMET requires numpy, scipy, and [pyscf](https://github.com/sunqm/pyscf).
 The `ED`/`FCI` solver uses PySCF's built-in `pyscf.fci` module.
 [Block2](https://github.com/block-hczhai/block2-preview) via `pip` is optional and only required for the `DMRG` solver.
 [CheMPS2](https://github.com/SebWouters/CheMPS2) is supported via the `DMRG-CheMPS2` keyword for legacy DMRG.
 
-The path to pyscf can be adjusted in [qcdmet_paths.py](src/qcdmet_paths.py).
 
-Compile the C++ library libqcdmet.so (requires Intel compilers and MKL):
+
+Compile the C++ library libprismdmet.so (requires Intel compilers and MKL):
 
     > module load intel/2021.10.0 intel-oneapi-mkl/2023.2.0
     > cd lib

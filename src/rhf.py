@@ -19,7 +19,6 @@
 
 import numpy as np
 import scipy.sparse.linalg
-import qcdmet_paths
 from pyscf import gto, scf, ao2mo
 
 def solve_ERI( OEI, TEI, DMguess, numPairs ):

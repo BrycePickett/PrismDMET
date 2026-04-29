@@ -1,8 +1,7 @@
 import sys
 import numpy as np
 from pyscf import gto, scf
-sys.path.append('../src')
-import local_integrals, dmet, qcdmet_paths
+import local_integrals, dmet
 from dmet import make_fragments
 
 # 1. Setup small H2 system

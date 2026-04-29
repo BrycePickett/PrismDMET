@@ -19,7 +19,6 @@
 
 import numpy as np
 import ctypes
-import qcdmet_paths
 from utils import silent_stdout, nullcontext
 import PyCheMPS2
 

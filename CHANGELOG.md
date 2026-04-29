@@ -1,15 +1,12 @@
 # Changelog
 
-## [1.2] - 2026-04-09
+## [1.2] - 2026-04-21
 ### Added
-- New active-space solvers for DMET loop:
-  - `method='CASSCF'`: Supports single and state-averaged calculations with user-defined active spaces (`ncas`, `nelecas`). 
-  - `method='EOM-CC'`: Supports all PySCF EOM-CCSD variants.
-  - `method='NEVPT2'` and `method='QD-NEVPT2'`: Strong-Contraction and Quasidegenerate NEVPT2 variants operating sequentially on the real representation (`mf_real`).
-- New `CC_E_TYPE` options: `CCSD(T)` and `CCSD(T)_RDM` support.
-- Configurable dictionary mappings integrated directly into `dmet.__init__` for direct parametric tuning (e.g., `casscf_kwargs`, `eom_kwargs`, `nevpt2_kwargs`).
-- Dedicated per-fragment execution artifacts saved on the `dmet` class (`self.eom_results`, `self.cas_results`, etc.).
-- Robust evaluation guardrails throwing `RuntimeError` for solvers lacking a compatible loop mapping (strict `oneshot()` compatibility).
+- **Open-Shell DMET Pipeline**: Support for ROHF/UHF references via spin-dependent potential injection (`OEI_S`) and specialized CASSCF wrappers (`fix_casscf_for_nonsinglet_env`).
+- **Macroiteration Stability**: Implemented fragment state caching (`frag_caches`) and SVD-based orbital projection (`project_amo_manually`) to prevent active-space root collapse during self-consistency.
+- **Enhanced Correlation Solvers**: Integrated `CASSCF`, `EOM-CCSD`, `NEVPT2`, and `QD-NEVPT2` as modular DMET solvers with configurable keyword-based initialization.
+- **Extended CC Support**: Added `CCSD(T)` and `CCSD(T)_RDM` support via new `CC_E_TYPE` flags.
+- **Robustness**: Integrated automated warm-starts and fidelity-thresholded CI guess management.
 
 ## [1.1] - 2026-04-07
 ### Added

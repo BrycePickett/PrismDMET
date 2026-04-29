@@ -18,8 +18,7 @@
 '''
 
 import sys
-sys.path.append('../src')
-import local_integrals_hubbard, dmet, qcdmet_paths
+import local_integrals_hubbard, dmet
 import numpy as np
 
 HubbardU   = 1.0

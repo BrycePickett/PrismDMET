@@ -1,5 +1,4 @@
 import numpy as np
-import qcdmet_paths
 from pyscf import gto, scf, ao2mo, fci
 from utils import silent_stdout, nullcontext
 

@@ -1,0 +1,17 @@
+name: prismdmet
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.10
+  - pip
+  - numpy>=1.20
+  - scipy
+  - pyscf>=2.0
+  # Optional: For developers/benchmark execution
+  - jupyter
+  - matplotlib
+  - pytest
+  - pip:
+      # This installs the PrismDMET package itself in editable mode
+      - -e .

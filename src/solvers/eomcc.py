@@ -21,7 +21,6 @@
 '''
 
 import numpy as np
-import qcdmet_paths
 from pyscf import ao2mo, gto, scf
 from pyscf.cc import ccsd
 from utils import silent_stdout, nullcontext

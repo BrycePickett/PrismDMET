@@ -9,6 +9,8 @@
         - Single-state CASSCF (default)
         - State-averaged CASSCF (sa_nstates > 1) for multi-state problems
           and as the reference for NEVPT2
+        - Warm restart via mo_guess / ci_guess (for iteration caching)
+        - Open-shell environments via OEI_S spin-potential injection
 
     Notes
     -----
@@ -22,7 +24,6 @@
 '''
 
 import numpy as np
-import qcdmet_paths
 from pyscf import ao2mo, gto, scf, mcscf
 from pyscf import fci as pyscf_fci
 from utils import silent_stdout, nullcontext
@@ -32,7 +33,10 @@ def solve(CONST, OEI, FOCK, TEI, Norb, Nel, Nimp, DMguessRHF,
           ncas=None, nelecas=None,
           chempot_imp=0.0, printoutput=True,
           sa_nstates=1, sa_weights=None,
-          frozen=None, **casscf_kwargs):
+          frozen=None,
+          mo_guess=None, ci_guess=None,
+          OEI_S=None,
+          **casscf_kwargs):
     '''
     Solve a DMET impurity problem at the CASSCF level.
 
@@ -53,6 +57,13 @@ def solve(CONST, OEI, FOCK, TEI, Norb, Nel, Nimp, DMguessRHF,
     sa_nstates   : int – number of states for state-averaged CASSCF (default 1 = SS)
     sa_weights   : list of float – weights for SA; uniform if None
     frozen       : list or None – orbital indices to freeze (passed to CASSCF)
+    mo_guess     : ndarray or None – MO coefficients from a previous iteration
+                   (warm restart).  If provided, these are used instead of the
+                   RHF canonical MOs as the initial CASSCF orbital guess.
+    ci_guess     : ndarray or None – CI vector(s) from a previous iteration.
+    OEI_S        : ndarray (Norb, Norb) or None – spin-dependent one-electron
+                   potential for open-shell environments.  When provided, the
+                   CASSCF object is wrapped to inject spin-gradient corrections.
     **casscf_kwargs : extra keyword arguments set on the mcscf.CASSCF object
                      (e.g. max_cycle=200, conv_tol=1e-9, fcisolver=...)
 
@@ -68,6 +79,7 @@ def solve(CONST, OEI, FOCK, TEI, Norb, Nel, Nimp, DMguessRHF,
         'nstates'   : int
         'weights'   : ndarray
         'ci'        : CASSCF CI vector(s)
+        'mo_coeff'  : ndarray – converged MO coefficients (for caching)
     }
     '''
     # Default: full active space (equivalent to FCI within the embedding space)
@@ -146,7 +158,19 @@ def solve(CONST, OEI, FOCK, TEI, Norb, Nel, Nimp, DMguessRHF,
         if sa_nstates > 1:
             mc = mcscf.state_average_(mc, weights=sa_weights.tolist())
 
-        mc.kernel()
+        # --------------------------------------------------------------
+        # Open-shell spin-environment wrapper (must come AFTER state_average_)
+        # --------------------------------------------------------------
+        if OEI_S is not None:
+            from solvers.qcsolver_utils import fix_casscf_for_nonsinglet_env
+            mc = fix_casscf_for_nonsinglet_env(mc, OEI_S)
+
+        # --------------------------------------------------------------
+        # Warm restart: use cached MOs / CI from previous iteration
+        # --------------------------------------------------------------
+        _mo0 = mo_guess if mo_guess is not None else None
+        _ci0 = ci_guess if ci_guess is not None else None
+        mc.kernel(_mo0, _ci0)
 
         # --------------------------------------------------------------
         # Extract 1-RDM and 2-RDM in the CAS space, then expand to
@@ -226,11 +250,13 @@ def solve(CONST, OEI, FOCK, TEI, Norb, Nel, Nimp, DMguessRHF,
     cas_results = {
         'e_tot'    : e_tot,
         'e_states' : e_states,
+        'e_imp'    : ImpurityEnergy,
         'ncas'     : ncas,
         'nelecas'  : nelecas,
         'nstates'  : sa_nstates,
         'weights'  : sa_weights,
         'ci'       : mc.ci,
+        'mo_coeff' : mc.mo_coeff,
     }
 
     return ImpurityEnergy, pyscfRDM1, cas_results

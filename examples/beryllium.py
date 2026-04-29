@@ -18,8 +18,7 @@
 '''
 
 import sys
-sys.path.append('../src')
-import local_integrals, dmet, ring_helper, qcdmet_paths
+import local_integrals, dmet, ring_helper
 from dmet import make_fragments
 from pyscf import gto, scf
 from pyscf.cc import ccsd

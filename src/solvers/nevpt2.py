@@ -16,7 +16,6 @@
 '''
 
 import numpy as np
-import qcdmet_paths
 from pyscf import gto, scf, mcscf, mrpt
 from utils import silent_stdout, nullcontext
 

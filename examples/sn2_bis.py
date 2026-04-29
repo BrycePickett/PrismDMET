@@ -20,8 +20,7 @@
 # C12H25Br + Cl-  -->  C12H25Cl + Br-
 
 import sys
-sys.path.append('../src')
-import local_integrals, dmet, qcdmet_paths
+import local_integrals, dmet
 from dmet import make_fragments
 from pyscf import gto, scf, symm
 from pyscf.cc import ccsd

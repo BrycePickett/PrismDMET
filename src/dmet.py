@@ -1,24 +1,10 @@
-'''
-    QC-DMET: a python implementation of density matrix embedding theory for ab initio quantum chemistry
-    Copyright (C) 2015 Sebastian Wouters
-    
-    This program is free software; you can redistribute it and/or modify
-    it under the terms of the GNU General Public License as published by
-    the Free Software Foundation; either version 2 of the License, or
-    (at your option) any later version.
-    
-    This program is distributed in the hope that it will be useful,
-    but WITHOUT ANY WARRANTY; without even the implied warranty of
-    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-    GNU General Public License for more details.
-    
-    You should have received a copy of the GNU General Public License along
-    with this program; if not, write to the Free Software Foundation, Inc.,
-    51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
-'''
+"""
+PrismDMET core DMET driver.
+Built on QC-DMET (Wouters et al., 2015) under GPL-v2.
+"""
 
 import local_integrals
-import qcdmet_helper
+import prismdmet_helper
 import numpy as np
 from scipy import optimize
 import time
@@ -94,6 +80,12 @@ class dmet:
         self.doDET_NO   = doDET_NO
         self.NOrotation = None
         self.altcostfunc = use_constrained_opt
+        self.OEI_S      = None  # spin-dependent 1e potential for open-shell envs
+
+        # Fragment caches for warm-restarting CASSCF across SC iterations.
+        # Each entry is None (first iteration) or a dict with 'mo_coeff' and 'ci'.
+        maxiter_frags = 1 if isTranslationInvariant else len(impurityClusters)
+        self.frag_caches = [None] * maxiter_frags
 
         self.minFunc    = None
         if self.altcostfunc:
@@ -114,7 +106,7 @@ class dmet:
                 )
 
         if ( self.doDET == True ):
-            # Cfr Bulik, PRB 89, 035140 (2014)
+            # DET only fits impurity diagonal; see Bulik, PRB 89, 035140 (2014)
             self.fitImpBath = False
             if ( self.doDET_NO == True ):
                 self.NOvecs = None
@@ -124,9 +116,9 @@ class dmet:
         self.print_rdm = print_rdm
 
         allOne = self.testclusters()
-        if ( allOne == False ): # One or more impurities which do not cover the entire system
-            assert( self.TransInv == False ) # Make sure that you don't work translational invariant
-            # Note on working with impurities which do no tile the entire system: they should be the first orbitals in the Hamiltonian!
+        if ( allOne == False ):
+            # Incomplete tiling: impurity orbitals must be the first in the Hamiltonian.
+            assert( self.TransInv == False )
 
         self.energy   = 0.0
         self.imp_1RDM = []
@@ -134,12 +126,16 @@ class dmet:
         self.imp_size = self.make_imp_size()
         self.mu_imp   = 0.0
         self.mask     = self.make_mask()
-        self.helper   = qcdmet_helper.qcdmethelper( self.ints, self.makelist_H1(), self.altcostfunc, self.minFunc )
+        self.helper   = prismdmet_helper.prismdmethelper( self.ints, self.makelist_H1(), self.altcostfunc, self.minFunc )
 
         self.time_ed  = 0.0
         self.time_cf  = 0.0
         self.time_func= 0.0
         self.time_grad= 0.0
+
+        # Auto-detect open-shell reference from localintegrals
+        if hasattr(self.ints, 'loc_spin_oei'):
+            self.OEI_S = self.ints.loc_spin_oei()   # None for RHF, ndarray for ROHF/UHF
 
         np.set_printoptions(precision=3, linewidth=160)
         
@@ -270,7 +266,7 @@ class dmet:
             Nelec_in_imp = int(round(self.ints.Nelec - np.sum( core1RDM_dmet )))
             core1RDM_loc = np.dot( np.dot( loc2dmet, np.diag( core1RDM_dmet ) ), loc2dmet.T )
             
-            self.dmetOrbs.append( loc2dmet[ :, :Norb_in_imp ] ) # Impurity and bath orbitals only
+            self.dmetOrbs.append( loc2dmet[ :, :Norb_in_imp ] )
             assert( Norb_in_imp <= self.Norb )
             dmetOEI  = self.ints.dmet_oei(  loc2dmet, Norb_in_imp )
             dmetFOCK = self.ints.dmet_fock( loc2dmet, Norb_in_imp, core1RDM_loc )
@@ -326,20 +322,51 @@ class dmet:
                 from solvers import casscf as _casscf
                 assert( Nelec_in_imp % 2 == 0 )
                 DMguessRHF = self.ints.dmet_init_guess_rhf( loc2dmet, Norb_in_imp, Nelec_in_imp// 2, numImpOrbs, chempot_imp )
+
+                # --- Warm restart from cached state ---
+                _mo_guess = None
+                _ci_guess = None
+                if self.frag_caches[counter] is not None:
+                    cached = self.frag_caches[counter]
+                    old_mo = cached['mo_coeff']
+                    _ci_guess = cached.get('ci', None)
+                    # Project old active MOs onto current embedding basis
+                    _ncas  = self.ncas  if self.ncas  is not None else Norb_in_imp
+                    _ncore = (Nelec_in_imp - (self.nelecas if self.nelecas is not None else Nelec_in_imp)) // 2
+                    if old_mo.shape == (Norb_in_imp, Norb_in_imp):
+                        from solvers.qcsolver_utils import project_amo_manually
+                        _mo_guess, fidelity = project_amo_manually(
+                            old_mo, _ncas, _ncore, dmetFOCK, Norb_in_imp
+                        )
+                        # If projection fidelity is too low, discard the CI guess
+                        if np.min(fidelity) < 0.5:
+                            print("DMET::CASSCF : Low projection fidelity, discarding CI guess.")
+                            _ci_guess = None
+                    else:
+                        print("DMET::CASSCF : MO shape mismatch, starting fresh.")
+
+                # --- Per-fragment embedding spin potential for open-shell ---
+                _dmet_oei_s = self.ints.dmet_oei_s(loc2dmet, Norb_in_imp) if hasattr(self.ints, 'dmet_oei_s') else self.OEI_S
+
                 IMP_energy, IMP_1RDM, cas_res = _casscf.solve(
                     0.0, dmetOEI, dmetFOCK, dmetTEI, Norb_in_imp, Nelec_in_imp, numImpOrbs,
                     DMguessRHF,
                     ncas=self.ncas, nelecas=self.nelecas,
                     chempot_imp=chempot_imp,
                     sa_nstates=self.sa_nstates, sa_weights=self.sa_weights,
+                    mo_guess=_mo_guess, ci_guess=_ci_guess,
+                    OEI_S=_dmet_oei_s,
                     **self.casscf_kwargs
                 )
+                # Cache converged state for next iteration
+                self.frag_caches[counter] = {
+                    'mo_coeff': cas_res['mo_coeff'],
+                    'ci':       cas_res['ci'],
+                }
                 self.cas_results.append( cas_res )
             elif ( self.method == 'QD-NEVPT2' ):
                 from solvers import qdnevpt2 as _qdnevpt2
-                # QD-NEVPT2 runs on the REAL molecular integrals via Prism.
-                # The DMET embedding selects which active space to use.
-                # IMP_1RDM is taken from the SA-CASSCF optimized on the real mol.
+                # QD-NEVPT2 runs on real molecular integrals via Prism; DMET selects the active space.
                 e_tot_states, e_corr_states, osc, mc_real, nevpt_obj = _qdnevpt2.solve(
                     self.mf_real,
                     ncas=self.ncas, nelecas=self.nelecas,
@@ -347,11 +374,8 @@ class dmet:
                     casscf_kwargs=self.casscf_kwargs,
                     **self.qdnevpt2_kwargs
                 )
-                # Use ground-state QD-NEVPT2 energy as fragment energy
                 IMP_energy = e_tot_states[0]
-                # Build DMET 1-RDM from real-molecule SA-CASSCF for consistency
-                # (projects the real-space RDM into the local orbital basis)
-                IMP_1RDM = mc_real.make_rdm1()
+                IMP_1RDM   = mc_real.make_rdm1()
                 self.qdnevpt2_results.append({
                     'e_tot'   : e_tot_states,
                     'e_corr'  : e_corr_states,
@@ -401,17 +425,11 @@ class dmet:
             self.energy = self.energy * len( self.impClust )
             remainingOrbs[:] = 0
             
-        # When an incomplete impurity tiling is used for the Hamiltonian, self.energy should be augmented with the remaining HF part
+        # Augment energy with remaining HF contribution for incomplete impurity tilings
         if ( np.sum( remainingOrbs ) != 0 ):
-        
+
             if ( self.CC_E_TYPE == 'CASCI' ):
-                '''
-                If CASCI is passed as CC energy type, the energy of the one and only full impurity Hamiltonian is returned.
-                The one-electron integrals of this impurity Hamiltonian is the full Fock operator of the CORE orbitals!
-                The constant part of the energy still needs to be added: sum_occ ( 2 * OEI[occ,occ] + JK[occ,occ] )
-                                                                         = einsum( core1RDM_loc, OEI ) + 0.5 * einsum( core1RDM_loc, JK )
-                                                                         = 0.5 * einsum( core1RDM_loc, OEI + FOCK )
-                '''
+                # CASCI energy omits the frozen-core constant; add 0.5 * Tr[core1RDM (OEI+FOCK)]
                 assert( maxiter == 1 )
                 transfo = np.eye( self.Norb, dtype=float )
                 totalOEI  = self.ints.dmet_oei(  transfo, self.Norb )
@@ -419,13 +437,6 @@ class dmet:
                 self.energy += 0.5 * np.einsum( 'ij,ij->', core1RDM_loc, totalOEI + totalFOCK )
                 Nelectrons = np.trace( self.imp_1RDM[ 0 ] ) + np.trace( core1RDM_loc ) # Because full active space is used to compute the energy
             else:
-                #transfo = np.eye( self.Norb, dtype=float )
-                #totalOEI  = self.ints.dmet_oei(  transfo, self.Norb )
-                #totalFOCK = self.ints.dmet_fock( transfo, self.Norb, OneRDM )
-                #self.energy += 0.5 * np.einsum( 'ij,ij->', OneRDM[remainingOrbs==1,:], \
-                #         totalOEI[remainingOrbs==1,:] + totalFOCK[remainingOrbs==1,:] )
-                #Nelectrons += np.trace( (OneRDM[remainingOrbs==1,:])[:,remainingOrbs==1] )
-
                 assert (np.array_equal(self.ints.active, np.ones([self.ints.mol.nao_nr()], dtype=int)))
 
                 from pyscf import scf
@@ -480,9 +491,6 @@ class dmet:
             size = self.imp_size[ 0 ]
             for it in range( 1, self.Norb // size ):
                 myNOrotation[ it*size:(it+1)*size, it*size:(it+1)*size ] = myNOrotation[ 0:size, 0:size ]
-        '''if True:
-            assert ( np.linalg.norm( np.dot( myNOrotation.T, myNOrotation ) - np.eye( self.umat.shape[0] ) ) < 1e-10 )
-            assert ( np.linalg.norm( np.dot( myNOrotation, myNOrotation.T ) - np.eye( self.umat.shape[0] ) ) < 1e-10 )'''
         return myNOrotation
         
     def costfunction( self, newumatflat ):
@@ -500,7 +508,7 @@ class dmet:
         if self.minFunc == 'OEI' :
             e_fun = np.trace( np.dot(self.ints.loc_oei(), OneRDM_loc) )
         elif self.minFunc == 'FOCK_INIT' :
-            e_fun = np.trace( np.dot(self.ints.loc_rhf_fock(), OneRDM_loc) )
+            e_fun = np.trace( np.dot(self.ints.loc_fock(), OneRDM_loc) )
         # e_cstr = np.sum( newumatflat * errors )    # not correct, but gives correct verify_gradient results
         e_cstr = np.sum( newumatsquare_loc * errors_sq )
         return -e_fun-e_cstr
@@ -679,10 +687,7 @@ class dmet:
         eigvals, eigvecs = np.linalg.eigh( hessian )
         idx = eigvals.argsort()
         eigvals = eigvals[ idx ]
-        eigvecs = eigvecs[ :, idx ]
         print("Hessian eigenvalues =", eigvals)
-        #print "Hessian 1st eigenvector =",eigvecs[:,0]
-        #print "Hessian 2nd eigenvector =",eigvecs[:,1]
         
     def flat2square( self, umatflat ):
     
@@ -694,13 +699,7 @@ class dmet:
             size = self.imp_size[ 0 ]
             for it in range( 1, self.Norb // size ):
                 umatsquare[ it*size:(it+1)*size, it*size:(it+1)*size ] = umatsquare[ 0:size, 0:size ]
-                
-        '''if True:
-            umatsquare_bis = np.zeros( [ self.Norb, self.Norb ], dtype=float )
-            for cnt in range( len( umatflat ) ):
-                umatsquare_bis += umatflat[ cnt ] * self.helper.list_H1[ cnt ]
-            print "Verification flat2square = ", np.linalg.norm( umatsquare - umatsquare_bis )'''
-        
+
         if ( self.NOrotation != None ):
             umatsquare = np.dot( np.dot( self.NOrotation, umatsquare ), self.NOrotation.T )
         return umatsquare
@@ -762,11 +761,10 @@ class dmet:
             stop_ed = time.time()
             self.time_ed += ( stop_ed - start_ed )
             print("   Energy =", self.energy)
-            # self.verify_gradient( self.square2flat( self.umat ) ) # Only works for self.doSCF == False!!
             if ( self.SCmethod != 'NONE' and not(self.altcostfunc) ):
                 self.hessian_eigenvalues( self.square2flat( self.umat ) )
-            
-            # Solve for the u-matrix
+
+            # Optimize the u-matrix
             start_cf = time.time()
             if ( self.altcostfunc and self.SCmethod == 'BFGS' ):
                 result = optimize.minimize( self.alt_costfunction, self.square2flat( self.umat ), jac=self.alt_costfunction_derivative, options={'disp': False} )
@@ -777,21 +775,20 @@ class dmet:
             elif ( self.SCmethod == 'BFGS' ):
                 result = optimize.minimize( self.costfunction, self.square2flat( self.umat ), jac=self.costfunction_derivative, options={'disp': False} )
                 self.umat = self.flat2square( result.x )
-            self.umat = self.umat - np.eye( self.umat.shape[ 0 ] ) * np.average( np.diag( self.umat ) ) # Remove arbitrary chemical potential shifts
+            self.umat = self.umat - np.eye( self.umat.shape[ 0 ] ) * np.average( np.diag( self.umat ) )  # Remove arbitrary global shift
             if ( self.altcostfunc ):
                 print("   Cost function after convergence =", self.alt_costfunction( self.square2flat( self.umat ) ))
             else:
                 print("   Cost function after convergence =", self.costfunction( self.square2flat( self.umat ) ))
             stop_cf = time.time()
             self.time_cf += ( stop_cf - start_cf )
-            
-            # Possibly print the u-matrix / 1-RDM
+
             if self.print_u:
                 self.print_umat()
             if self.print_rdm:
                 self.print_1rdm()
-            
-            # Get the error measure
+
+            # Convergence check
             u_diff   = np.linalg.norm( umat_old - self.umat )
             rdm_diff = np.linalg.norm( rdm_old - self.transform_ed_1rdm() )
             self.umat = self.relaxation * umat_old + ( 1.0 - self.relaxation ) * self.umat
@@ -840,8 +837,6 @@ class dmet:
         return result
         
     def dump_bath_orbs( self, filename, impnumber=0 ):
-        
-        import qcdmet_paths
         from pyscf import tools
         from pyscf.tools import molden
         with open( filename, 'w' ) as thefile:

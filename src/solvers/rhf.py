@@ -18,7 +18,6 @@
 '''
 
 import numpy as np
-import qcdmet_paths
 import local_integrals
 from pyscf import ao2mo, gto, scf
 
