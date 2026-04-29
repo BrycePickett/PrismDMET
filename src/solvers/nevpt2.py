@@ -27,6 +27,7 @@ def solve(mf_real, ncas, nelecas,
           root=0,
           casscf_kwargs=None,
           nevpt2_kwargs=None,
+          mo_guess=None,
           printoutput=True):
     '''
     Run CASSCF + NEVPT2 on the real physical molecule.
@@ -72,7 +73,7 @@ def solve(mf_real, ncas, nelecas,
             mc.verbose = 5 if printoutput else 0
             for key, val in casscf_kwargs.items():
                 setattr(mc, key, val)
-            mc.kernel()
+            mc.kernel(mo_guess)
 
             print(f"\nnevpt2::solve : CASSCF energy = {mc.e_tot:.10f} Ha")
 
@@ -102,7 +103,7 @@ def solve(mf_real, ncas, nelecas,
             mc_sa.verbose = 5 if printoutput else 0
             for key, val in casscf_kwargs.items():
                 setattr(mc_sa, key, val)
-            mc_sa.kernel()
+            mc_sa.kernel(mo_guess)
             sa_mo = mc_sa.mo_coeff
 
             print(f"\nnevpt2::solve : SA-CASSCF ({nstates} states) done.")

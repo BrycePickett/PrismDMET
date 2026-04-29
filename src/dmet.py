@@ -489,10 +489,15 @@ class dmet:
                 _frag_tasks.append(task)
             else:
                 # Run sequentially right now (CASSCF, NEVPT2, QD-NEVPT2, or parallel=False)
+                # For NEVPT2 methods: build full-molecule MO guess anchored to DMET embedding orbitals.
+                _mo_guess = None
+                if _method_key in ('QD-NEVPT2', 'NEVPT2') and self.mf_real is not None:
+                    _mo_guess, _, _ = self._build_full_mo_guess(
+                        loc2dmet, Norb_in_imp, core1RDM_dmet)
                 _frag_meta[-1]['sequential_result'] = self._run_fragment_sequential(
                     counter, _method_key, flag_rhf, dmetOEI, dmetFOCK, dmetTEI,
                     Norb_in_imp, Nelec_in_imp, numImpOrbs, chempot_imp,
-                    DMguessRHF, loc2dmet)
+                    DMguessRHF, loc2dmet, mo_guess=_mo_guess)
 
         # ---------------------------------------------------------------
         # Phase 2: Run parallel tasks via ProcessPoolExecutor.
@@ -629,10 +634,102 @@ class dmet:
         self.energy += self.ints.const()
         return Nelectrons
 
+    def _build_full_mo_guess(self, loc2dmet, Norb_in_imp, core1RDM_dmet):
+        """
+        Construct a full-molecule MO coefficient matrix (nAO x nMO) with the
+        DMET embedding orbitals placed exactly in the CASSCF active window.
+
+        Layout (columns left to right):
+            [frozen_core | env_core | DMET_active | env_virt | frozen_virt]
+
+        Parameters
+        ----------
+        loc2dmet : ndarray (Norbs_active, Norbs_active)
+            The unitary from localintegrals LMO basis → DMET embedding basis.
+            Columns 0..Norb_in_imp-1  : embedding (imp + bath)
+            Columns Norb_in_imp..end  : environment (core + virtual)
+        Norb_in_imp : int
+            Number of embedding orbitals (impurity + bath).
+        core1RDM_dmet : ndarray (Norbs_active - Norb_in_imp,)
+            Diagonal of the environment 1-RDM in the DMET basis.
+            Entries ≈ 2 are environment core; entries ≈ 0 are environment virtual.
+
+        Returns
+        -------
+        mo_guess : ndarray (nAO, nMO_real)
+            Column-ordered MO matrix suitable for PySCF mc.kernel(mo_guess).
+        ncas_check : int
+            Number of active orbitals (==Norb_in_imp, for a sanity check).
+        ncore_check : int
+            Number of doubly-occupied (core) orbitals before the active window.
+        """
+        mf  = self.mf_real
+        ao2loc = self.ints.ao2loc      # shape: (nAO, Norbs_active)
+        active_mask = self.ints.active # 1 for LMO-active orbs, 0 for frozen
+
+        nAO  = ao2loc.shape[0]
+        nMO  = mf.mo_coeff.shape[1]
+
+        # ── Frozen orbitals (outside localintegrals active space) ──────────────
+        # active_mask is over canonical MO indices (same as nAO for full-valence
+        # calculations, or a subset for frozen-core). Frozen MO indices are those
+        # where active_mask == 0.
+        frozen_idx  = np.where(active_mask == 0)[0]
+        active_idx  = np.where(active_mask == 1)[0]
+        frozen_occ  = frozen_idx[mf.mo_occ[frozen_idx] > 0]
+        frozen_virt = frozen_idx[mf.mo_occ[frozen_idx] == 0]
+        mo_frozen_core = mf.mo_coeff[:, frozen_occ]   # (nAO, N_frozen_core)
+        mo_frozen_virt = mf.mo_coeff[:, frozen_virt]  # (nAO, N_frozen_virt)
+
+        # ── Environment orbitals (inside localintegrals active space, outside DMET) ──
+        # loc2dmet[:, Norb_in_imp:] are the environment LMOs. Their occupations
+        # come from core1RDM_dmet[Norb_in_imp:]: ~2 → core, ~0 → virtual.
+        env_lmos = loc2dmet[:, Norb_in_imp:]              # (Norbs_active, Nenv)
+        env_occ_diag  = core1RDM_dmet[Norb_in_imp:]      # environment occupations only
+        env_occ_mask  = env_occ_diag > 1.0               # approximately 2
+        env_virt_mask = env_occ_diag < 1.0               # approximately 0
+
+        # Transform environment LMOs from LMO basis back to AO basis
+        mo_env_core = ao2loc @ env_lmos[:, env_occ_mask]   # (nAO, Nenv_core)
+        mo_env_virt = ao2loc @ env_lmos[:, env_virt_mask]  # (nAO, Nenv_virt)
+
+        # ── Active (DMET embedding) orbitals ──────────────────────────────────
+        # loc2dmet[:, :Norb_in_imp] are the imp+bath LMOs.
+        dmet_lmos    = loc2dmet[:, :Norb_in_imp]       # (Norbs_active, Norb_in_imp)
+        mo_active    = ao2loc @ dmet_lmos              # (nAO, Norb_in_imp)
+
+        # ── Stack into [frozen_core | env_core | active | env_virt | frozen_virt] ──
+        mo_guess = np.hstack([
+            mo_frozen_core,
+            mo_env_core,
+            mo_active,
+            mo_env_virt,
+            mo_frozen_virt,
+        ])
+
+        ncore_check = mo_frozen_core.shape[1] + mo_env_core.shape[1]
+        ncas_check  = Norb_in_imp
+
+        if mo_guess.shape[1] != nMO:
+            raise RuntimeError(
+                f"_build_full_mo_guess: column count mismatch. "
+                f"Built {mo_guess.shape[1]} MOs but mf_real has {nMO}. "
+                f"Frozen-core={mo_frozen_core.shape[1]}, env_core={mo_env_core.shape[1]}, "
+                f"active={ncas_check}, env_virt={mo_env_virt.shape[1]}, "
+                f"frozen_virt={mo_frozen_virt.shape[1]}"
+            )
+
+        print(f"PrismDMET :: mo_guess : Built full MO guess for NEVPT2 solver.")
+        print(f"  Layout: {mo_frozen_core.shape[1]} frozen_core | {mo_env_core.shape[1]} env_core "
+              f"| {ncas_check} active | {mo_env_virt.shape[1]} env_virt "
+              f"| {mo_frozen_virt.shape[1]} frozen_virt")
+        return mo_guess, ncas_check, ncore_check
+
     def _run_fragment_sequential(self, counter, method_key, flag_rhf,
                                   dmetOEI, dmetFOCK, dmetTEI,
                                   Norb_in_imp, Nelec_in_imp, numImpOrbs,
-                                  chempot_imp, DMguessRHF, loc2dmet):
+                                  chempot_imp, DMguessRHF, loc2dmet,
+                                  mo_guess=None):
         """
         Run a single fragment solver sequentially and return a result dict.
         This handles all methods, including those that cannot be parallelized
@@ -723,7 +820,9 @@ class dmet:
             e_tot, e_corr, osc, mc_real, nevpt_obj = _qdnevpt2.solve(
                 self.mf_real, ncas=self.ncas, nelecas=self.nelecas,
                 sa_nstates=self.sa_nstates, sa_weights=self.sa_weights,
-                casscf_kwargs=self.casscf_kwargs, **self.qdnevpt2_kwargs)
+                casscf_kwargs=self.casscf_kwargs,
+                mo_guess=mo_guess,
+                **self.qdnevpt2_kwargs)
             e   = e_tot[0]
             rdm = mc_real.make_rdm1()
             res['qdnevpt2_res'] = {'e_tot': e_tot, 'e_corr': e_corr,
@@ -734,7 +833,9 @@ class dmet:
             e_tot, e_corr, mc_nevpt, nevpt_objs = _nevpt2.solve(
                 self.mf_real, ncas=self.ncas, nelecas=self.nelecas,
                 nstates=self.sa_nstates, sa_weights=self.sa_weights,
-                casscf_kwargs=self.casscf_kwargs, **self.nevpt2_kwargs)
+                casscf_kwargs=self.casscf_kwargs,
+                mo_guess=mo_guess,
+                **self.nevpt2_kwargs)
             e = e_tot[0]
             rdm = (nevpt_objs[0].onerdm
                    if (hasattr(nevpt_objs[0], 'onerdm') and nevpt_objs[0].onerdm is not None)

@@ -58,6 +58,7 @@ def solve(mf_real, ncas, nelecas,
           select_reference=None,
           casscf_kwargs=None,
           nevpt_kwargs=None,
+          mo_guess=None,
           printoutput=True):
     '''
     Run SA-CASSCF + QD-NEVPT2 via Prism on a real PySCF mf object.
@@ -138,7 +139,7 @@ def solve(mf_real, ncas, nelecas,
             setattr(mc, key, val)
 
         mc.verbose = 5 if printoutput else 0
-        mc.kernel()
+        mc.kernel(mo_guess)
 
         print(f"\nqdnevpt::solve : SA-CASSCF ({sa_nstates} states, ncas={ncas}, nelecas={nelecas})")
         for i, e in enumerate(mc.e_states):
