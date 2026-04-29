@@ -64,12 +64,9 @@ class localintegrals_hubbard:
         
         return self.activeOEI
         
-    def loc_rhf_fock( self ):
-    
-        return self.activeFOCK
-        
-    def loc_rhf_fock_bis( self, DMloc ):
-    
+    def loc_fock( self, DMloc=None ):
+        if DMloc is None:
+            return self.activeFOCK
         JKloc   = np.zeros( [self.Norbs], dtype=float )
         for orb in range( self.Norbs ):
             JKloc[ orb ] = 0.5 * self.HubbardU * DMloc[ orb, orb ]
@@ -88,7 +85,7 @@ class localintegrals_hubbard:
         
     def dmet_fock( self, loc2dmet, numActive, coreDMloc ):
     
-        FOCKdmet = np.dot( np.dot( loc2dmet[:,:numActive].T, self.loc_rhf_fock_bis( coreDMloc ) ), loc2dmet[:,:numActive] )
+        FOCKdmet = np.dot( np.dot( loc2dmet[:,:numActive].T, self.loc_fock( coreDMloc ) ), loc2dmet[:,:numActive] )
         return FOCKdmet
         
     def dmet_init_guess_rhf( self, loc2dmet, numActive, numPairs, Nimp, chempot_imp ):

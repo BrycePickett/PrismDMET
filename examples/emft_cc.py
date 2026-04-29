@@ -171,7 +171,7 @@ ECCSD2 = ERHF2 + ECORR2
 
 if ( True ):
     # Perform DMET on the large system (mol1)
-    myInts = local_integrals.localintegrals( mf1, list(range( mol1.nao_nr())), 'iao' )
+    myInts = local_integrals.localintegrals( mf1, list(range( mol1.nao_nr())), 'meta_lowdin' )
     myInts.molden( 'emft-loc.molden' )
     
     # Define physical units by atom index: 

@@ -68,7 +68,7 @@ for bl in thecases:
     else:
         #localization_type = 'meta_lowdin'
         #localization_type = 'boys'
-        localization_type = 'iao'
+        localization_type = 'meta_lowdin'
         # careful with 'iao'; the generic IAO scheme implemented in QC-DMET will not reproduce
         # results in the manuscript, which use a more careful IAO construction
         rotation = np.eye( mol.nao_nr(), dtype=float )

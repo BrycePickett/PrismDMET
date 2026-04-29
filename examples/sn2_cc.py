@@ -64,7 +64,7 @@ if ( False ):
     print("ECCSD for structure", thestructure, "=", ECCSD)
     
 if ( True ):
-    myInts = local_integrals.localintegrals( mf, list(range( mol.nao_nr())), 'iao' )
+    myInts = local_integrals.localintegrals( mf, list(range( mol.nao_nr())), 'meta_lowdin' )
     myInts.molden( 'sn2-loc.molden' )
     
     # Define physical units by atom index: 
