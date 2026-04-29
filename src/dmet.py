@@ -8,6 +8,8 @@ import prismdmet_helper
 import numpy as np
 from scipy import optimize
 import time
+import os
+import concurrent.futures
 
 class dmet:
 
@@ -18,7 +20,9 @@ class dmet:
                   eom_type='EE-Singlet', eom_koopmans=False, eom_kwargs=None,
                   ncas=None, nelecas=None, sa_nstates=1, sa_weights=None,
                   casscf_kwargs=None,
-                  mf_real=None, qdnevpt2_kwargs=None, nevpt2_kwargs=None ):
+                  mf_real=None, qdnevpt2_kwargs=None, nevpt2_kwargs=None,
+                  use_symmetry=False, symmetry_map=None,
+                  parallel=False, max_workers=None ):
 
         if ( isTranslationInvariant == True ):
             assert( theInts.TI_OK == True )
@@ -81,6 +85,23 @@ class dmet:
         self.NOrotation = None
         self.altcostfunc = use_constrained_opt
         self.OEI_S      = None  # spin-dependent 1e potential for open-shell envs
+
+        # --- Efficiency: symmetry mapping ---
+        self.use_symmetry = use_symmetry
+        self.symmetry_map = symmetry_map  # user-provided {child_idx: parent_idx} or None
+        if self.use_symmetry and self.symmetry_map is None and not isTranslationInvariant:
+            self.symmetry_map = self._auto_detect_symmetry()
+
+        # --- Efficiency: parallel fragment solving ---
+        self.parallel = parallel
+        if max_workers is not None:
+            self.max_workers = max_workers
+        else:
+            # Auto-detect from environment
+            _env_threads = os.environ.get('PRISMDMET_WORKERS',
+                           os.environ.get('SLURM_CPUS_PER_TASK',
+                           os.environ.get('OMP_NUM_THREADS', '1')))
+            self.max_workers = max(1, int(_env_threads))
 
         # Fragment caches for warm-restarting CASSCF across SC iterations.
         # Each entry is None (first iteration) or a dict with 'mo_coeff' and 'ci'.
@@ -148,6 +169,34 @@ class dmet:
         assert( np.all( quicktest <= 1 ) )
         allOne = np.all( quicktest == 1 )
         return allOne
+
+    def _auto_detect_symmetry( self ):
+        """
+        Auto-detect equivalent fragments by comparing their impurity orbital
+        sizes. Two fragments are equivalent if they have the same number of
+        impurity orbitals. The first fragment of each unique size is the
+        'parent'; all subsequent identical-size fragments map to it.
+
+        Returns
+        -------
+        symmetry_map : dict
+            Mapping {child_fragment_idx : parent_fragment_idx}.
+            Empty dict if all fragments are unique.
+        """
+        symmetry_map = {}
+        seen = {}  # fingerprint -> first fragment index
+        for idx, cluster in enumerate(self.impClust):
+            fingerprint = int(np.sum(np.abs(cluster)))
+            if fingerprint in seen:
+                symmetry_map[idx] = seen[fingerprint]
+            else:
+                seen[fingerprint] = idx
+        if symmetry_map:
+            n_unique = len(self.impClust) - len(symmetry_map)
+            print(f"PrismDMET :: symmetry : Auto-detected {n_unique} unique fragment(s) "
+                  f"out of {len(self.impClust)} total. "
+                  f"Skipping {len(symmetry_map)} equivalent fragment solve(s).")
+        return symmetry_map
             
     def make_imp_size( self ):
     
@@ -229,6 +278,7 @@ class dmet:
         self.energy   = 0.0
         self.imp_1RDM = []
         self.dmetOrbs = []
+        self.frag_energies = []  # per-fragment energies for symmetry reuse
         if ( self.doDET == True ) and ( self.doDET_NO == True ):
             self.NOvecs = []
             self.NOdiag = []
@@ -240,7 +290,30 @@ class dmet:
         remainingOrbs = np.ones( [ len( self.impClust[ 0 ] ) ], dtype=float )
         
         for counter in range( maxiter ):
-        
+
+            # --- Symmetry skip: reuse parent fragment results ---
+            if (self.symmetry_map is not None and counter in self.symmetry_map
+                    and not self.TransInv):
+                parent = self.symmetry_map[counter]
+                print(f"PrismDMET :: symmetry : Fragment {counter} is equivalent to "
+                      f"fragment {parent}; copying results.")
+                # We still need to construct the bath for the dmetOrbs list
+                impurityOrbs = np.abs(self.impClust[counter])
+                numImpOrbs = np.sum(impurityOrbs)
+                numBathOrbs_req = numImpOrbs if self.BATH_ORBS is None else self.BATH_ORBS[counter]
+                numBathOrbs, loc2dmet, core1RDM_dmet = self.helper.constructbath(
+                    OneRDM, impurityOrbs, numBathOrbs_req)
+                Norb_in_imp = numImpOrbs + numBathOrbs
+                self.dmetOrbs.append(loc2dmet[:, :Norb_in_imp])
+                # Copy energy and 1-RDM from parent
+                parent_energy = self.frag_energies[parent]
+                parent_rdm    = self.imp_1RDM[parent]
+                self.energy += parent_energy
+                self.frag_energies.append(parent_energy)
+                self.imp_1RDM.append(parent_rdm.copy())
+                remainingOrbs -= impurityOrbs
+                continue
+
             flag_rhf = np.sum(self.impClust[ counter ]) < 0
             impurityOrbs = np.abs(self.impClust[ counter ])
             numImpOrbs   = np.sum( impurityOrbs )
@@ -406,6 +479,7 @@ class dmet:
                 })
 
             self.energy += IMP_energy
+            self.frag_energies.append(IMP_energy)
             self.imp_1RDM.append( IMP_1RDM )
             if ( self.doDET == True ) and ( self.doDET_NO == True ):
                 RDMeigenvals, RDMeigenvecs = np.linalg.eigh( IMP_1RDM[ :numImpOrbs, :numImpOrbs ] )
