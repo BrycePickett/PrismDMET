@@ -1,12 +1,11 @@
-project (clib_qcdmet)
-set (QC_DMET_VERSION      "0.1")
-set (QC_DMET_AUTHORS      "Sebastian Wouters")
-set (QC_DMET_DESCRIPTION  "QC-DMET: a python implementation of density matrix embedding theory for ab initio quantum chemistry")
-set (QC_DMET_EMAIL        "sebastianwouters@gmail.com")
-set (QC_DMET_URL          "https://github.com/sebwouters/qc-dmet")
-set (QC_DMET_LICENSE      "GNU General Public License, version 2")
+project (prismdmet_clib)
+set (PRISMDMET_VERSION      "1.0")
+set (PRISMDMET_AUTHORS      "Bryce Pickett (originally Sebastian Wouters)")
+set (PRISMDMET_DESCRIPTION  "PrismDMET: a Python implementation of Density Matrix Embedding Theory")
+set (PRISMDMET_URL          "https://github.com/BrycePickett/PrismDMET")
+set (PRISMDMET_LICENSE      "GNU General Public License, version 2")
 
-cmake_minimum_required (VERSION 2.8.11)
+cmake_minimum_required (VERSION 3.10)
 set (CMAKE_VERBOSE_MAKEFILE OFF)
 
 # Whether or not to compile with MKL
@@ -46,12 +45,11 @@ set (CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -g -O3")
 
 # Build the shared library
 set (BUILD_SHARED_LIBS ON)
-set (QC_DMET_SOURCE_FILES "rhf_response.cc")
-add_library (clib_qcdmet SHARED ${QC_DMET_SOURCE_FILES})
-target_link_libraries (clib_qcdmet ${LAPACK_LIBRARIES})
-set_target_properties (clib_qcdmet PROPERTIES
+set (PRISMDMET_SOURCE_FILES "rhf_response.cc")
+add_library (clib_prismdmet SHARED ${PRISMDMET_SOURCE_FILES})
+target_link_libraries (clib_prismdmet ${LAPACK_LIBRARIES})
+set_target_properties (clib_prismdmet PROPERTIES
     LINKER_LANGUAGE C
     CLEAN_DIRECT_OUTPUT 1
     LIBRARY_OUTPUT_DIRECTORY ${PROJECT_SOURCE_DIR}
-    OUTPUT_NAME "qcdmet")
-
+    OUTPUT_NAME "prismdmet")

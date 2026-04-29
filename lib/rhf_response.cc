@@ -1,6 +1,6 @@
 /*
-    QC-DMET: a python implementation of density matrix embedding theory for ab initio quantum chemistry
-    Copyright (C) 2015 Sebastian Wouters
+    PrismDMET: a python implementation of density matrix embedding theory for ab initio quantum chemistry
+    Copyright (C) 2015 Sebastian Wouters (Modernized by Bryce Pickett)
 
     This program is free software; you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
