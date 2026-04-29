@@ -1,23 +1,27 @@
-*pyc
-*~
-*.bak
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+dist/
+build/
 
-tests/*.molden
-tests/*.pyc
-tests/*~
-tests/*.txt
+# IDEs
+.vscode/
+.idea/
 
-*.txt
-src/*pyc
-src/*~
-
-tests/timer.dat
-tests/*.profile
-tests/*.lprof
-
-lib/build
-lib/object
-lib/objects
-lib/libqcdmet.so
-
+# DMET / PySCF specific
+*.molden
 *.out
+*.log
+*.bak
+*~
+.block2_scratch/
+*.chk
+*.h5
+
+# C++ Build
+lib/build/
+lib/object/
+lib/objects/
