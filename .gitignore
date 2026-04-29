@@ -20,3 +20,4 @@ lib/object
 lib/objects
 lib/libqcdmet.so
 
+*.out
