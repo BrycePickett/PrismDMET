@@ -1,16 +1,8 @@
 # PrismDMET
 
-**PrismDMET** is an advanced, high-performance Python implementation of Density Matrix Embedding Theory (DMET) for *ab initio* quantum chemistry. 
+**PrismDMET** is a Python implementation of Density Matrix Embedding Theory (DMET) for *ab initio* quantum chemistry. 
 
-Originally derived from the legacy QC-DMET framework, PrismDMET has been thoroughly modernized and expanded to include state-of-the-art multi-reference and excited-state solvers, specifically architected for seamless integration with modern electronic structure workflows.
-
-## Key Features
-*   **Modern Solvers**: Built-in support for high-level correlated methods including `EOM-CCSD`, `CASSCF`, `NEVPT2`, and the highly efficient multi-state `QD-NEVPT2` solver (via the Prism tensor backend).
-*   **PySCF Integration**: Fully compatible with PySCF 2.0+, leveraging its robust mean-field orbital localization, integral transformation, and multi-reference modules.
-*   **High Performance**: Critical performance bottlenecks, including the exact local 1-RDM constructions, are accelerated using a compiled C++ library.
-*   **Clean Portability**: Standardized deployment via modern Conda environments and editable pip installations.
-
----
+Originally derived from the legacy QC-DMET framework, PrismDMET has been modernized and expanded to include multi-reference and excited-state solvers, specifically architected for integration with Pyscf, Prism, and Block2.
 
 ## Installation Guide
 
@@ -25,7 +17,7 @@ conda activate prismdmet
 ```
 
 ### 2. Compile the C++ Backend
-PrismDMET relies on a C++ library (`libprismdmet.so`) for rapid tensor manipulations during the DMET self-consistency loop. 
+PrismDMET relies on a C++ library (`libprismdmet.so`) for tensor manipulations during the DMET self-consistency loop. 
 
 *Note: Ensure your C++ compiler (e.g., `g++` or `icpc`) and CMake are loaded in your module environment before running this step.*
 
