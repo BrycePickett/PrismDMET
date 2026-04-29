@@ -11,6 +11,103 @@ import time
 import os
 import concurrent.futures
 
+# Methods that can be run in parallel worker processes (all inputs are plain numpy arrays)
+_PARALLEL_METHODS = frozenset({'ED', 'FCI', 'CC', 'MP2', 'EOM-CC', 'DMRG', 'flag_rhf'})
+
+
+def _fragment_worker(task):
+    """
+    Module-level worker for parallel fragment solving via ProcessPoolExecutor.
+    Must be a top-level function (not a method) to be picklable.
+
+    All inputs and outputs are plain numpy arrays or Python scalars — no
+    PySCF objects are passed across process boundaries.
+
+    Parameters
+    ----------
+    task : dict
+        Keys: method, CONST, dmetOEI, dmetFOCK, dmetTEI, Norb, Nel, Nimp,
+              chempot_imp, DMguessRHF (optional), CC_E_TYPE, eom_nroots,
+              eom_type, eom_koopmans, eom_kwargs, counter.
+
+    Returns
+    -------
+    dict with keys 'counter', 'energy', 'rdm1'.
+    """
+    # Pin BLAS to 1 thread inside workers to prevent over-subscription
+    os.environ['OMP_NUM_THREADS'] = '1'
+    os.environ['MKL_NUM_THREADS'] = '1'
+    os.environ['OPENBLAS_NUM_THREADS'] = '1'
+
+    method       = task['method']
+    CONST        = task['CONST']
+    dmetOEI      = task['dmetOEI']
+    dmetFOCK     = task['dmetFOCK']
+    dmetTEI      = task['dmetTEI']
+    Norb_in_imp  = task['Norb']
+    Nelec_in_imp = task['Nel']
+    numImpOrbs   = task['Nimp']
+    chempot_imp  = task['chempot_imp']
+    DMguessRHF   = task.get('DMguessRHF')
+    counter      = task['counter']
+
+    if method == 'flag_rhf':
+        import sys; sys.path.insert(0, task['src_path'])
+        from solvers import rhf
+        IMP_energy, IMP_1RDM = rhf.solve(
+            CONST, dmetOEI, dmetFOCK, dmetTEI,
+            Norb_in_imp, Nelec_in_imp, numImpOrbs, DMguessRHF, chempot_imp)
+
+    elif method in ('ED', 'FCI'):
+        import sys; sys.path.insert(0, task['src_path'])
+        from solvers import fci
+        IMP_energy, IMP_1RDM = fci.solve(
+            CONST, dmetOEI, dmetFOCK, dmetTEI,
+            Norb_in_imp, Nelec_in_imp, numImpOrbs, chempot_imp)
+
+    elif method == 'CC':
+        import sys; sys.path.insert(0, task['src_path'])
+        from solvers import cc
+        IMP_energy, IMP_1RDM = cc.solve(
+            CONST, dmetOEI, dmetFOCK, dmetTEI,
+            Norb_in_imp, Nelec_in_imp, numImpOrbs, DMguessRHF,
+            task.get('CC_E_TYPE', 'LAMBDA'), chempot_imp,
+            eom_nroots=task.get('eom_nroots', 3))
+
+    elif method == 'MP2':
+        import sys; sys.path.insert(0, task['src_path'])
+        from solvers import mp2
+        IMP_energy, IMP_1RDM = mp2.solve(
+            CONST, dmetOEI, dmetFOCK, dmetTEI,
+            Norb_in_imp, Nelec_in_imp, numImpOrbs, DMguessRHF, chempot_imp)
+
+    elif method == 'EOM-CC':
+        import sys; sys.path.insert(0, task['src_path'])
+        from solvers import eomcc
+        IMP_energy, IMP_1RDM, eom_res = eomcc.solve(
+            CONST, dmetOEI, dmetFOCK, dmetTEI,
+            Norb_in_imp, Nelec_in_imp, numImpOrbs,
+            DMguessRHF, chempot_imp=chempot_imp,
+            eom_type=task.get('eom_type', 'EE-Singlet'),
+            nroots=task.get('eom_nroots', 3),
+            koopmans=task.get('eom_koopmans', False),
+            **task.get('eom_kwargs', {}))
+        return {'counter': counter, 'energy': IMP_energy,
+                'rdm1': IMP_1RDM, 'eom_res': eom_res}
+
+    elif method == 'DMRG':
+        import sys; sys.path.insert(0, task['src_path'])
+        from solvers import block2
+        IMP_energy, IMP_1RDM = block2.solve(
+            CONST, dmetOEI, dmetFOCK, dmetTEI,
+            Norb_in_imp, Nelec_in_imp, numImpOrbs, chempot_imp)
+
+    else:
+        raise ValueError(f"_fragment_worker: unsupported method '{method}'")
+
+    return {'counter': counter, 'energy': IMP_energy, 'rdm1': IMP_1RDM}
+
+
 class dmet:
 
     def __init__( self, theInts, impurityClusters, isTranslationInvariant, method='ED',
@@ -288,44 +385,39 @@ class dmet:
             maxiter = 1
             
         remainingOrbs = np.ones( [ len( self.impClust[ 0 ] ) ], dtype=float )
-        
+               # ---------------------------------------------------------------
+        # Phase 1: Build all fragment tasks (bath + integrals).
+        # Always sequential — all fragments read from the same OneRDM.
+        # ---------------------------------------------------------------
+        _frag_tasks   = []   # picklable task dicts for parallel workers
+        _frag_meta    = []   # per-fragment metadata needed after solve
+        _sym_counters = set()  # counters handled by symmetry skip
+
+        _src_path = os.path.dirname(os.path.abspath(__file__))
+
         for counter in range( maxiter ):
 
-            # --- Symmetry skip: reuse parent fragment results ---
+            # --- Symmetry skip (handled immediately, no solver needed) ---
             if (self.symmetry_map is not None and counter in self.symmetry_map
                     and not self.TransInv):
-                parent = self.symmetry_map[counter]
-                print(f"PrismDMET :: symmetry : Fragment {counter} is equivalent to "
-                      f"fragment {parent}; copying results.")
-                # We still need to construct the bath for the dmetOrbs list
+                _sym_counters.add(counter)
                 impurityOrbs = np.abs(self.impClust[counter])
-                numImpOrbs = np.sum(impurityOrbs)
+                numImpOrbs   = np.sum(impurityOrbs)
                 numBathOrbs_req = numImpOrbs if self.BATH_ORBS is None else self.BATH_ORBS[counter]
-                numBathOrbs, loc2dmet, core1RDM_dmet = self.helper.constructbath(
+                numBathOrbs, loc2dmet, _ = self.helper.constructbath(
                     OneRDM, impurityOrbs, numBathOrbs_req)
                 Norb_in_imp = numImpOrbs + numBathOrbs
                 self.dmetOrbs.append(loc2dmet[:, :Norb_in_imp])
-                # Copy energy and 1-RDM from parent
-                parent_energy = self.frag_energies[parent]
-                parent_rdm    = self.imp_1RDM[parent]
-                self.energy += parent_energy
-                self.frag_energies.append(parent_energy)
-                self.imp_1RDM.append(parent_rdm.copy())
-                remainingOrbs -= impurityOrbs
+                _frag_meta.append({'counter': counter, 'sym_parent': self.symmetry_map[counter],
+                                   'impurityOrbs': impurityOrbs})
                 continue
 
-            flag_rhf = np.sum(self.impClust[ counter ]) < 0
+            flag_rhf     = np.sum(self.impClust[ counter ]) < 0
             impurityOrbs = np.abs(self.impClust[ counter ])
-            numImpOrbs   = np.sum( impurityOrbs )
-            if ( self.BATH_ORBS == None ):
-                numBathOrbs = numImpOrbs
-            else:
-                numBathOrbs = self.BATH_ORBS[ counter ]
+            numImpOrbs   = int(np.sum( impurityOrbs ))
+            numBathOrbs  = numImpOrbs if self.BATH_ORBS is None else self.BATH_ORBS[ counter ]
             numBathOrbs, loc2dmet, core1RDM_dmet = self.helper.constructbath( OneRDM, impurityOrbs, numBathOrbs )
-            if ( self.BATH_ORBS == None ):
-                core_cutoff = 0.01
-            else:
-                core_cutoff = 0.5
+            core_cutoff = 0.01 if self.BATH_ORBS is None else 0.5
             for cnt in range(len(core1RDM_dmet)):
                 if ( core1RDM_dmet[ cnt ] < core_cutoff ):
                     core1RDM_dmet[ cnt ] = 0.0
@@ -338,145 +430,130 @@ class dmet:
             Norb_in_imp  = numImpOrbs + numBathOrbs
             Nelec_in_imp = int(round(self.ints.Nelec - np.sum( core1RDM_dmet )))
             core1RDM_loc = np.dot( np.dot( loc2dmet, np.diag( core1RDM_dmet ) ), loc2dmet.T )
-            
+
             self.dmetOrbs.append( loc2dmet[ :, :Norb_in_imp ] )
             assert( Norb_in_imp <= self.Norb )
             dmetOEI  = self.ints.dmet_oei(  loc2dmet, Norb_in_imp )
             dmetFOCK = self.ints.dmet_fock( loc2dmet, Norb_in_imp, core1RDM_loc )
             dmetTEI  = self.ints.dmet_tei(  loc2dmet, Norb_in_imp )
-            
+
             if ( self.NI_hack == True ):
                 dmetTEI[:,:,:,numImpOrbs:]=0.0
                 dmetTEI[:,:,numImpOrbs:,:]=0.0
                 dmetTEI[:,numImpOrbs:,:,:]=0.0
                 dmetTEI[numImpOrbs:,:,:,:]=0.0
-            
                 umat_rotated = np.dot(np.dot(loc2dmet.T, self.umat), loc2dmet)
                 umat_rotated[:numImpOrbs,:numImpOrbs]=0.0
                 dmetOEI += umat_rotated[:Norb_in_imp,:Norb_in_imp]
                 dmetFOCK = np.array( dmetOEI, copy=True )
-            
+
             print("DMET::exact : Performing a (", Norb_in_imp, "orb,", Nelec_in_imp, "el ) DMET active space calculation.")
-            if ( flag_rhf ):
-                from solvers import rhf
-                DMguessRHF = self.ints.dmet_init_guess_rhf( loc2dmet, Norb_in_imp, Nelec_in_imp// 2, numImpOrbs, chempot_imp )
-                IMP_energy, IMP_1RDM = rhf.solve( 0.0, dmetOEI, dmetFOCK, dmetTEI, Norb_in_imp, Nelec_in_imp, numImpOrbs, DMguessRHF, chempot_imp )
-            elif ( self.method == 'ED' ) or ( self.method == 'FCI' ):
-                from solvers import fci
-                IMP_energy, IMP_1RDM = fci.solve( 0.0, dmetOEI, dmetFOCK, dmetTEI, Norb_in_imp, Nelec_in_imp, numImpOrbs, chempot_imp )
-            elif ( self.method == 'DMRG' ):
-                from solvers import block2
-                IMP_energy, IMP_1RDM = block2.solve( 0.0, dmetOEI, dmetFOCK, dmetTEI, Norb_in_imp, Nelec_in_imp, numImpOrbs, chempot_imp )
-            elif ( self.method == 'DMRG-CheMPS2' ):
-                from solvers import chemps2
-                IMP_energy, IMP_1RDM = chemps2.solve( 0.0, dmetOEI, dmetFOCK, dmetTEI, Norb_in_imp, Nelec_in_imp, numImpOrbs, chempot_imp )
-            elif ( self.method == 'CC' ):
-                from solvers import cc
-                assert( Nelec_in_imp % 2 == 0 )
-                DMguessRHF = self.ints.dmet_init_guess_rhf( loc2dmet, Norb_in_imp, Nelec_in_imp// 2, numImpOrbs, chempot_imp )
-                IMP_energy, IMP_1RDM = cc.solve( 0.0, dmetOEI, dmetFOCK, dmetTEI, Norb_in_imp, Nelec_in_imp, numImpOrbs, DMguessRHF, self.CC_E_TYPE, chempot_imp, eom_nroots=self.eom_nroots )
-            elif ( self.method == 'MP2' ):
-                from solvers import mp2
-                assert( Nelec_in_imp % 2 == 0 )
-                DMguessRHF = self.ints.dmet_init_guess_rhf( loc2dmet, Norb_in_imp, Nelec_in_imp// 2, numImpOrbs, chempot_imp )
-                IMP_energy, IMP_1RDM = mp2.solve( 0.0, dmetOEI, dmetFOCK, dmetTEI, Norb_in_imp, Nelec_in_imp, numImpOrbs, DMguessRHF, chempot_imp )
-            elif ( self.method == 'EOM-CC' ):
-                from solvers import eomcc
-                assert( Nelec_in_imp % 2 == 0 )
-                DMguessRHF = self.ints.dmet_init_guess_rhf( loc2dmet, Norb_in_imp, Nelec_in_imp// 2, numImpOrbs, chempot_imp )
-                IMP_energy, IMP_1RDM, eom_res = eomcc.solve(
-                    0.0, dmetOEI, dmetFOCK, dmetTEI, Norb_in_imp, Nelec_in_imp, numImpOrbs,
-                    DMguessRHF, chempot_imp=chempot_imp,
-                    eom_type=self.eom_type, nroots=self.eom_nroots,
-                    koopmans=self.eom_koopmans, **self.eom_kwargs
-                )
-                self.eom_results.append( eom_res )
-            elif ( self.method == 'CASSCF' ):
-                from solvers import casscf as _casscf
-                assert( Nelec_in_imp % 2 == 0 )
-                DMguessRHF = self.ints.dmet_init_guess_rhf( loc2dmet, Norb_in_imp, Nelec_in_imp// 2, numImpOrbs, chempot_imp )
 
-                # --- Warm restart from cached state ---
-                _mo_guess = None
-                _ci_guess = None
-                if self.frag_caches[counter] is not None:
-                    cached = self.frag_caches[counter]
-                    old_mo = cached['mo_coeff']
-                    _ci_guess = cached.get('ci', None)
-                    # Project old active MOs onto current embedding basis
-                    _ncas  = self.ncas  if self.ncas  is not None else Norb_in_imp
-                    _ncore = (Nelec_in_imp - (self.nelecas if self.nelecas is not None else Nelec_in_imp)) // 2
-                    if old_mo.shape == (Norb_in_imp, Norb_in_imp):
-                        from solvers.qcsolver_utils import project_amo_manually
-                        _mo_guess, fidelity = project_amo_manually(
-                            old_mo, _ncas, _ncore, dmetFOCK, Norb_in_imp
-                        )
-                        # If projection fidelity is too low, discard the CI guess
-                        if np.min(fidelity) < 0.5:
-                            print("DMET::CASSCF : Low projection fidelity, discarding CI guess.")
-                            _ci_guess = None
-                    else:
-                        print("DMET::CASSCF : MO shape mismatch, starting fresh.")
+            # Build DMguessRHF for methods that need it
+            _needs_dm = flag_rhf or self.method in ('CC', 'MP2', 'EOM-CC', 'CASSCF')
+            DMguessRHF = (self.ints.dmet_init_guess_rhf(loc2dmet, Norb_in_imp, Nelec_in_imp // 2,
+                                                         numImpOrbs, chempot_imp)
+                          if _needs_dm else None)
 
-                # --- Per-fragment embedding spin potential for open-shell ---
-                _dmet_oei_s = self.ints.dmet_oei_s(loc2dmet, Norb_in_imp) if hasattr(self.ints, 'dmet_oei_s') else self.OEI_S
+            # Determine effective method key for task dispatch
+            _method_key = 'flag_rhf' if flag_rhf else self.method
 
-                IMP_energy, IMP_1RDM, cas_res = _casscf.solve(
-                    0.0, dmetOEI, dmetFOCK, dmetTEI, Norb_in_imp, Nelec_in_imp, numImpOrbs,
-                    DMguessRHF,
-                    ncas=self.ncas, nelecas=self.nelecas,
-                    chempot_imp=chempot_imp,
-                    sa_nstates=self.sa_nstates, sa_weights=self.sa_weights,
-                    mo_guess=_mo_guess, ci_guess=_ci_guess,
-                    OEI_S=_dmet_oei_s,
-                    **self.casscf_kwargs
-                )
-                # Cache converged state for next iteration
-                self.frag_caches[counter] = {
-                    'mo_coeff': cas_res['mo_coeff'],
-                    'ci':       cas_res['ci'],
+            _frag_meta.append({
+                'counter': counter, 'sym_parent': None,
+                'impurityOrbs': impurityOrbs, 'numImpOrbs': numImpOrbs,
+                'Norb_in_imp': Norb_in_imp, 'Nelec_in_imp': Nelec_in_imp,
+                'core1RDM_loc': core1RDM_loc,
+                'method_key': _method_key,
+                'loc2dmet': loc2dmet,
+                'dmetOEI': dmetOEI, 'dmetFOCK': dmetFOCK,
+            })
+
+            # Decide: parallel-eligible or must run sequentially
+            _is_parallel_eligible = (
+                self.parallel
+                and _method_key in _PARALLEL_METHODS
+                and not self.doDET_NO  # NO rotation complicates state
+            )
+
+            if _is_parallel_eligible:
+                task = {
+                    'counter': counter, 'method': _method_key,
+                    'CONST': 0.0, 'src_path': _src_path,
+                    'dmetOEI': dmetOEI, 'dmetFOCK': dmetFOCK, 'dmetTEI': dmetTEI,
+                    'Norb': Norb_in_imp, 'Nel': Nelec_in_imp, 'Nimp': numImpOrbs,
+                    'chempot_imp': chempot_imp, 'DMguessRHF': DMguessRHF,
+                    'CC_E_TYPE': self.CC_E_TYPE, 'eom_nroots': self.eom_nroots,
+                    'eom_type': self.eom_type, 'eom_koopmans': self.eom_koopmans,
+                    'eom_kwargs': self.eom_kwargs,
                 }
-                self.cas_results.append( cas_res )
-            elif ( self.method == 'QD-NEVPT2' ):
-                from solvers import qdnevpt2 as _qdnevpt2
-                # QD-NEVPT2 runs on real molecular integrals via Prism; DMET selects the active space.
-                e_tot_states, e_corr_states, osc, mc_real, nevpt_obj = _qdnevpt2.solve(
-                    self.mf_real,
-                    ncas=self.ncas, nelecas=self.nelecas,
-                    sa_nstates=self.sa_nstates, sa_weights=self.sa_weights,
-                    casscf_kwargs=self.casscf_kwargs,
-                    **self.qdnevpt2_kwargs
-                )
-                IMP_energy = e_tot_states[0]
-                IMP_1RDM   = mc_real.make_rdm1()
-                self.qdnevpt2_results.append({
-                    'e_tot'   : e_tot_states,
-                    'e_corr'  : e_corr_states,
-                    'osc'     : osc,
-                    'mc'      : mc_real,
-                    'nevpt'   : nevpt_obj,
-                })
-            elif ( self.method == 'NEVPT2' ):
-                from solvers import nevpt2 as _nevpt2
-                e_tot_states, e_corr_states, mc_nevpt, nevpt_objs = _nevpt2.solve(
-                    self.mf_real,
-                    ncas=self.ncas, nelecas=self.nelecas,
-                    nstates=self.sa_nstates,
-                    sa_weights=self.sa_weights,
-                    casscf_kwargs=self.casscf_kwargs,
-                    **self.nevpt2_kwargs
-                )
-                IMP_energy = e_tot_states[0]
-                if hasattr(nevpt_objs[0], 'onerdm') and nevpt_objs[0].onerdm is not None:
-                    IMP_1RDM = nevpt_objs[0].onerdm
-                else:
-                    IMP_1RDM = mc_nevpt.make_rdm1()
-                self.nevpt2_results.append({
-                    'e_tot'     : e_tot_states,
-                    'e_corr'    : e_corr_states,
-                    'mc'        : mc_nevpt,
-                    'nevpt_objs': nevpt_objs,
-                })
+                _frag_tasks.append(task)
+            else:
+                # Run sequentially right now (CASSCF, NEVPT2, QD-NEVPT2, or parallel=False)
+                _frag_meta[-1]['sequential_result'] = self._run_fragment_sequential(
+                    counter, _method_key, flag_rhf, dmetOEI, dmetFOCK, dmetTEI,
+                    Norb_in_imp, Nelec_in_imp, numImpOrbs, chempot_imp,
+                    DMguessRHF, loc2dmet)
+
+        # ---------------------------------------------------------------
+        # Phase 2: Run parallel tasks via ProcessPoolExecutor.
+        # ---------------------------------------------------------------
+        _parallel_results = {}   # counter -> result dict
+        if _frag_tasks:
+            _nw = min(self.max_workers, len(_frag_tasks))
+            print(f"PrismDMET :: parallel : Submitting {len(_frag_tasks)} fragment(s) "
+                  f"to {_nw} worker process(es).")
+            ctx = concurrent.futures.get_context('spawn') if hasattr(concurrent.futures, 'get_context') else None
+            _Executor = concurrent.futures.ProcessPoolExecutor
+            with _Executor(max_workers=_nw) as pool:
+                futures = {pool.submit(_fragment_worker, t): t['counter'] for t in _frag_tasks}
+                for fut in concurrent.futures.as_completed(futures):
+                    res = fut.result()
+                    _parallel_results[res['counter']] = res
+
+        # ---------------------------------------------------------------
+        # Phase 3: Collect results in order and update state.
+        # ---------------------------------------------------------------
+        for meta in _frag_meta:
+            counter = meta['counter']
+            impurityOrbs = meta['impurityOrbs']
+
+            if meta.get('sym_parent') is not None:
+                # Symmetry-copied fragment — parent must already be in frag_energies/imp_1RDM
+                parent = meta['sym_parent']
+                print(f"PrismDMET :: symmetry : Fragment {counter} <- fragment {parent} (copied).")
+                parent_energy = self.frag_energies[parent]
+                parent_rdm    = self.imp_1RDM[parent]
+                self.energy += parent_energy
+                self.frag_energies.append(parent_energy)
+                self.imp_1RDM.append(parent_rdm.copy())
+                remainingOrbs -= impurityOrbs
+                continue
+
+            numImpOrbs = meta['numImpOrbs']
+
+            if counter in _parallel_results:
+                res = _parallel_results[counter]
+                IMP_energy = res['energy']
+                IMP_1RDM   = res['rdm1']
+                if 'eom_res' in res:
+                    self.eom_results.append(res['eom_res'])
+            else:
+                seq = meta['sequential_result']
+                IMP_energy = seq['energy']
+                IMP_1RDM   = seq['rdm1']
+                # Side effects from sequential (CASSCF cache, result lists)
+                if 'cas_res' in seq:
+                    self.frag_caches[counter] = {
+                        'mo_coeff': seq['cas_res']['mo_coeff'],
+                        'ci':       seq['cas_res']['ci'],
+                    }
+                    self.cas_results.append(seq['cas_res'])
+                if 'eom_res' in seq:
+                    self.eom_results.append(seq['eom_res'])
+                if 'qdnevpt2_res' in seq:
+                    self.qdnevpt2_results.append(seq['qdnevpt2_res'])
+                if 'nevpt2_res' in seq:
+                    self.nevpt2_results.append(seq['nevpt2_res'])
 
             self.energy += IMP_energy
             self.frag_energies.append(IMP_energy)
@@ -485,7 +562,7 @@ class dmet:
                 RDMeigenvals, RDMeigenvecs = np.linalg.eigh( IMP_1RDM[ :numImpOrbs, :numImpOrbs ] )
                 self.NOvecs.append( RDMeigenvecs )
                 self.NOdiag.append( RDMeigenvals )
-                
+
             remainingOrbs -= impurityOrbs
         
         if ( self.doDET == True ) and ( self.doDET_NO == True ):
@@ -551,7 +628,127 @@ class dmet:
             
         self.energy += self.ints.const()
         return Nelectrons
-        
+
+    def _run_fragment_sequential(self, counter, method_key, flag_rhf,
+                                  dmetOEI, dmetFOCK, dmetTEI,
+                                  Norb_in_imp, Nelec_in_imp, numImpOrbs,
+                                  chempot_imp, DMguessRHF, loc2dmet):
+        """
+        Run a single fragment solver sequentially and return a result dict.
+        This handles all methods, including those that cannot be parallelized
+        (CASSCF with warm restart, QD-NEVPT2, NEVPT2).
+
+        Returns
+        -------
+        dict with keys: 'energy', 'rdm1', and optionally 'cas_res',
+        'eom_res', 'qdnevpt2_res', 'nevpt2_res'.
+        """
+        res = {}
+
+        if flag_rhf:
+            from solvers import rhf
+            e, rdm = rhf.solve(0.0, dmetOEI, dmetFOCK, dmetTEI,
+                               Norb_in_imp, Nelec_in_imp, numImpOrbs,
+                               DMguessRHF, chempot_imp)
+
+        elif method_key in ('ED', 'FCI'):
+            from solvers import fci
+            e, rdm = fci.solve(0.0, dmetOEI, dmetFOCK, dmetTEI,
+                               Norb_in_imp, Nelec_in_imp, numImpOrbs, chempot_imp)
+
+        elif method_key == 'DMRG':
+            from solvers import block2
+            e, rdm = block2.solve(0.0, dmetOEI, dmetFOCK, dmetTEI,
+                                  Norb_in_imp, Nelec_in_imp, numImpOrbs, chempot_imp)
+
+        elif method_key == 'DMRG-CheMPS2':
+            from solvers import chemps2
+            e, rdm = chemps2.solve(0.0, dmetOEI, dmetFOCK, dmetTEI,
+                                   Norb_in_imp, Nelec_in_imp, numImpOrbs, chempot_imp)
+
+        elif method_key == 'CC':
+            from solvers import cc
+            e, rdm = cc.solve(0.0, dmetOEI, dmetFOCK, dmetTEI,
+                              Norb_in_imp, Nelec_in_imp, numImpOrbs, DMguessRHF,
+                              self.CC_E_TYPE, chempot_imp, eom_nroots=self.eom_nroots)
+
+        elif method_key == 'MP2':
+            from solvers import mp2
+            e, rdm = mp2.solve(0.0, dmetOEI, dmetFOCK, dmetTEI,
+                               Norb_in_imp, Nelec_in_imp, numImpOrbs,
+                               DMguessRHF, chempot_imp)
+
+        elif method_key == 'EOM-CC':
+            from solvers import eomcc
+            e, rdm, eom_res = eomcc.solve(
+                0.0, dmetOEI, dmetFOCK, dmetTEI,
+                Norb_in_imp, Nelec_in_imp, numImpOrbs,
+                DMguessRHF, chempot_imp=chempot_imp,
+                eom_type=self.eom_type, nroots=self.eom_nroots,
+                koopmans=self.eom_koopmans, **self.eom_kwargs)
+            res['eom_res'] = eom_res
+
+        elif method_key == 'CASSCF':
+            from solvers import casscf as _casscf
+            _mo_guess, _ci_guess = None, None
+            if self.frag_caches[counter] is not None:
+                cached = self.frag_caches[counter]
+                old_mo = cached['mo_coeff']
+                _ci_guess = cached.get('ci', None)
+                _ncas  = self.ncas  if self.ncas  is not None else Norb_in_imp
+                _ncore = (Nelec_in_imp - (self.nelecas if self.nelecas is not None
+                                          else Nelec_in_imp)) // 2
+                if old_mo.shape == (Norb_in_imp, Norb_in_imp):
+                    from solvers.qcsolver_utils import project_amo_manually
+                    _mo_guess, fidelity = project_amo_manually(
+                        old_mo, _ncas, _ncore, dmetFOCK, Norb_in_imp)
+                    if np.min(fidelity) < 0.5:
+                        print("DMET::CASSCF : Low projection fidelity, discarding CI guess.")
+                        _ci_guess = None
+                else:
+                    print("DMET::CASSCF : MO shape mismatch, starting fresh.")
+            _dmet_oei_s = (self.ints.dmet_oei_s(loc2dmet, Norb_in_imp)
+                           if hasattr(self.ints, 'dmet_oei_s') else self.OEI_S)
+            e, rdm, cas_res = _casscf.solve(
+                0.0, dmetOEI, dmetFOCK, dmetTEI, Norb_in_imp, Nelec_in_imp, numImpOrbs,
+                DMguessRHF, ncas=self.ncas, nelecas=self.nelecas,
+                chempot_imp=chempot_imp,
+                sa_nstates=self.sa_nstates, sa_weights=self.sa_weights,
+                mo_guess=_mo_guess, ci_guess=_ci_guess,
+                OEI_S=_dmet_oei_s, **self.casscf_kwargs)
+            res['cas_res'] = cas_res
+
+        elif method_key == 'QD-NEVPT2':
+            from solvers import qdnevpt2 as _qdnevpt2
+            e_tot, e_corr, osc, mc_real, nevpt_obj = _qdnevpt2.solve(
+                self.mf_real, ncas=self.ncas, nelecas=self.nelecas,
+                sa_nstates=self.sa_nstates, sa_weights=self.sa_weights,
+                casscf_kwargs=self.casscf_kwargs, **self.qdnevpt2_kwargs)
+            e   = e_tot[0]
+            rdm = mc_real.make_rdm1()
+            res['qdnevpt2_res'] = {'e_tot': e_tot, 'e_corr': e_corr,
+                                   'osc': osc, 'mc': mc_real, 'nevpt': nevpt_obj}
+
+        elif method_key == 'NEVPT2':
+            from solvers import nevpt2 as _nevpt2
+            e_tot, e_corr, mc_nevpt, nevpt_objs = _nevpt2.solve(
+                self.mf_real, ncas=self.ncas, nelecas=self.nelecas,
+                nstates=self.sa_nstates, sa_weights=self.sa_weights,
+                casscf_kwargs=self.casscf_kwargs, **self.nevpt2_kwargs)
+            e = e_tot[0]
+            rdm = (nevpt_objs[0].onerdm
+                   if (hasattr(nevpt_objs[0], 'onerdm') and nevpt_objs[0].onerdm is not None)
+                   else mc_nevpt.make_rdm1())
+            res['nevpt2_res'] = {'e_tot': e_tot, 'e_corr': e_corr,
+                                 'mc': mc_nevpt, 'nevpt_objs': nevpt_objs}
+
+        else:
+            raise ValueError(f"_run_fragment_sequential: unknown method_key='{method_key}'")
+
+        res['energy'] = e
+        res['rdm1']   = rdm
+        return res
+
     def constructNOrotation( self ):
     
         myNOrotation = np.zeros( [ self.Norb, self.Norb ], dtype=float )
