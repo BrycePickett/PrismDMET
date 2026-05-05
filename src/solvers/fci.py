@@ -36,3 +36,35 @@ def solve( CONST, OEI, FOCK, TEI, Norb, Nel, Nimp, chempot_imp=0.0, printoutput=
     ImpurityEnergy += 0.5 * np.einsum( 'ij,ij->', OneRDM[:Nimp,:], OEI[:Nimp,:] + FOCK[:Nimp,:] )
     ImpurityEnergy += 0.5 * np.einsum( 'ijkl,ijkl->', TwoRDM[:Nimp,:,:,:], TEI[:Nimp,:,:,:] )
     return ( ImpurityEnergy, OneRDM )
+
+
+# ---------------------------------------------------------------------------
+# SolverFactory entry point
+# ---------------------------------------------------------------------------
+
+def execute(task):
+    """
+    SolverFactory-compatible wrapper for the FCI solver.
+
+    Unpacks the standardised task dict and calls solve().
+
+    Parameters
+    ----------
+    task : dict
+        Must contain: CONST, dmetOEI, dmetFOCK, dmetTEI, Norb, Nel, Nimp,
+        chempot_imp.
+
+    Returns
+    -------
+    (ImpurityEnergy, OneRDM) — same as solve().
+    """
+    return solve(
+        task['CONST'],
+        task['dmetOEI'],
+        task['dmetFOCK'],
+        task['dmetTEI'],
+        task['Norb'],
+        task['Nel'],
+        task['Nimp'],
+        task.get('chempot_imp', 0.0),
+    )

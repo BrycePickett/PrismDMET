@@ -177,3 +177,78 @@ def solve(mf_real, ncas, nelecas,
                 print(f"    {line}")
 
     return e_tot, e_corr, osc, mc, nevpt_obj
+
+
+
+# ---------------------------------------------------------------------------
+# SolverFactory entry point
+# ---------------------------------------------------------------------------
+
+def execute(task):
+    """
+    SolverFactory-compatible wrapper for the QD-NEVPT2 solver.
+
+    Supports two transport modes for the physical SCF object (mirroring the
+    pattern in ``solvers/nevpt2.py``):
+
+    1. **Serialized (parallel-worker) path** (preferred for ProcessPoolExecutor):
+       The task dict carries picklable numpy arrays + a JSON Mole dump:
+         task['mol_dumps'], task['mf_mo_coeff'], task['mf_mo_energy'],
+         task['mf_mo_occ'], task['mf_e_tot'].
+       A dummy PySCF RHF object is reconstructed from these inside the worker
+       process before calling solve().
+
+    2. **Live-object (legacy/sequential) path**:
+       task['mf_real'] is the live PySCF RHF object from the main process.
+       Used when called directly from ``_run_fragment_sequential()`` without
+       the parallel-task serialization step.
+
+    Mode 1 is chosen when 'mol_dumps' is present in the task dict.
+    Mode 2 is the fallback if 'mol_dumps' is absent.
+
+    Parameters
+    ----------
+    task : dict
+        Mode 1 keys: mol_dumps, mf_mo_coeff, mf_mo_energy, mf_mo_occ,
+                     mf_e_tot, ncas, nelecas.
+        Mode 2 keys: mf_real, ncas, nelecas.
+        Optional (both modes): sa_nstates, sa_weights, casscf_kwargs,
+                               qdnevpt2_kwargs, mo_guess.
+
+    Returns
+    -------
+    (energy, rdm1, qdnevpt2_res) where qdnevpt2_res is a dict with keys
+    'e_tot', 'e_corr', 'osc', 'mc', 'nevpt'.
+    """
+    # ------------------------------------------------------------------
+    # Resolve mf_real via either the serialized or live-object protocol.
+    # Reuse the helper from nevpt2 — same serialization scheme.
+    # ------------------------------------------------------------------
+    if 'mol_dumps' in task:
+        # Mode 1: reconstruct from serialized arrays (parallel-safe).
+        from solvers.nevpt2 import _reconstruct_mf_from_task
+        mf_real = _reconstruct_mf_from_task(task)
+    else:
+        # Mode 2: live object passed directly (sequential / legacy path).
+        mf_real = task['mf_real']
+
+    e_tot, e_corr, osc, mc, nevpt_obj = solve(
+        mf_real,
+        ncas=task.get('ncas'),
+        nelecas=task.get('nelecas'),
+        sa_nstates=task.get('sa_nstates', 3),
+        sa_weights=task.get('sa_weights'),
+        casscf_kwargs=task.get('casscf_kwargs', {}),
+        nevpt_kwargs=task.get('qdnevpt2_kwargs', {}),
+        mo_guess=task.get('mo_guess'),
+    )
+
+    rdm1 = mc.make_rdm1()
+    qdnevpt2_res = {
+        'e_tot' : e_tot,
+        'e_corr': e_corr,
+        'osc'   : osc,
+        'mc'    : mc,
+        'nevpt' : nevpt_obj,
+    }
+    return e_tot[0], rdm1, qdnevpt2_res

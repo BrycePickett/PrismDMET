@@ -58,3 +58,35 @@ def solve( CONST, OEI, FOCK, TEI, Norb, Nel, Nimp, DMguessRHF, chempot_imp=0.0 )
     
     return ( ImpurityEnergy, RDM1 )
 
+
+# ---------------------------------------------------------------------------
+# SolverFactory entry point
+# ---------------------------------------------------------------------------
+
+def execute(task):
+    """
+    SolverFactory-compatible wrapper for the RHF solver.
+
+    Unpacks the standardised task dict and calls solve().
+
+    Parameters
+    ----------
+    task : dict
+        Must contain: CONST, dmetOEI, dmetFOCK, dmetTEI, Norb, Nel, Nimp,
+        chempot_imp, DMguessRHF.
+
+    Returns
+    -------
+    (ImpurityEnergy, RDM1) — same as solve().
+    """
+    return solve(
+        task['CONST'],
+        task['dmetOEI'],
+        task['dmetFOCK'],
+        task['dmetTEI'],
+        task['Norb'],
+        task['Nel'],
+        task['Nimp'],
+        task.get('DMguessRHF'),
+        task.get('chempot_imp', 0.0),
+    )

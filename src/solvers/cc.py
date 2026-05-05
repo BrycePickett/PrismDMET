@@ -284,3 +284,41 @@ def _compute_impurity_energy(CONST, FOCKcopy, OEI, TEI, Nimp,
         pass  # Energy decomposition via OEI+FOCK naturally absorbs chempot
 
     return E_imp + extra_energy
+
+
+# ---------------------------------------------------------------------------
+# SolverFactory entry point
+# ---------------------------------------------------------------------------
+
+def execute(task):
+    """
+    SolverFactory-compatible wrapper for the CC solver.
+
+    Unpacks the standardised task dict and calls solve(). Supports all
+    CC_E_TYPE variants: 'LAMBDA', 'LAMBDA_AMP', 'LAMBDA_ZERO', 'CASCI',
+    'CCSD(T)', 'CCSD(T)_RDM', 'EOM-CCSD'.
+
+    Parameters
+    ----------
+    task : dict
+        Must contain: CONST, dmetOEI, dmetFOCK, dmetTEI, Norb, Nel, Nimp,
+        DMguessRHF, chempot_imp.
+        Optional: CC_E_TYPE (default 'LAMBDA'), eom_nroots (default 3).
+
+    Returns
+    -------
+    (ImpurityEnergy, pyscfRDM1) — same as solve().
+    """
+    return solve(
+        task['CONST'],
+        task['dmetOEI'],
+        task['dmetFOCK'],
+        task['dmetTEI'],
+        task['Norb'],
+        task['Nel'],
+        task['Nimp'],
+        task.get('DMguessRHF'),
+        energytype=task.get('CC_E_TYPE', 'LAMBDA'),
+        chempot_imp=task.get('chempot_imp', 0.0),
+        eom_nroots=task.get('eom_nroots', 3),
+    )

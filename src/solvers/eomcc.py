@@ -235,3 +235,43 @@ def _run_eom(ccsolver, eom_type, nroots, koopmans, eom_kwargs):
         raise ValueError(f'_run_eom: unhandled eom_type={eom_type!r}')
 
     return eom, e, v
+
+
+# ---------------------------------------------------------------------------
+# SolverFactory entry point
+# ---------------------------------------------------------------------------
+
+def execute(task):
+    """
+    SolverFactory-compatible wrapper for the EOM-CCSD solver.
+
+    Unpacks the standardised task dict and calls solve(), which returns
+    a 3-tuple: (ImpurityEnergy, pyscfRDM1, eom_results).
+
+    Parameters
+    ----------
+    task : dict
+        Must contain: CONST, dmetOEI, dmetFOCK, dmetTEI, Norb, Nel, Nimp,
+        DMguessRHF, chempot_imp.
+        Optional: eom_type (default 'EE-Singlet'), eom_nroots (default 3),
+        eom_koopmans (default False), eom_kwargs (default {}).
+
+    Returns
+    -------
+    (ImpurityEnergy, pyscfRDM1, eom_results) — same as solve().
+    """
+    return solve(
+        task['CONST'],
+        task['dmetOEI'],
+        task['dmetFOCK'],
+        task['dmetTEI'],
+        task['Norb'],
+        task['Nel'],
+        task['Nimp'],
+        task.get('DMguessRHF'),
+        chempot_imp=task.get('chempot_imp', 0.0),
+        eom_type=task.get('eom_type', 'EE-Singlet'),
+        nroots=task.get('eom_nroots', 3),
+        koopmans=task.get('eom_koopmans', False),
+        **task.get('eom_kwargs', {}),
+    )

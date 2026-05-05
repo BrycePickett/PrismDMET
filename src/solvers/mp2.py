@@ -83,3 +83,35 @@ def solve( CONST, OEI, FOCK, TEI, Norb, Nel, Nimp, DMguessRHF, chempot_imp=0.0, 
     ImpurityEnergy += 0.125 * np.einsum( 'ijkl,ijkl->', TwoRDM_loc[:,:,:,:Nimp], TEI[:,:,:,:Nimp] )
     return ( ImpurityEnergy, OneRDM_loc )
 
+
+# ---------------------------------------------------------------------------
+# SolverFactory entry point
+# ---------------------------------------------------------------------------
+
+def execute(task):
+    """
+    SolverFactory-compatible wrapper for the MP2 solver.
+
+    Unpacks the standardised task dict and calls solve().
+
+    Parameters
+    ----------
+    task : dict
+        Must contain: CONST, dmetOEI, dmetFOCK, dmetTEI, Norb, Nel, Nimp,
+        DMguessRHF, chempot_imp.
+
+    Returns
+    -------
+    (ImpurityEnergy, OneRDM_loc) — same as solve().
+    """
+    return solve(
+        task['CONST'],
+        task['dmetOEI'],
+        task['dmetFOCK'],
+        task['dmetTEI'],
+        task['Norb'],
+        task['Nel'],
+        task['Nimp'],
+        task.get('DMguessRHF'),
+        task.get('chempot_imp', 0.0),
+    )
