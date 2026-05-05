@@ -35,7 +35,7 @@ mf.scf()
 print(f"RHF energy = {mf.e_tot:.10f}")
 
 # ---- Localize (meta-lowdin is robust for all basis sets) ----
-my_ints = local_integrals.local_integrals(mf, list(range(mol.nao_nr())), 'meta_lowdin')
+my_ints = local_integrals.LocalIntegrals(mf, list(range(mol.nao_nr())), 'meta_lowdin')
 my_ints.TI_OK = True  # H6 ring is translationally invariant
 
 # ---- 1 atom per fragment ----
@@ -47,8 +47,8 @@ print("\n" + "="*60)
 print("  Run 1: NO symmetry (sequential)")
 print("="*60)
 t0 = time.time()
-thedmet_nosym = dmet.dmet(my_ints, impurity_clusters, False,
-                           method='CC', SCmethod='NONE',
+thedmet_nosym = dmet.DMET(my_ints, impurity_clusters, False,
+                           method='CC', sc_method='NONE',
                            use_symmetry=False)
 e_nosym = thedmet_nosym.selfconsistent()
 t_nosym = time.time() - t0
@@ -60,8 +60,8 @@ print("\n" + "="*60)
 print("  Run 2: WITH symmetry auto-detection")
 print("="*60)
 t0 = time.time()
-thedmet_sym = dmet.dmet(my_ints, impurity_clusters, False,
-                         method='CC', SCmethod='NONE',
+thedmet_sym = dmet.DMET(my_ints, impurity_clusters, False,
+                         method='CC', sc_method='NONE',
                          use_symmetry=True)
 e_sym = thedmet_sym.selfconsistent()
 t_sym = time.time() - t0
@@ -75,8 +75,8 @@ print("="*60)
 # Explicitly tell Prismdmet that fragments 1-5 are equivalent to fragment 0
 user_map = {i: 0 for i in range(1, nat)}
 t0 = time.time()
-thedmet_usermap = dmet.dmet(my_ints, impurity_clusters, False,
-                              method='CC', SCmethod='NONE',
+thedmet_usermap = dmet.DMET(my_ints, impurity_clusters, False,
+                              method='CC', sc_method='NONE',
                               use_symmetry=True, symmetry_map=user_map)
 e_usermap = thedmet_usermap.selfconsistent()
 t_usermap = time.time() - t0

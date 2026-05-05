@@ -287,12 +287,12 @@ def _compute_impurity_energy(const, fock_copy, oei, tei, nimp,
 
 
 # ---------------------------------------------------------------------------
-# solver_dispatcher entry point
+# SolverDispatcher entry point
 # ---------------------------------------------------------------------------
 
 def execute(task):
     """
-    solver_dispatcher-compatible wrapper for the CC solver.
+    SolverDispatcher-compatible wrapper for the CC solver.
 
     Unpacks the standardised task dict and calls solve(). Supports all
     CC_E_TYPE variants: 'LAMBDA', 'LAMBDA_AMP', 'LAMBDA_ZERO', 'CASCI',

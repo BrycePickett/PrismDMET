@@ -11,7 +11,7 @@ import iao_helper
 import numpy as np
 
 
-class local_integrals:
+class LocalIntegrals:
     """
     Constructs and stores the localized molecular orbital (LMO) basis and
     the corresponding 1e/2e integrals required for dmet embedding.

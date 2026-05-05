@@ -238,12 +238,12 @@ def _run_eom(ccsolver, eom_type, nroots, koopmans, eom_kwargs):
 
 
 # ---------------------------------------------------------------------------
-# solver_dispatcher entry point
+# SolverDispatcher entry point
 # ---------------------------------------------------------------------------
 
 def execute(task):
     """
-    solver_dispatcher-compatible wrapper for the EOM-CCSD solver.
+    SolverDispatcher-compatible wrapper for the EOM-CCSD solver.
 
     Unpacks the standardised task dict and calls solve(), which returns
     a 3-tuple: (impurity_energy, pyscf_rdm1, eom_results).

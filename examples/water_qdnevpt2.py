@@ -52,7 +52,7 @@ print(f"\nRHF energy = {mf.e_tot:.10f} Ha")
 # ---------------------------------------------------------------------------
 # 3.  Local integrals for dmet embedding
 # ---------------------------------------------------------------------------
-my_ints = local_integrals.local_integrals(mf, list(range(mol.nao_nr())), 'meta_lowdin')
+my_ints = local_integrals.LocalIntegrals(mf, list(range(mol.nao_nr())), 'meta_lowdin')
 my_ints.TI_OK = False
 
 # ---------------------------------------------------------------------------
@@ -76,10 +76,10 @@ fragments   = make_fragments(mol, my_ints, atom_groups)
 # ---------------------------------------------------------------------------
 n_states = 6
 
-solver = dmet.dmet(
+solver = dmet.DMET(
     my_ints,
     fragments,
-    isTranslationInvariant = False,
+    is_translation_invariant = False,
     method      = 'QD-NEVPT2',
     mf_real     = mf,              # REQUIRED for QD-NEVPT2
     ncas        = 6,               # active orbitals (6 for water with aug-cc-pvdz)
@@ -95,7 +95,7 @@ solver = dmet.dmet(
         'nfrozen'        : 1,      # freeze 1s oxygen core
         'compute_singles': False,
     },
-    SCmethod    = 'NONE',
+    sc_method    = 'NONE',
     print_u     = False,
     print_rdm   = False,
 )

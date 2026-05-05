@@ -171,7 +171,7 @@ ECCSD2 = ERHF2 + ECORR2
 
 if ( True ):
     # Perform dmet on the large system (mol1)
-    my_ints = local_integrals.local_integrals( mf1, list(range( mol1.nao_nr())), 'meta_lowdin' )
+    my_ints = local_integrals.LocalIntegrals( mf1, list(range( mol1.nao_nr())), 'meta_lowdin' )
     my_ints.molden( 'emft-loc.molden' )
     
     # Define physical units by atom index: 
@@ -186,8 +186,8 @@ if ( True ):
         atom_groups = [ [item for sub in atom_units[0 : n_carbon_units+1] for item in sub] ]
         impurity_clusters = make_fragments( mol1, my_ints, atom_groups )
 
-        thedmet = dmet.dmet( my_ints, impurity_clusters, isTranslationInvariant=False, 
-                             method='CC', SCmethod='NONE', CC_E_TYPE='CASCI' )
+        the_dmet = dmet.DMET( my_ints, impurity_clusters, is_translation_invariant=False, 
+                             method='CC', sc_method='NONE', CC_E_TYPE='CASCI' )
         
-        the_energy = thedmet.selfconsistent()
+        the_energy = the_dmet.selfconsistent()
         print("######  dmet(", n_carbon_units,"C , CCSD ) /", thebasis1, "/", thebasis2, " =", the_energy + ECCSD2)

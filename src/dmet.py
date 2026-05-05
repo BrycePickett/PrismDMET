@@ -10,8 +10,8 @@ from scipy import optimize
 import time
 import os
 import concurrent.futures
-from solvers import solver_dispatcher
-from fragment_builder import fragment_builder
+from solvers import SolverDispatcher
+from fragment_builder import FragmentBuilder
 
 # Methods that can be run in parallel worker processes (all inputs are plain numpy arrays)
 _PARALLEL_METHODS = frozenset({'ED', 'FCI', 'CC', 'MP2', 'EOM-CC', 'DMRG', 'flag_rhf'})
@@ -25,9 +25,9 @@ def _fragment_worker(task):
     All inputs and outputs are plain numpy arrays or Python scalars — no
     PySCF objects are passed across process boundaries.
 
-    Delegates entirely to solver_dispatcher.execute(task), which is the single
+    Delegates entirely to SolverDispatcher.execute(task), which is the single
     authoritative dispatch point for all solver methods. The returned dict
-    from solver_dispatcher is already in the standardised format expected by
+    from SolverDispatcher is already in the standardised format expected by
     doexact() Phase 3.
 
     Parameters
@@ -40,7 +40,7 @@ def _fragment_worker(task):
     Returns
     -------
     dict with keys 'counter', 'energy', 'rdm1', plus optional method-specific
-    keys ('eom_res', etc.) — as returned by solver_dispatcher.execute().
+    keys ('eom_res', etc.) — as returned by SolverDispatcher.execute().
     """
     # Pin BLAS to 1 thread inside workers to prevent over-subscription
     os.environ['OMP_NUM_THREADS'] = '1'
@@ -48,17 +48,17 @@ def _fragment_worker(task):
     os.environ['OPENBLAS_NUM_THREADS'] = '1'
 
     # Ensure the src/ directory is on sys.path so solver modules are importable
-    # inside the spawned subprocess (solver_dispatcher._ensure_src_path handles this).
+    # inside the spawned subprocess (SolverDispatcher._ensure_src_path handles this).
     import sys
     src_path = task.get('src_path', '')
     if src_path and src_path not in sys.path:
         sys.path.insert(0, src_path)
 
-    from solvers import solver_dispatcher
-    return solver_dispatcher.execute(task)
+    from solvers import SolverDispatcher
+    return SolverDispatcher.execute(task)
 
 
-class dmet:
+class DMET:
 
     def __init__( self, the_ints, impurity_clusters, is_translation_invariant, method='ED',
                   sc_method='LSTSQ', fit_imp_bath=True, use_constrained_opt=False,
@@ -77,12 +77,12 @@ class dmet:
         _valid_methods = {'ED', 'FCI', 'DMRG', 'DMRG-CheMPS2', 'CC', 'MP2', 'RHF',
                           'EOM-CC', 'CASSCF', 'QD-NEVPT2', 'NEVPT2'}
         assert method in _valid_methods, \
-            f"dmet: unknown method='{method}'. Valid: {sorted(_valid_methods)}"
+            f"DMET: unknown method='{method}'. Valid: {sorted(_valid_methods)}"
         if method in ('QD-NEVPT2', 'NEVPT2'):
             if mf_real is None:
                 raise ValueError(
                     f"method='{method}' requires mf_real: a converged RHF object on the "
-                    f"REAL physical molecule. Pass it as mf_real=mf to dmet.__init__."
+                    f"REAL physical molecule. Pass it as mf_real=mf to DMET.__init__."
                 )
             if ncas is None or nelecas is None:
                 raise ValueError(
@@ -95,7 +95,7 @@ class dmet:
                 )
         assert (( sc_method == 'LSTSQ' ) or ( sc_method == 'BFGS' ) or ( sc_method == 'NONE' ))
         _valid_cc_etypes = {'LAMBDA', 'LAMBDA_AMP', 'LAMBDA_ZERO', 'CASCI', 'CCSD(T)', 'CCSD(T)_RDM', 'EOM-CCSD'}
-        assert CC_E_TYPE in _valid_cc_etypes, f"dmet: unknown CC_E_TYPE='{CC_E_TYPE}'. Valid: {_valid_cc_etypes}"
+        assert CC_E_TYPE in _valid_cc_etypes, f"DMET: unknown CC_E_TYPE='{CC_E_TYPE}'. Valid: {_valid_cc_etypes}"
 
         self.ints       = the_ints
         self.norb       = self.ints.Norbs
@@ -171,7 +171,7 @@ class dmet:
             from solvers.eomcc import _VALID_EOM_TYPES as _EOM_SET
             if eom_type not in _EOM_SET:
                 raise ValueError(
-                    f"dmet: unknown eom_type='{eom_type}'. Valid: {sorted(_EOM_SET)}"
+                    f"DMET: unknown eom_type='{eom_type}'. Valid: {sorted(_EOM_SET)}"
                 )
 
         if ( self.do_det == True ):
@@ -195,7 +195,7 @@ class dmet:
         self.imp_size = self.make_imp_size()
         self.mu_imp   = 0.0
         self.mask     = self.make_mask()
-        self.helper   = prismdmet_helper.PrismdmetHelper( self.ints, self.makelist_H1(), self.altcostfunc, self.minFunc )
+        self.helper   = prismdmet_helper.PrismDMETHelper( self.ints, self.makelist_H1(), self.altcostfunc, self.minFunc )
 
         self.time_ed  = 0.0
         self.time_cf  = 0.0
@@ -349,7 +349,7 @@ class dmet:
         # Instantiate fragment_builder once per doexact() call.
         # It holds lightweight references to ints and helper; it does NOT copy
         # the large integral tensors.
-        _builder = fragment_builder(
+        _builder = FragmentBuilder(
             ints     = self.ints,
             helper   = self.helper,
             impClust = self.impClust,
@@ -397,7 +397,7 @@ class dmet:
             # Populate dmetOrbs for bath-dump and cost-function use
             self.dmetOrbs.append(loc_2_dmet[:, :norb_in_imp])
 
-            print("dmet::exact : Performing a (", norb_in_imp, "orb,",
+            print("DMET::exact : Performing a (", norb_in_imp, "orb,",
                   nelec_in_imp, "el ) dmet active space calculation.")
 
             _frag_meta.append({
@@ -415,7 +415,7 @@ class dmet:
             })
 
             # ---------------------------------------------------------------
-            # Build the full task dict for solver_dispatcher / parallel worker.
+            # Build the full task dict for SolverDispatcher / parallel worker.
             #
             # All keys are plain numpy arrays or Python scalars so the task
             # dict is always picklable regardless of method.  PySCF's mf_real
@@ -755,10 +755,10 @@ class dmet:
                                    mo_guess=None):
         """
         Run a single fragment solver sequentially and return a standardised
-        result dict via solver_dispatcher.execute(task).
+        result dict via SolverDispatcher.execute(task).
 
         All solver-specific argument marshalling is done here by building
-        the task dict, then delegating to solver_dispatcher. This means the
+        the task dict, then delegating to SolverDispatcher. This means the
         sequential path and the parallel worker path share exactly the same
         dispatch logic — there is no duplication.
 
@@ -770,7 +770,7 @@ class dmet:
         -------
         dict with keys: 'energy', 'rdm1', and optionally 'cas_res',
         'eom_res', 'qdnevpt2_res', 'nevpt2_res' — as returned by
-        solver_dispatcher.execute().
+        SolverDispatcher.execute().
         """
         # ------------------------------------------------------------------
         # CASSCF-specific pre-processing: warm-restart cache injection
@@ -790,10 +790,10 @@ class dmet:
                 _mo_guess_cas, fidelity = project_amo_manually(
                     old_mo, _ncas, _ncore, dmet_fock, norb_in_imp)
                 if np.min(fidelity) < 0.5:
-                    print("dmet::CASSCF : Low projection fidelity, discarding CI guess.")
+                    print("DMET::CASSCF : Low projection fidelity, discarding CI guess.")
                     _ci_guess_cas = None
             else:
-                print("dmet::CASSCF : MO shape mismatch, starting fresh.")
+                print("DMET::CASSCF : MO shape mismatch, starting fresh.")
                 _mo_guess_cas = None
 
         # Spin oei for open-shell environments (CASSCF only)
@@ -803,9 +803,9 @@ class dmet:
                            if hasattr(self.ints, 'dmet_oei_s') else self.oei_s)
 
         # ------------------------------------------------------------------
-        # Build the standardised task dict understood by solver_dispatcher.
+        # Build the standardised task dict understood by SolverDispatcher.
         # All solver-specific optional keys use .get() with safe defaults
-        # so that solver_dispatcher can remain decoupled from dmet.py internals.
+        # so that SolverDispatcher can remain decoupled from dmet.py internals.
         # ------------------------------------------------------------------
         task = {
             # Core identity
@@ -843,13 +843,13 @@ class dmet:
         }
 
         # ------------------------------------------------------------------
-        # Delegate to solver_dispatcher — single authoritative dispatch.
+        # Delegate to SolverDispatcher — single authoritative dispatch.
         # ------------------------------------------------------------------
-        result = solver_dispatcher.execute(task)
+        result = SolverDispatcher.execute(task)
 
         # ------------------------------------------------------------------
         # Post-process: extract CASSCF warm-restart artefacts and store them
-        # back into frag_caches. solver_dispatcher returns 'cas_res' when
+        # back into frag_caches. SolverDispatcher returns 'cas_res' when
         # method='CASSCF'; we unpack it here because frag_caches is owned
         # by dmet, not by the solver.
         # ------------------------------------------------------------------
@@ -1266,7 +1266,7 @@ class dmet:
 
 def make_fragments( mol, myInts, atom_groups ):
     '''
-    Build the impurity_clusters list required by dmet.__init__ by specifying
+    Build the impurity_clusters list required by DMET.__init__ by specifying
     groups of atom indices rather than raw orbital indices.
 
     Parameters

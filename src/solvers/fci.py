@@ -39,12 +39,12 @@ def solve( const, oei, fock, tei, norb, nel, nimp, chempot_imp=0.0, printoutput=
 
 
 # ---------------------------------------------------------------------------
-# solver_dispatcher entry point
+# SolverDispatcher entry point
 # ---------------------------------------------------------------------------
 
 def execute(task):
     """
-    solver_dispatcher-compatible wrapper for the FCI solver.
+    SolverDispatcher-compatible wrapper for the FCI solver.
 
     Unpacks the standardised task dict and calls solve().
 

@@ -46,7 +46,7 @@ print(f"\nRHF energy = {mf.e_tot:.10f} Ha")
 # ---------------------------------------------------------------------------
 # 3.  Localise orbitals
 # ---------------------------------------------------------------------------
-my_ints = local_integrals.local_integrals(mf, list(range(mol.nao_nr())), 'meta_lowdin')
+my_ints = local_integrals.LocalIntegrals(mf, list(range(mol.nao_nr())), 'meta_lowdin')
 my_ints.TI_OK = False
 
 # ---------------------------------------------------------------------------
@@ -61,15 +61,15 @@ fragments   = make_fragments(mol, my_ints, atom_groups)
 # ---------------------------------------------------------------------------
 # 5.  EOM-CC dmet solver
 # ---------------------------------------------------------------------------
-eom_solver = dmet.dmet(
+eom_solver = dmet.DMET(
     my_ints,
     fragments,
-    isTranslationInvariant = False,
+    is_translation_invariant = False,
     method     = 'EOM-CC',
     eom_type   = 'EE-Singlet',   # switch to 'IP', 'EA', 'EE-Triplet', etc.
     eom_nroots = 5,              # number of excited states per fragment
     eom_koopmans = False,        
-    SCmethod   = 'NONE',         # required for EOM-CC (oneshot only)
+    sc_method   = 'NONE',         # required for EOM-CC (oneshot only)
     print_u    = False,
     print_rdm  = False,
 )
@@ -107,13 +107,13 @@ print("\n" + "="*60)
 print("  IP-EOM-CCSD (ionisation potentials)")
 print("="*60)
 
-ip_solver = dmet.dmet(
+ip_solver = dmet.DMET(
     my_ints, fragments,
-    isTranslationInvariant = False,
+    is_translation_invariant = False,
     method       = 'EOM-CC',
     eom_type     = 'IP',
     eom_nroots   = 3,
-    SCmethod     = 'NONE',
+    sc_method     = 'NONE',
     print_u      = False,
     print_rdm    = False,
 )

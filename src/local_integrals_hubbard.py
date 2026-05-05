@@ -20,7 +20,7 @@
 import rhf
 import numpy as np
 
-class localintegrals_hubbard:
+class LocalIntegralsHubbard:
 
     def __init__( self, hopping, HubbardU, Nelectrons ):
     
@@ -88,11 +88,11 @@ class localintegrals_hubbard:
         FOCKdmet = np.dot( np.dot( loc_2_dmet[:,:numActive].T, self.loc_fock( coreDMloc ) ), loc_2_dmet[:,:numActive] )
         return FOCKdmet
         
-    def dmet_init_guess_rhf( self, loc_2_dmet, numActive, numPairs, Nimp, chempot_imp ):
+    def dmet_init_guess_rhf( self, loc_2_dmet, numActive, numPairs, nimp, chempot_imp ):
     
         Fock_small = np.dot( np.dot( loc_2_dmet[:,:numActive].T, self.activeFOCK ), loc_2_dmet[:,:numActive] )
         if (chempot_imp != 0.0):
-            for orb in range(Nimp):
+            for orb in range(nimp):
                 Fock_small[ orb, orb ] -= chempot_imp
         eigvals, eigvecs = np.linalg.eigh( Fock_small )
         eigvecs = eigvecs[ :, eigvals.argsort() ]

@@ -12,7 +12,7 @@ import sys
 import numpy as np
 
 import local_integrals
-from dmet import dmet, make_fragments
+from dmet import DMET, make_fragments
 from pyscf import gto, scf
 
 # ---------------------------------------------------------------------------
@@ -38,7 +38,7 @@ print(f"RHF energy = {mf.e_tot:.10f} Ha")
 # ---------------------------------------------------------------------------
 # 3. Local integrals and Fragments
 # ---------------------------------------------------------------------------
-my_ints = local_integrals.local_integrals(mf, list(range(mol.nao_nr())), 'meta_lowdin')
+my_ints = local_integrals.LocalIntegrals(mf, list(range(mol.nao_nr())), 'meta_lowdin')
 
 # Group atoms into 3 fragments (0,1), (2,3), (4,5)
 atom_groups = [[0, 1], [2, 3], [4, 5]]
@@ -50,12 +50,12 @@ impurity_clusters = make_fragments(mol, my_ints, atom_groups)
 n_cas = 4     # active orbitals per fragment
 n_elecas = 4  # active electrons per fragment
 
-my_dmet = dmet(
+my_dmet = DMET(
     my_ints, 
     impurity_clusters, 
-    isTranslationInvariant=False,
+    is_translation_invariant=False,
     method='CASSCF', 
-    SCmethod='NONE',  # one-shot
+    sc_method='NONE',  # one-shot
     ncas=n_cas, 
     nelecas=n_elecas
 )

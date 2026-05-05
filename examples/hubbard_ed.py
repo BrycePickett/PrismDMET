@@ -53,15 +53,15 @@ for Nelectrons in range( 12, 241, 12 ):
        totalcount += item
    assert ( np.linalg.norm( totalcount - np.ones( [ my_ints.Norbs ], dtype=float ) ) < 1e-12 )
 
-   isTranslationInvariant = True
+   is_translation_invariant = True
    method = 'ED'
-   SCmethod = 'LSTSQ' # 'LSTSQ'
-   thedmet = dmet.dmet( my_ints, impurity_clusters, isTranslationInvariant, 
-                        method=method, SCmethod=SCmethod )
+   sc_method = 'LSTSQ' # 'LSTSQ'
+   the_dmet = dmet.DMET( my_ints, impurity_clusters, is_translation_invariant, 
+                        method=method, sc_method=sc_method )
    #oldUMAT = 0.33 * ( 2 * np.random.rand( Norbs, Norbs ) - 1 )
    #if ( oldUMAT != None ):
-   #    thedmet.umat = thedmet.flat2square( thedmet.square2flat( oldUMAT ) )
-   theEnergy = thedmet.selfconsistent()
+   #    the_dmet.umat = the_dmet.flat2square( the_dmet.square2flat( oldUMAT ) )
+   theEnergy = the_dmet.selfconsistent()
    
    fillings.append( (1.0 * Nelectrons) / Norbs )
    energies.append( theEnergy / Norbs )

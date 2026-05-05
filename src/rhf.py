@@ -21,18 +21,18 @@ import numpy as np
 import scipy.sparse.linalg
 from pyscf import gto, scf, ao2mo
 
-def solve_ERI( OEI, TEI, dm_guess, numPairs ):
+def solve_ERI( oei, tei, dm_guess, numPairs ):
 
     mol = gto.Mole()
     mol.build(verbose=3)
     mol.atom.append(('C', (0, 0, 0)))
     mol.nelectron = 2 * numPairs
 
-    L = OEI.shape[0]
+    L = oei.shape[0]
     mf = scf.RHF( mol )
-    mf.get_hcore = lambda *args: OEI
+    mf.get_hcore = lambda *args: oei
     mf.get_ovlp = lambda *args: np.eye( L )
-    mf._eri = ao2mo.restore(8, TEI, L)
+    mf._eri = ao2mo.restore(8, tei, L)
     
     mf.scf( dm_guess )
     dm_loc = np.dot(np.dot( mf.mo_coeff, np.diag( mf.mo_occ )), mf.mo_coeff.T )
@@ -69,16 +69,16 @@ def wrap_my_veff( mol_orig, ao2basis ): # mol_orig works in ao
         
     return my_veff
 
-def solve_JK( OEI, mol_orig, ao2basis, dm_guess, numPairs ):
+def solve_JK( oei, mol_orig, ao2basis, dm_guess, numPairs ):
 
     mol = gto.Mole()
     mol.build(verbose=0)
     mol.atom.append(('C', (0, 0, 0)))
     mol.nelectron = 2 * numPairs
 
-    L = OEI.shape[0]
+    L = oei.shape[0]
     mf = scf.RHF( mol )
-    mf.get_hcore = lambda *args: OEI
+    mf.get_hcore = lambda *args: oei
     mf.get_ovlp = lambda *args: np.eye( L )
     mf._eri = None
     mf.get_jk   = wrap_my_jk(   mol_orig, ao2basis )

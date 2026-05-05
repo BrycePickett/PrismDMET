@@ -221,12 +221,12 @@ def solve(const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
 
 
 # ---------------------------------------------------------------------------
-# solver_dispatcher entry point
+# SolverDispatcher entry point
 # ---------------------------------------------------------------------------
 
 def execute(task):
     """
-    solver_dispatcher-compatible wrapper for the CASSCF solver.
+    SolverDispatcher-compatible wrapper for the CASSCF solver.
 
     Unpacks the standardised task dict and calls solve(), which returns
     a 3-tuple: (impurity_energy, pyscf_rdm1, cas_results).

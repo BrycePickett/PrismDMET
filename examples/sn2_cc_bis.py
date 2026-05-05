@@ -62,7 +62,7 @@ if ( False ):
     print("e_ccsd for structure", thestructure, "=", e_ccsd)
     
 if ( True ):
-    my_ints = local_integrals.local_integrals( mf, list(range( mol.nao_nr())), 'meta_lowdin' )
+    my_ints = local_integrals.LocalIntegrals( mf, list(range( mol.nao_nr())), 'meta_lowdin' )
     my_ints.molden( 'sn2-loc.molden' )
     
     # Define physical units by atom index for sn2_bis (Cl, Br, C12H25 chain): 
@@ -87,14 +87,14 @@ if ( True ):
             for i in range(1, len(impurity_clusters)):
                 impurity_clusters[i] *= -1
 
-        thedmet = dmet.dmet( my_ints, impurity_clusters, isTranslationInvariant=False, 
-                             method='CC', SCmethod='NONE',
+        the_dmet = dmet.DMET( my_ints, impurity_clusters, is_translation_invariant=False, 
+                             method='CC', sc_method='NONE',
                              CC_E_TYPE='CASCI' if casci_energy_formula else 'CCSD' )
 
         if ( one_bath_orb_per_bond == True ):
-            thedmet.BATH_ORBS = 2 * np.ones( [ len(impurity_clusters) ], dtype=int )
-            thedmet.BATH_ORBS[ 0 ] = 1
-            thedmet.BATH_ORBS[ len(impurity_clusters) - 1 ] = 1
+            the_dmet.BATH_ORBS = 2 * np.ones( [ len(impurity_clusters) ], dtype=int )
+            the_dmet.BATH_ORBS[ 0 ] = 1
+            the_dmet.BATH_ORBS[ len(impurity_clusters) - 1 ] = 1
             
-        the_energy = thedmet.selfconsistent()
+        the_energy = the_dmet.selfconsistent()
         print("######  dmet(", carbons_in_cluster,"C , CCSD ) /", thebasis1, "/", thebasis2, " =", the_energy)

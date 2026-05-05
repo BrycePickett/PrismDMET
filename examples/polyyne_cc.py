@@ -67,7 +67,7 @@ for alpha in np.arange(0.88, 1.13, 0.02):
         EMP2 = mf.e_tot + e_corr
         print("EMP2 for alpha ",alpha," =", EMP2)
     
-    my_ints = local_integrals.local_integrals( mf, list(range( mol.nao_nr())), 'meta_lowdin' )
+    my_ints = local_integrals.LocalIntegrals( mf, list(range( mol.nao_nr())), 'meta_lowdin' )
     my_ints.molden( 'polyyne-loc.molden' )
 
     # Build fragments with the helper: 4 atoms per impurity
@@ -75,11 +75,11 @@ for alpha in np.arange(0.88, 1.13, 0.02):
     atom_groups = [ list(range(i, i+atoms_per_imp)) for i in range(0, nat, atoms_per_imp) ]
     impurity_clusters = make_fragments( mol, my_ints, atom_groups )
 
-    isTranslationInvariant = False # Both in meta_lowdin (due to px, py) and Boys TI is not OK
+    is_translation_invariant = False # Both in meta_lowdin (due to px, py) and Boys TI is not OK
     method = 'CC'
-    SCmethod = 'NONE' #Don't do it self-consistently
-    thedmet = dmet.dmet( my_ints, impurity_clusters, isTranslationInvariant,
-                         method=method, SCmethod=SCmethod )
-    thedmet.selfconsistent()
-    #thedmet.dump_bath_orbs( 'polyyne-bath.molden' )
+    sc_method = 'NONE' #Don't do it self-consistently
+    the_dmet = dmet.DMET( my_ints, impurity_clusters, is_translation_invariant,
+                         method=method, sc_method=sc_method )
+    the_dmet.selfconsistent()
+    #the_dmet.dump_bath_orbs( 'polyyne-bath.molden' )
 

@@ -170,12 +170,12 @@ def _reconstruct_mf_from_task(task):
 
 
 # ---------------------------------------------------------------------------
-# solver_dispatcher entry point
+# SolverDispatcher entry point
 # ---------------------------------------------------------------------------
 
 def execute(task):
     """
-    solver_dispatcher entry point for the NEVPT2 solver.
+    SolverDispatcher entry point for the NEVPT2 solver.
 
     Supports two transport modes for the physical SCF object:
 

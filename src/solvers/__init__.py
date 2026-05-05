@@ -3,7 +3,7 @@ Central dispatcher that maps method-key strings to solver implementations.
 
 Every solver module exposes a top-level execute(task) function that accepts a
 standardized task dictionary and returns a standardized result dictionary.
-solver_dispatcher.execute(task) delegates to the correct module based on
+SolverDispatcher.execute(task) delegates to the correct module based on
 task['method'], so dmet.py and the parallel worker do not need to know
 anything about individual solver signatures.
 
@@ -105,12 +105,12 @@ def _ensure_src_path(task):
         sys.path.insert(0, src_path)
 
 
-class solver_dispatcher:
+class SolverDispatcher:
     """
     Central dispatcher for all dmet fragment solvers.
 
     Usage:
-        result = solver_dispatcher.execute(task)
+        result = SolverDispatcher.execute(task)
 
     If a solver raises MemoryError or an OOM-like RuntimeError, the factory
     retries with the next cheaper method from FALLBACK_CHAIN. The result dict
@@ -142,22 +142,22 @@ class solver_dispatcher:
         method = task['method']
 
         dispatch = {
-            'flag_rhf'    : solver_dispatcher._run_rhf,
-            'ED'          : solver_dispatcher._run_fci,
-            'FCI'         : solver_dispatcher._run_fci,
-            'DMRG'        : solver_dispatcher._run_dmrg,
-            'DMRG-CheMPS2': solver_dispatcher._run_chemps2,
-            'CC'          : solver_dispatcher._run_cc,
-            'MP2'         : solver_dispatcher._run_mp2,
-            'EOM-CC'      : solver_dispatcher._run_eomcc,
-            'CASSCF'      : solver_dispatcher._run_casscf,
-            'QD-NEVPT2'   : solver_dispatcher._run_qdnevpt2,
-            'NEVPT2'      : solver_dispatcher._run_nevpt2,
+            'flag_rhf'    : SolverDispatcher._run_rhf,
+            'ED'          : SolverDispatcher._run_fci,
+            'FCI'         : SolverDispatcher._run_fci,
+            'DMRG'        : SolverDispatcher._run_dmrg,
+            'DMRG-CheMPS2': SolverDispatcher._run_chemps2,
+            'CC'          : SolverDispatcher._run_cc,
+            'MP2'         : SolverDispatcher._run_mp2,
+            'EOM-CC'      : SolverDispatcher._run_eomcc,
+            'CASSCF'      : SolverDispatcher._run_casscf,
+            'QD-NEVPT2'   : SolverDispatcher._run_qdnevpt2,
+            'NEVPT2'      : SolverDispatcher._run_nevpt2,
         }
 
         if method not in dispatch:
             raise ValueError(
-                f"solver_dispatcher.execute: unknown method='{method}'. "
+                f"SolverDispatcher.execute: unknown method='{method}'. "
                 f"Valid keys: {sorted(dispatch.keys())}"
             )
 
@@ -191,7 +191,7 @@ class solver_dispatcher:
             task['method']        = fallback
             task['fallback_from'] = original_method
 
-            result = solver_dispatcher.execute(task)
+            result = SolverDispatcher.execute(task)
             result.setdefault('fallback_from', original_method)
             return result
 

@@ -6,22 +6,22 @@ performs the Schmidt decomposition, environment occupation clamping, integral
 projection into the dmet basis, and density matrix initial guess construction.
 
 It does not call any solver and does not know about parallelism. The result
-dict it returns is plain Python and numpy, suitable for solver_dispatcher or a
+dict it returns is plain Python and numpy, suitable for SolverDispatcher or a
 parallel worker.
 """
 
 import numpy as np
 
 
-class fragment_builder:
+class FragmentBuilder:
     """
     Builds the per-fragment embedding Hamiltonian from the mean-field 1-RDM.
 
     Parameters
     ----------
-    ints : local_integrals.local_integrals
+    ints : local_integrals.LocalIntegrals
         Localized integral object for the full system.
-    helper : prismdmet_helper.PrismdmetHelper
+    helper : prismdmet_helper.PrismDMETHelper
         Helper providing constructbath and construct1RDM_loc.
     impClust : list of ndarray
         Impurity cluster masks, one per fragment. Negative values signal

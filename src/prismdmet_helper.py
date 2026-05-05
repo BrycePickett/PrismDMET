@@ -14,13 +14,13 @@ _so_path     = os.path.join(_base_dir, '..', 'lib', 'libprismdmet.so')
 lib_prismdmet = ctypes.CDLL(os.path.abspath(_so_path))
 
 
-class PrismdmetHelper:
+class PrismDMETHelper:
     """
     Provides the bath construction and 1-RDM routines needed by the dmet loop.
 
     Parameters
     ----------
-    locints : local_integrals.local_integrals
+    locints : local_integrals.LocalIntegrals
         The localized integral object for the full system.
     list_H1 : list of ndarray
         The H1 basis matrices that parametrize the correlation potential (u-matrix).
@@ -38,7 +38,7 @@ class PrismdmetHelper:
         self.minFunc  = None
 
         if self.altcf:
-            assert minFunc in ('OEI', 'FOCK_INIT')
+            assert minFunc in ('oei', 'fock_init')
             self.minFunc = minFunc
 
         # Sparse representation of the H1 basis for the C-level gradient
@@ -71,11 +71,11 @@ class PrismdmetHelper:
         umat_loc : ndarray (Norbs, Norbs)
             The correlation potential in the LMO basis.
         """
-        if self.altcf and self.minFunc == 'OEI':
-            OEI = self.locints.loc_oei() + umat_loc
+        if self.altcf and self.minFunc == 'oei':
+            oei = self.locints.loc_oei() + umat_loc
         else:
-            OEI = self.locints.loc_fock() + umat_loc
-        dm_loc = self._build_1rdm(OEI, self.numPairs)
+            oei = self.locints.loc_fock() + umat_loc
+        dm_loc = self._build_1rdm(oei, self.numPairs)
         if doSCF:
             if self.locints.ERIinMEM:
                 dm_loc = rhf.solve_ERI(self.locints.loc_oei() + umat_loc, self.locints.loc_tei(), dm_loc, self.numPairs)
@@ -88,18 +88,18 @@ class PrismdmetHelper:
         Compute the 1-RDM derivative dγ/du via the C-level RHF response function.
         Used to build the analytical gradient of the cost function.
         """
-        OEI = self.locints.loc_fock() + umat_loc
+        oei = self.locints.loc_fock() + umat_loc
         if doSCF:
-            dm_loc = self._build_1rdm(OEI, self.numPairs)
+            dm_loc = self._build_1rdm(oei, self.numPairs)
             if self.locints.ERIinMEM:
                 dm_loc = rhf.solve_ERI(self.locints.loc_oei() + umat_loc, self.locints.loc_tei(), dm_loc, self.numPairs)
             else:
                 dm_loc = rhf.solve_JK(self.locints.loc_oei() + umat_loc, self.locints.mol, self.locints.ao2loc, dm_loc, self.numPairs)
-            OEI = self.locints.loc_fock(dm_loc) + umat_loc
+            oei = self.locints.loc_fock(dm_loc) + umat_loc
 
         if NOrotation is not None:
-            OEI = np.dot(np.dot(NOrotation.T, OEI), NOrotation)
-        OEI_flat = np.array(OEI.reshape(self.locints.Norbs ** 2), dtype=ctypes.c_double)
+            oei = np.dot(np.dot(NOrotation.T, oei), NOrotation)
+        oei_flat = np.array(oei.reshape(self.locints.Norbs ** 2), dtype=ctypes.c_double)
 
         rdm_deriv = np.ones([self.locints.Norbs * self.locints.Norbs * self.Nterms], dtype=ctypes.c_double)
         lib_prismdmet.rhf_response(
@@ -109,14 +109,14 @@ class PrismdmetHelper:
             self.H1start.ctypes.data_as(ctypes.c_void_p),
             self.H1row.ctypes.data_as(ctypes.c_void_p),
             self.H1col.ctypes.data_as(ctypes.c_void_p),
-            OEI_flat.ctypes.data_as(ctypes.c_void_p),
+            oei_flat.ctypes.data_as(ctypes.c_void_p),
             rdm_deriv.ctypes.data_as(ctypes.c_void_p)
         )
         return rdm_deriv.reshape((self.Nterms, self.locints.Norbs, self.locints.Norbs), order='C')
 
-    def _build_1rdm(self, OEI, numPairs):
-        """Build the idempotent 1-RDM by occupying the lowest numPairs eigenstates of OEI."""
-        eigenvals, eigenvecs = np.linalg.eigh(OEI)
+    def _build_1rdm(self, oei, numPairs):
+        """Build the idempotent 1-RDM by occupying the lowest numPairs eigenstates of oei."""
+        eigenvals, eigenvecs = np.linalg.eigh(oei)
         idx = eigenvals.argsort()
         return 2 * np.dot(eigenvecs[:, idx[:numPairs]], eigenvecs[:, idx[:numPairs]].T)
 

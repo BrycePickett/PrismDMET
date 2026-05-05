@@ -78,7 +78,7 @@ for bl in thecases:
             # Order of AO: 3s 2p 1d
             rotation[ offset+2:offset+5,  offset+2:offset+5  ] = ring_helper.p_functions( theta )
         assert( np.linalg.norm( np.dot( rotation, rotation.T ) - np.eye( rotation.shape[0] ) ) < 1e-6 )
-        my_ints = local_integrals.local_integrals( mf, list(range( mol.nao_nr())), localization_type, rotation )
+        my_ints = local_integrals.LocalIntegrals( mf, list(range( mol.nao_nr())), localization_type, rotation )
         if (( localization_type == 'meta_lowdin' ) or ( localization_type == 'iao' )):
             my_ints.TI_OK = True
         my_ints.molden( 'Be-loc.molden' )
@@ -88,14 +88,14 @@ for bl in thecases:
         impurity_clusters = make_fragments( mol, my_ints, atom_groups )
 
         if (( localization_type == 'meta_lowdin' ) or ( localization_type == 'iao' )):
-            isTranslationInvariant = True
+            is_translation_invariant = True
         else:
-            isTranslationInvariant = False # Boys TI is not OK
+            is_translation_invariant = False # Boys TI is not OK
 
         method = 'CC'
-        SCmethod = 'NONE' # NONE or LSTSQ for no self-consistency or least-squares fitting of the u-matrix, respectively
-        thedmet = dmet.dmet( my_ints, impurity_clusters, isTranslationInvariant,
-                             method=method, SCmethod=SCmethod )
-        thedmet.selfconsistent()
-        #thedmet.dump_bath_orbs( 'Be-bathorbs.molden' )
+        sc_method = 'NONE' # NONE or LSTSQ for no self-consistency or least-squares fitting of the u-matrix, respectively
+        the_dmet = dmet.DMET( my_ints, impurity_clusters, is_translation_invariant,
+                             method=method, sc_method=sc_method )
+        the_dmet.selfconsistent()
+        #the_dmet.dump_bath_orbs( 'Be-bathorbs.molden' )
 

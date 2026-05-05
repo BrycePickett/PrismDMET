@@ -181,12 +181,12 @@ def solve(mf_real, ncas, nelecas,
 
 
 # ---------------------------------------------------------------------------
-# solver_dispatcher entry point
+# SolverDispatcher entry point
 # ---------------------------------------------------------------------------
 
 def execute(task):
     """
-    solver_dispatcher-compatible wrapper for the QD-NEVPT2 solver.
+    SolverDispatcher-compatible wrapper for the QD-NEVPT2 solver.
 
     Supports two transport modes for the physical SCF object (mirroring the
     pattern in ``solvers/nevpt2.py``):

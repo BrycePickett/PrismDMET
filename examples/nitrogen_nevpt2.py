@@ -13,7 +13,7 @@ import sys
 import numpy as np
 
 import local_integrals
-from dmet import dmet, make_fragments
+from dmet import DMET, make_fragments
 from pyscf import gto, scf
 
 # ---------------------------------------------------------------------------
@@ -37,7 +37,7 @@ print(f"RHF energy = {mf.e_tot:.10f} Ha")
 # ---------------------------------------------------------------------------
 # 3. Local integrals and Fragments
 # ---------------------------------------------------------------------------
-my_ints = local_integrals.local_integrals(mf, list(range(mol.nao_nr())), 'meta_lowdin')
+my_ints = local_integrals.LocalIntegrals(mf, list(range(mol.nao_nr())), 'meta_lowdin')
 my_ints.TI_OK = False
 
 # Group atoms into 2 fragments (one for each Nitrogen)
@@ -50,13 +50,13 @@ impurity_clusters = make_fragments(mol, my_ints, atom_groups)
 n_cas = 4     # active orbitals per fragment
 n_elecas = 4  # active electrons per fragment
 
-my_dmet = dmet(
+my_dmet = DMET(
     my_ints, 
     impurity_clusters, 
-    isTranslationInvariant=False,
+    is_translation_invariant=False,
     method='NEVPT2', 
     mf_real=mf,           # Required for NEVPT2 methods
-    SCmethod='NONE',      # NEVPT2 only supports one-shot dmet
+    sc_method='NONE',      # NEVPT2 only supports one-shot dmet
     ncas=n_cas, 
     nelecas=n_elecas,
     sa_nstates=1          # Single state (default)

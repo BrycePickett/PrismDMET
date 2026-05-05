@@ -22,7 +22,7 @@ Assumptions:
 import numpy as np
 
 
-class defect_builder:
+class DefectBuilder:
     """
     Automated defect detection and QM cluster selection from XYZ files.
 

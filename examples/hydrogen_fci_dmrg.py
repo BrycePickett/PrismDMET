@@ -57,7 +57,7 @@ for bondlength in bondlengths:
         print("bl =", bondlength," and energy =", Energy)
         
     else:
-        my_ints = local_integrals.local_integrals( mf, list(range( mol.nao_nr())), 'meta_lowdin' )
+        my_ints = local_integrals.LocalIntegrals( mf, list(range( mol.nao_nr())), 'meta_lowdin' )
         my_ints.molden( 'hydrogen-loc.molden' )
         my_ints.TI_OK = True # Only s functions
 
@@ -65,19 +65,19 @@ for bondlength in bondlengths:
         atoms_per_imp = 2
         atom_groups = [ list(range(i, i+atoms_per_imp)) for i in range(0, nat, atoms_per_imp) ]
         impurity_clusters = make_fragments( mol, my_ints, atom_groups )
-        isTranslationInvariant = True # OK because only s-functions and meta-lowdin
+        is_translation_invariant = True # OK because only s-functions and meta-lowdin
 
-        SCmethod = 'LSTSQ'
+        sc_method = 'LSTSQ'
         print("Start FCI dmet")
-        dmetFCI = dmet.dmet( my_ints, impurity_clusters, isTranslationInvariant,
-                             method='FCI', SCmethod=SCmethod, doDET=False )
-        e_fci = dmetFCI.selfconsistent()
+        dmet_fci = dmet.DMET( my_ints, impurity_clusters, is_translation_invariant,
+                             method='FCI', sc_method=sc_method, do_det=False )
+        e_fci = dmet_fci.selfconsistent()
         print("FCI dmet Energy =", e_fci)
 
         print("\nStart DMRG dmet")
-        dmetDMRG = dmet.dmet( my_ints, impurity_clusters, isTranslationInvariant,
-                              method='DMRG', SCmethod=SCmethod, doDET=False )
-        e_dmrg = dmetDMRG.selfconsistent()
+        dmet_dmrg = dmet.DMET( my_ints, impurity_clusters, is_translation_invariant,
+                              method='DMRG', sc_method=sc_method, do_det=False )
+        e_dmrg = dmet_dmrg.selfconsistent()
         print("DMRG dmet Energy =", e_dmrg)
 
         print( "\nDifference between FCI and DMRG: %e" % abs(e_fci - e_dmrg) )

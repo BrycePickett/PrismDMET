@@ -11,16 +11,16 @@ mol.basis = 'sto-3g'
 mol.build(verbose=0)
 mf = scf.RHF(mol).run()
 
-my_ints = local_integrals.local_integrals(mf, list(range(mol.nao_nr())), 'meta_lowdin')
+my_ints = local_integrals.LocalIntegrals(mf, list(range(mol.nao_nr())), 'meta_lowdin')
 fragments = make_fragments(mol, my_ints, [[0, 1]])
 
-print("--- Testing SCmethod='NONE' ---")
-d1 = dmet.dmet(my_ints, fragments, isTranslationInvariant=False, method='FCI', SCmethod='NONE')
+print("--- Testing sc_method='NONE' ---")
+d1 = dmet.DMET(my_ints, fragments, is_translation_invariant=False, method='FCI', sc_method='NONE')
 e1 = d1.selfconsistent()
 mu1 = d1.mu_imp
 
 print("\n--- Testing oneshot(optimize_mu=True) ---")
-d2 = dmet.dmet(my_ints, fragments, isTranslationInvariant=False, method='FCI')
+d2 = dmet.DMET(my_ints, fragments, is_translation_invariant=False, method='FCI')
 e2 = d2.oneshot(optimize_mu=True)
 mu2 = d2.mu_imp
 
@@ -30,4 +30,4 @@ print(f"Explicit One-Shot: Energy = {e2:12.8f}, Mu = {mu2:12.8f}")
 
 assert np.isclose(e1, e2), "Energies do not match"
 assert np.isclose(mu1, mu2), "Chemical potentials do not match"
-print("\nVerification SUCCESSFUL: oneshot() exactly matches SCmethod='NONE' loop.")
+print("\nVerification SUCCESSFUL: oneshot() exactly matches sc_method='NONE' loop.")

@@ -60,12 +60,12 @@ def solve( const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf, chempot_imp=0.0
 
 
 # ---------------------------------------------------------------------------
-# solver_dispatcher entry point
+# SolverDispatcher entry point
 # ---------------------------------------------------------------------------
 
 def execute(task):
     """
-    solver_dispatcher-compatible wrapper for the RHF solver.
+    SolverDispatcher-compatible wrapper for the RHF solver.
 
     Unpacks the standardised task dict and calls solve().
 
