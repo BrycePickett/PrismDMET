@@ -1,5 +1,5 @@
 '''
-    QC-DMET: a python implementation of density matrix embedding theory for ab initio quantum chemistry
+    QC-dmet: a python implementation of density matrix embedding theory for ab initio quantum chemistry
     Copyright (C) 2015 Sebastian Wouters
     
     This program is free software; you can redistribute it and/or modify
@@ -33,11 +33,11 @@ import sn2_struct as sn2_structures
 thestructure = 0                    # any integer in the range [0,8] (inclusive)
 cluster_sizes = np.arange( 1, 5 )   # Number of carbon atoms per cluster
 localization = 'iao'                # 'iao' or 'meta_lowdin' or 'boys'
-# careful with 'iao'; the generic IAO scheme implemented in QC-DMET will not reproduce
+# careful with 'iao'; the generic IAO scheme implemented in QC-dmet will not reproduce
 # results in the manuscript, which use a more careful IAO construction
 single_impurity = True              # Single impurity vs. partitioning
 one_bath_orb_per_bond = True        # Sun & Chan, JCTC 10, 3784 (2014) [ http://dx.doi.org/10.1021/ct500512f ]
-casci_energy_formula = True         # CASCI or DMET energy formula
+casci_energy_formula = True         # CASCI or dmet energy formula
 
 #######################
 #   Parse the input   #
@@ -58,14 +58,14 @@ if ( False ):
 if ( False ):
     ccsolver = ccsd.CCSD( mf )
     ccsolver.verbose = 5
-    ECORR, t1, t2 = ccsolver.ccsd()
-    ECCSD = mf.e_tot + ECORR
+    e_corr, t1, t2 = ccsolver.ccsd()
+    e_ccsd = mf.e_tot + e_corr
     print("ERHF  for structure", thestructure, "=", mf.e_tot)
-    print("ECCSD for structure", thestructure, "=", ECCSD)
+    print("e_ccsd for structure", thestructure, "=", e_ccsd)
     
 if ( True ):
-    myInts = local_integrals.localintegrals( mf, list(range( mol.nao_nr())), 'meta_lowdin' )
-    myInts.molden( 'sn2-loc.molden' )
+    my_ints = local_integrals.local_integrals( mf, list(range( mol.nao_nr())), 'meta_lowdin' )
+    my_ints.molden( 'sn2-loc.molden' )
     
     # Define physical units by atom index: 
     # Unit 0: (F, F, C, H, H)
@@ -82,21 +82,21 @@ if ( True ):
                 group = [item for sub in atom_units[i : i+carbons_in_cluster] for item in sub]
                 atom_groups.append(group)
         
-        impurityClusters = make_fragments( mol, myInts, atom_groups )
+        impurity_clusters = make_fragments( mol, my_ints, atom_groups )
 
         # Apply freezing (RHF solver) for non-edge impurities if using single_impurity partitioning
         if ( not casci_energy_formula and single_impurity ):
-            for i in range(1, len(impurityClusters)):
-                impurityClusters[i] *= -1
+            for i in range(1, len(impurity_clusters)):
+                impurity_clusters[i] *= -1
 
-        theDMET = dmet.dmet( myInts, impurityClusters, isTranslationInvariant=False, 
+        thedmet = dmet.dmet( my_ints, impurity_clusters, isTranslationInvariant=False, 
                              method='CC', SCmethod='NONE',
                              CC_E_TYPE='CASCI' if casci_energy_formula else 'CCSD' )
 
         if ( one_bath_orb_per_bond == True ):
-            theDMET.BATH_ORBS = 2 * np.ones( [ len(impurityClusters) ], dtype=int )
-            theDMET.BATH_ORBS[ 0 ] = 1
-            theDMET.BATH_ORBS[ len(impurityClusters) - 1 ] = 1
+            thedmet.BATH_ORBS = 2 * np.ones( [ len(impurity_clusters) ], dtype=int )
+            thedmet.BATH_ORBS[ 0 ] = 1
+            thedmet.BATH_ORBS[ len(impurity_clusters) - 1 ] = 1
             
-        the_energy = theDMET.selfconsistent()
-        print("######  DMET(", carbons_in_cluster,"C , CCSD ) /", thebasis1, "/", thebasis2, " =", the_energy)
+        the_energy = thedmet.selfconsistent()
+        print("######  dmet(", carbons_in_cluster,"C , CCSD ) /", thebasis1, "/", thebasis2, " =", the_energy)

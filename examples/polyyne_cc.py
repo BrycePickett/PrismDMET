@@ -1,5 +1,5 @@
 '''
-    QC-DMET: a python implementation of density matrix embedding theory for ab initio quantum chemistry
+    QC-dmet: a python implementation of density matrix embedding theory for ab initio quantum chemistry
     Copyright (C) 2015 Sebastian Wouters
     
     This program is free software; you can redistribute it and/or modify
@@ -57,29 +57,29 @@ for alpha in np.arange(0.88, 1.13, 0.02):
     if ( False ):   
         ccsolver = ccsd.CCSD( mf )
         ccsolver.verbose = 5
-        ECORR, t1, t2 = ccsolver.ccsd()
-        ECCSD = mf.e_tot + ECORR
-        print("ECCSD for alpha ",alpha," =", ECCSD)
+        e_corr, t1, t2 = ccsolver.ccsd()
+        e_ccsd = mf.e_tot + e_corr
+        print("e_ccsd for alpha ",alpha," =", e_ccsd)
         
     if ( False ):
         mp2solver = mp.MP2( mf )
-        ECORR, t_mp2 = mp2solver.kernel()
-        EMP2 = mf.e_tot + ECORR
+        e_corr, t_mp2 = mp2solver.kernel()
+        EMP2 = mf.e_tot + e_corr
         print("EMP2 for alpha ",alpha," =", EMP2)
     
-    myInts = local_integrals.localintegrals( mf, list(range( mol.nao_nr())), 'meta_lowdin' )
-    myInts.molden( 'polyyne-loc.molden' )
+    my_ints = local_integrals.local_integrals( mf, list(range( mol.nao_nr())), 'meta_lowdin' )
+    my_ints.molden( 'polyyne-loc.molden' )
 
     # Build fragments with the helper: 4 atoms per impurity
     atoms_per_imp = 4
     atom_groups = [ list(range(i, i+atoms_per_imp)) for i in range(0, nat, atoms_per_imp) ]
-    impurityClusters = make_fragments( mol, myInts, atom_groups )
+    impurity_clusters = make_fragments( mol, my_ints, atom_groups )
 
     isTranslationInvariant = False # Both in meta_lowdin (due to px, py) and Boys TI is not OK
     method = 'CC'
     SCmethod = 'NONE' #Don't do it self-consistently
-    theDMET = dmet.dmet( myInts, impurityClusters, isTranslationInvariant,
+    thedmet = dmet.dmet( my_ints, impurity_clusters, isTranslationInvariant,
                          method=method, SCmethod=SCmethod )
-    theDMET.selfconsistent()
-    #theDMET.dump_bath_orbs( 'polyyne-bath.molden' )
+    thedmet.selfconsistent()
+    #thedmet.dump_bath_orbs( 'polyyne-bath.molden' )
 

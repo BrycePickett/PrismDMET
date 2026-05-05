@@ -1,5 +1,5 @@
 '''
-NEVPT2 solver for QC-DMET.
+NEVPT2 solver for QC-dmet.
 
 Runs CASSCF followed by strongly-contracted NEVPT2 using PySCF's mrpt.NEVPT.
 Supports single-state (nstates=1) and multi-state (nstates > 1) calculations.
@@ -10,7 +10,7 @@ For multi-state runs, the correct procedure is:
     3. Per-state SC-NEVPT2 via mrpt.NEVPT(mc_casci, root=i).
 
 This solver operates on the real physical molecule (mf_real) because PySCF's
-NEVPT2 requires actual mol/mf/mc objects. It is oneshot-DMET only.
+NEVPT2 requires actual mol/mf/mc objects. It is oneshot-dmet only.
 '''
 
 import numpy as np
@@ -45,7 +45,7 @@ def solve(mf_real, ncas, nelecas,
     nelecas       : int  – number of active electrons
     nstates       : int  – number of states (1 = single-state; >1 = multi-state)
     sa_weights    : list of float or None  – SA weights (uniform if None)
-    root          : int  – which state to return as ImpurityEnergy (0 = GS)
+    root          : int  – which state to return as impurity_energy (0 = GS)
     casscf_kwargs : dict – extra attributes set on the CASSCF object
     nevpt2_kwargs : dict – extra attributes set on each mrpt.NEVPT object
     printoutput   : bool
@@ -170,12 +170,12 @@ def _reconstruct_mf_from_task(task):
 
 
 # ---------------------------------------------------------------------------
-# SolverFactory entry point
+# solver_dispatcher entry point
 # ---------------------------------------------------------------------------
 
 def execute(task):
     """
-    SolverFactory entry point for the NEVPT2 solver.
+    solver_dispatcher entry point for the NEVPT2 solver.
 
     Supports two transport modes for the physical SCF object:
 
@@ -207,7 +207,7 @@ def execute(task):
         mo_guess=task.get('mo_guess'),
     )
 
-    # Extract the 1-RDM for the DMET self-consistency loop.
+    # Extract the 1-RDM for the dmet self-consistency loop.
     # Use the NEVPT2 object's relaxed 1-RDM if available; fall back to CASSCF.
     nevpt_gs = nevpt_objs[0]
     if hasattr(nevpt_gs, 'onerdm') and nevpt_gs.onerdm is not None:

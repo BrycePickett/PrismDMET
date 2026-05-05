@@ -6,10 +6,10 @@ This module handles defect detection and cluster index selection only.
 QM/MM background charge setup is a planned future extension.
 
 Usage:
-    topo = DefectTopologist.from_xyz('pristine.xyz', 'defect.xyz')
-    center, defect_type = topo.detect_center()
-    qm_indices = topo.get_qm_region(radius=5.0)
-    impurityClusters = make_fragments(mol, myInts, [qm_indices])
+    builder = defect_builder.from_xyz('pristine.xyz', 'defect.xyz')
+    center, defect_type = builder.detect_center()
+    qm_indices = builder.get_qm_region(radius=5.0)
+    impurity_clusters = make_fragments(mol, myInts, [qm_indices])
 
 Assumptions:
     - XYZ files use the same atom ordering for all non-defect atoms.
@@ -22,7 +22,7 @@ Assumptions:
 import numpy as np
 
 
-class DefectTopologist:
+class defect_builder:
     """
     Automated defect detection and QM cluster selection from XYZ files.
 
@@ -130,12 +130,12 @@ class DefectTopologist:
                             self._defect_coords[unmatched_defect[0]])
         elif n_pris == 0 and n_def == 0:
             raise RuntimeError(
-                "DefectTopologist.detect_center: no structural difference found. "
+                "defect_builder.detect_center: no structural difference found. "
                 "Are the pristine and defect files identical?"
             )
         else:
             raise RuntimeError(
-                f"DefectTopologist.detect_center: ambiguous defect — "
+                f"defect_builder.detect_center: ambiguous defect — "
                 f"{n_pris} unmatched pristine atom(s) and "
                 f"{n_def} unmatched defect atom(s). "
                 f"This module handles single-point defects only. "
@@ -144,7 +144,7 @@ class DefectTopologist:
 
         self._center      = center
         self._defect_type = defect_type
-        print(f"DefectTopologist: detected {defect_type} at {center} Angstrom")
+        print(f"defect_builder: detected {defect_type} at {center} Angstrom")
         return center, defect_type
 
     def get_qm_region(self, radius):
@@ -172,16 +172,16 @@ class DefectTopologist:
         """
         if self._center is None:
             raise RuntimeError(
-                "DefectTopologist.get_qm_region: call detect_center() first."
+                "defect_builder.get_qm_region: call detect_center() first."
             )
         if radius <= 0:
             raise ValueError(
-                f"DefectTopologist.get_qm_region: radius must be positive, got {radius}."
+                f"defect_builder.get_qm_region: radius must be positive, got {radius}."
             )
 
         distances = np.linalg.norm(self._defect_coords - self._center, axis=1)
         indices   = list(np.where(distances < radius)[0])
-        print(f"DefectTopologist: {len(indices)} atoms within {radius} Angstrom of defect center.")
+        print(f"defect_builder: {len(indices)} atoms within {radius} Angstrom of defect center.")
         return indices
 
     def neighbor_shells(self, n_shells=2):
@@ -208,7 +208,7 @@ class DefectTopologist:
         """
         if self._center is None:
             raise RuntimeError(
-                "DefectTopologist.neighbor_shells: call detect_center() first."
+                "defect_builder.neighbor_shells: call detect_center() first."
             )
 
         distances = np.linalg.norm(self._defect_coords - self._center, axis=1)
@@ -224,7 +224,7 @@ class DefectTopologist:
             mask = (distances >= lo - 1e-3) & (distances <= hi + 1e-3)
             shells.append(list(np.where(mask)[0]))
             shell_radii.append(float(hi))
-            print(f"DefectTopologist: shell {i+1}: {len(shells[-1])} atoms within {hi:.3f} Angstrom")
+            print(f"defect_builder: shell {i+1}: {len(shells[-1])} atoms within {hi:.3f} Angstrom")
 
         return shells, shell_radii
 
@@ -237,16 +237,16 @@ class DefectTopologist:
             with open(path) as f:
                 lines = f.readlines()
         except OSError as e:
-            raise ValueError(f"DefectTopologist: cannot open '{path}': {e}")
+            raise ValueError(f"defect_builder: cannot open '{path}': {e}")
 
         if len(lines) < 2:
-            raise ValueError(f"DefectTopologist: file '{path}' is too short for XYZ format.")
+            raise ValueError(f"defect_builder: file '{path}' is too short for XYZ format.")
 
         try:
             natoms = int(lines[0].strip())
         except ValueError:
             raise ValueError(
-                f"DefectTopologist: first line of '{path}' must be atom count, "
+                f"defect_builder: first line of '{path}' must be atom count, "
                 f"got '{lines[0].strip()}'."
             )
 
@@ -258,19 +258,19 @@ class DefectTopologist:
             parts = line.split()
             if len(parts) < 4:
                 raise ValueError(
-                    f"DefectTopologist: line {i+3} in '{path}' has fewer than 4 columns."
+                    f"defect_builder: line {i+3} in '{path}' has fewer than 4 columns."
                 )
             species.append(parts[0])
             try:
                 coords.append([float(parts[1]), float(parts[2]), float(parts[3])])
             except ValueError:
                 raise ValueError(
-                    f"DefectTopologist: cannot parse coordinates on line {i+3} of '{path}'."
+                    f"defect_builder: cannot parse coordinates on line {i+3} of '{path}'."
                 )
 
         if len(species) != natoms:
             raise ValueError(
-                f"DefectTopologist: '{path}' header says {natoms} atoms, "
+                f"defect_builder: '{path}' header says {natoms} atoms, "
                 f"found {len(species)}."
             )
         return species, np.array(coords, dtype=float)

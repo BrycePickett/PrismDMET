@@ -1,8 +1,8 @@
 """
-NEVPT2 one-shot DMET on an N2 molecule.
+NEVPT2 one-shot dmet on an N2 molecule.
 
 This example demonstrates the built-in PySCF-based NEVPT2 solver
-for PrismDMET. The solver automatically handles SA-CASSCF and subsequent
+for Prismdmet. The solver automatically handles SA-CASSCF and subsequent
 NEVPT2 correlation on the fragments.
 
 Run from this directory with the prismdmet conda environment active:
@@ -37,48 +37,48 @@ print(f"RHF energy = {mf.e_tot:.10f} Ha")
 # ---------------------------------------------------------------------------
 # 3. Local integrals and Fragments
 # ---------------------------------------------------------------------------
-myInts = local_integrals.localintegrals(mf, list(range(mol.nao_nr())), 'meta_lowdin')
-myInts.TI_OK = False
+my_ints = local_integrals.local_integrals(mf, list(range(mol.nao_nr())), 'meta_lowdin')
+my_ints.TI_OK = False
 
 # Group atoms into 2 fragments (one for each Nitrogen)
 atom_groups = [[0], [1]]
-impurityClusters = make_fragments(mol, myInts, atom_groups)
+impurity_clusters = make_fragments(mol, my_ints, atom_groups)
 
 # ---------------------------------------------------------------------------
-# 4. DMET NEVPT2 Setup
+# 4. dmet NEVPT2 Setup
 # ---------------------------------------------------------------------------
-NCAS = 4     # active orbitals per fragment
-NELECAS = 4  # active electrons per fragment
+n_cas = 4     # active orbitals per fragment
+n_elecas = 4  # active electrons per fragment
 
-mydmet = dmet(
-    myInts, 
-    impurityClusters, 
+my_dmet = dmet(
+    my_ints, 
+    impurity_clusters, 
     isTranslationInvariant=False,
     method='NEVPT2', 
     mf_real=mf,           # Required for NEVPT2 methods
-    SCmethod='NONE',      # NEVPT2 only supports one-shot DMET
-    ncas=NCAS, 
-    nelecas=NELECAS,
+    SCmethod='NONE',      # NEVPT2 only supports one-shot dmet
+    ncas=n_cas, 
+    nelecas=n_elecas,
     sa_nstates=1          # Single state (default)
 )
 
 # ---------------------------------------------------------------------------
-# 5. Run one-shot DMET
+# 5. Run one-shot dmet
 # ---------------------------------------------------------------------------
 print("\n" + "="*60)
-print(f"  One-shot NEVPT2({NCAS},{NELECAS}) DMET on N2")
+print(f"  One-shot NEVPT2({n_cas},{n_elecas}) dmet on N2")
 print("="*60)
 
-e_prismdmet = mydmet.oneshot(mu_imp=0.0)
+e_prismdmet = my_dmet.oneshot(mu_imp=0.0)
 
-print(f"\nPrismDMET NEVPT2 Total Energy = {e_prismdmet:.10f} Ha")
+print(f"\nPrismdmet NEVPT2 Total Energy = {e_prismdmet:.10f} Ha")
 
 # ---------------------------------------------------------------------------
 # 6. View Fragment Energies
 # ---------------------------------------------------------------------------
-if mydmet.nevpt2_results:
+if my_dmet.nevpt2_results:
     print("\nFragment Energy Contributions:")
-    for i, res in enumerate(mydmet.nevpt2_results):
+    for i, res in enumerate(my_dmet.nevpt2_results):
         print(f"  Fragment {i}:")
         print(f"    E_tot  = {res['e_tot'][0]:.10f} Ha")
         print(f"    E_corr = {res['e_corr'][0]:.10f} Ha")

@@ -1,5 +1,5 @@
 '''
-    QC-DMET: a python implementation of density matrix embedding theory for ab initio quantum chemistry
+    QC-dmet: a python implementation of density matrix embedding theory for ab initio quantum chemistry
     Copyright (C) 2015 Sebastian Wouters
     
     This program is free software; you can redistribute it and/or modify
@@ -122,9 +122,9 @@ def localize_iao( mol, mf ):
     
     # Quick check
     should_be_1 = np.dot( np.dot( ao2loc.T, S1 ), ao2loc )
-    print("QC-DMET :: iao_helper :: num_orb pmol =", pmol.nao_nr())
-    print("QC-DMET :: iao_helper :: num_orb mol  =", mol.nao_nr())
-    print("QC-DMET :: iao_helper :: norm( I - C_full.T * S * C_full ) =", np.linalg.norm( should_be_1 - np.eye( should_be_1.shape[0] ) ))
+    print("QC-dmet :: iao_helper :: num_orb pmol =", pmol.nao_nr())
+    print("QC-dmet :: iao_helper :: num_orb mol  =", mol.nao_nr())
+    print("QC-dmet :: iao_helper :: norm( I - C_full.T * S * C_full ) =", np.linalg.norm( should_be_1 - np.eye( should_be_1.shape[0] ) ))
     
     return ao2loc
     

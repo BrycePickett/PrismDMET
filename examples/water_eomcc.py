@@ -1,9 +1,9 @@
 """
-EOM-CCSD one-shot DMET on a water molecule.
+EOM-CCSD one-shot dmet on a water molecule.
 
-This example demonstrates the EOM-CC solver for PrismDMET. A single
+This example demonstrates the EOM-CC solver for Prismdmet. A single
 impurity is placed on the oxygen atom (all its AOs) with hydrogen
-atoms as the bath.  One-shot DMET is used: no u-matrix optimization
+atoms as the bath.  One-shot dmet is used: no u-matrix optimization
 is performed.
 
 The script runs EE-Singlet EOM-CCSD by default and shows how to switch
@@ -46,8 +46,8 @@ print(f"\nRHF energy = {mf.e_tot:.10f} Ha")
 # ---------------------------------------------------------------------------
 # 3.  Localise orbitals
 # ---------------------------------------------------------------------------
-myInts = local_integrals.localintegrals(mf, list(range(mol.nao_nr())), 'meta_lowdin')
-myInts.TI_OK = False
+my_ints = local_integrals.local_integrals(mf, list(range(mol.nao_nr())), 'meta_lowdin')
+my_ints.TI_OK = False
 
 # ---------------------------------------------------------------------------
 # 4.  Fragment definition  –  O as impurity, H atoms as bath
@@ -56,13 +56,13 @@ myInts.TI_OK = False
 #     simplest valid choice for a small molecule.
 # ---------------------------------------------------------------------------
 atom_groups = [[0, 1, 2]]        # whole molecule as one impurity
-fragments   = make_fragments(mol, myInts, atom_groups)
+fragments   = make_fragments(mol, my_ints, atom_groups)
 
 # ---------------------------------------------------------------------------
-# 5.  EOM-CC DMET solver
+# 5.  EOM-CC dmet solver
 # ---------------------------------------------------------------------------
 eom_solver = dmet.dmet(
-    myInts,
+    my_ints,
     fragments,
     isTranslationInvariant = False,
     method     = 'EOM-CC',
@@ -75,16 +75,16 @@ eom_solver = dmet.dmet(
 )
 
 # ---------------------------------------------------------------------------
-# 6.  Run one-shot DMET
+# 6.  Run one-shot dmet
 # ---------------------------------------------------------------------------
 print("\n" + "="*60)
-print("  One-shot EOM-CCSD DMET on H2O")
+print("  One-shot EOM-CCSD dmet on H2O")
 print("="*60)
 
 E_gs = eom_solver.oneshot(mu_imp=0.0, optimize_mu=False)
 
 print("\n" + "="*60)
-print(f"  DMET ground-state energy (CCSD): {E_gs:.10f} Ha")
+print(f"  dmet ground-state energy (CCSD): {E_gs:.10f} Ha")
 print("="*60)
 
 # ---------------------------------------------------------------------------
@@ -108,7 +108,7 @@ print("  IP-EOM-CCSD (ionisation potentials)")
 print("="*60)
 
 ip_solver = dmet.dmet(
-    myInts, fragments,
+    my_ints, fragments,
     isTranslationInvariant = False,
     method       = 'EOM-CC',
     eom_type     = 'IP',

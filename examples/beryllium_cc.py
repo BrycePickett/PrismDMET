@@ -1,5 +1,5 @@
 '''
-    QC-DMET: a python implementation of density matrix embedding theory for ab initio quantum chemistry
+    QC-dmet: a python implementation of density matrix embedding theory for ab initio quantum chemistry
     Copyright (C) 2015 Sebastian Wouters
     
     This program is free software; you can redistribute it and/or modify
@@ -36,7 +36,7 @@ if ( casenumber == 3 ):
     
 print("Bond lengths (Angstrom) =", thecases)
 
-DMguess = None
+dm_guess = None
 for bl in thecases:
 
     nat = 30
@@ -53,23 +53,23 @@ for bl in thecases:
     mf = scf.RHF(mol)
     mf.verbose = 3
     mf.max_cycle = 1000
-    mf.scf(dm0=DMguess)
+    mf.scf(dm0=dm_guess)
 
-    DMguess = np.dot( np.dot( mf.mo_coeff, np.diag( mf.mo_occ ) ), mf.mo_coeff.T )
+    dm_guess = np.dot( np.dot( mf.mo_coeff, np.diag( mf.mo_occ ) ), mf.mo_coeff.T )
 
     if ( False ):   
         ccsolver = ccsd.CCSD( mf )
         ccsolver.verbose = 5
-        ECORR, t1, t2 = ccsolver.ccsd()
-        ECCSD = mf.e_tot + ECORR
-        print("ECCSD for bondlength ",bl," =", ECCSD)
+        e_corr, t1, t2 = ccsolver.ccsd()
+        e_ccsd = mf.e_tot + e_corr
+        print("e_ccsd for bondlength ",bl," =", e_ccsd)
 
     #elif ( bl < 3.35 ):
     else:
         #localization_type = 'meta_lowdin'
         #localization_type = 'boys'
         localization_type = 'meta_lowdin'
-        # careful with 'iao'; the generic IAO scheme implemented in QC-DMET will not reproduce
+        # careful with 'iao'; the generic IAO scheme implemented in QC-dmet will not reproduce
         # results in the manuscript, which use a more careful IAO construction
         rotation = np.eye( mol.nao_nr(), dtype=float )
         for i in range(nat):
@@ -78,14 +78,14 @@ for bl in thecases:
             # Order of AO: 3s 2p 1d
             rotation[ offset+2:offset+5,  offset+2:offset+5  ] = ring_helper.p_functions( theta )
         assert( np.linalg.norm( np.dot( rotation, rotation.T ) - np.eye( rotation.shape[0] ) ) < 1e-6 )
-        myInts = local_integrals.localintegrals( mf, list(range( mol.nao_nr())), localization_type, rotation )
+        my_ints = local_integrals.local_integrals( mf, list(range( mol.nao_nr())), localization_type, rotation )
         if (( localization_type == 'meta_lowdin' ) or ( localization_type == 'iao' )):
-            myInts.TI_OK = True
-        myInts.molden( 'Be-loc.molden' )
+            my_ints.TI_OK = True
+        my_ints.molden( 'Be-loc.molden' )
 
         # Build fragments with the helper: 1 atom per impurity
         atom_groups = [ [i] for i in range(nat) ]
-        impurityClusters = make_fragments( mol, myInts, atom_groups )
+        impurity_clusters = make_fragments( mol, my_ints, atom_groups )
 
         if (( localization_type == 'meta_lowdin' ) or ( localization_type == 'iao' )):
             isTranslationInvariant = True
@@ -94,8 +94,8 @@ for bl in thecases:
 
         method = 'CC'
         SCmethod = 'NONE' # NONE or LSTSQ for no self-consistency or least-squares fitting of the u-matrix, respectively
-        theDMET = dmet.dmet( myInts, impurityClusters, isTranslationInvariant,
+        thedmet = dmet.dmet( my_ints, impurity_clusters, isTranslationInvariant,
                              method=method, SCmethod=SCmethod )
-        theDMET.selfconsistent()
-        #theDMET.dump_bath_orbs( 'Be-bathorbs.molden' )
+        thedmet.selfconsistent()
+        #thedmet.dump_bath_orbs( 'Be-bathorbs.molden' )
 

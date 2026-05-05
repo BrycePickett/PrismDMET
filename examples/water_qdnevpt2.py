@@ -1,9 +1,9 @@
 """
-QD-NEVPT2 one-shot DMET on water using the Prism backend.
+QD-NEVPT2 one-shot dmet on water using the Prism backend.
 
 Pipeline:
   1. Build the real physical molecule and run RHF.
-  2. Set up DMET with method='QD-NEVPT2', providing the mf object and
+  2. Set up dmet with method='QD-NEVPT2', providing the mf object and
      active space (ncas, nelecas, sa_nstates).
   3. Call oneshot() — this internally runs SA-CASSCF on the real molecule,
      then calls Prism's QD-NEVPT2 solver.
@@ -50,19 +50,19 @@ mf.kernel()
 print(f"\nRHF energy = {mf.e_tot:.10f} Ha")
 
 # ---------------------------------------------------------------------------
-# 3.  Local integrals for DMET embedding
+# 3.  Local integrals for dmet embedding
 # ---------------------------------------------------------------------------
-myInts = local_integrals.localintegrals(mf, list(range(mol.nao_nr())), 'meta_lowdin')
-myInts.TI_OK = False
+my_ints = local_integrals.local_integrals(mf, list(range(mol.nao_nr())), 'meta_lowdin')
+my_ints.TI_OK = False
 
 # ---------------------------------------------------------------------------
 # 4.  Fragment definition — whole molecule as one impurity
 # ---------------------------------------------------------------------------
 atom_groups = [[0, 1, 2]]
-fragments   = make_fragments(mol, myInts, atom_groups)
+fragments   = make_fragments(mol, my_ints, atom_groups)
 
 # ---------------------------------------------------------------------------
-# 5.  QD-NEVPT2 DMET solver
+# 5.  QD-NEVPT2 dmet solver
 #
 #  Key parameters:
 #    mf_real    — the converged RHF object on the REAL molecule (required)
@@ -77,7 +77,7 @@ fragments   = make_fragments(mol, myInts, atom_groups)
 n_states = 6
 
 solver = dmet.dmet(
-    myInts,
+    my_ints,
     fragments,
     isTranslationInvariant = False,
     method      = 'QD-NEVPT2',
@@ -101,16 +101,16 @@ solver = dmet.dmet(
 )
 
 # ---------------------------------------------------------------------------
-# 6.  Run one-shot DMET
+# 6.  Run one-shot dmet
 # ---------------------------------------------------------------------------
 print("\n" + "="*60)
-print("  One-shot QD-NEVPT2 DMET on H2O")
+print("  One-shot QD-NEVPT2 dmet on H2O")
 print("="*60)
 
 E_gs = solver.oneshot(mu_imp=0.0, optimize_mu=False)
 
 print("\n" + "="*60)
-print(f"  DMET ground-state energy (QD-NEVPT2): {E_gs:.10f} Ha")
+print(f"  dmet ground-state energy (QD-NEVPT2): {E_gs:.10f} Ha")
 print("="*60)
 
 # ---------------------------------------------------------------------------

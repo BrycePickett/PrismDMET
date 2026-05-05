@@ -1,9 +1,9 @@
 '''
-CASSCF solver for QC-DMET.
+CASSCF solver for QC-dmet.
 
-Solves the DMET impurity problem at the CASSCF level using PySCF's mcscf module.
+Solves the dmet impurity problem at the CASSCF level using PySCF's mcscf module.
 Supports single-state and state-averaged CASSCF, warm restart via mo_guess/ci_guess,
-and open-shell environments via OEI_S spin-potential injection.
+and open-shell environments via oei_s spin-potential injection.
 '''
 
 import numpy as np
@@ -12,29 +12,29 @@ from pyscf import fci as pyscf_fci
 from utils import silent_stdout, nullcontext
 
 
-def solve(CONST, OEI, FOCK, TEI, Norb, Nel, Nimp, DMguessRHF,
+def solve(const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
           ncas=None, nelecas=None,
           chempot_imp=0.0, printoutput=True,
           sa_nstates=1, sa_weights=None,
           frozen=None,
           mo_guess=None, ci_guess=None,
-          OEI_S=None,
+          oei_s=None,
           **casscf_kwargs):
     '''
-    Solve a DMET impurity problem at the CASSCF level.
+    Solve a dmet impurity problem at the CASSCF level.
 
     Parameters
     ----------
-    CONST        : float
-    OEI          : ndarray (Norb, Norb)
-    FOCK         : ndarray (Norb, Norb)
-    TEI          : ndarray (Norb, Norb, Norb, Norb)
-    Norb         : int – total number of embedding orbitals (impurity + bath)
-    Nel          : int – total number of electrons (must be even for RHF ref.)
-    Nimp         : int – number of impurity orbitals (first Nimp of Norb)
-    DMguessRHF   : ndarray – RHF density matrix initial guess
-    ncas         : int – number of active orbitals.  Defaults to Norb (full space).
-    nelecas      : int – number of active electrons.  Defaults to Nel (full space).
+    const        : float
+    oei          : ndarray (norb, norb)
+    fock         : ndarray (norb, norb)
+    tei          : ndarray (norb, norb, norb, norb)
+    norb         : int – total number of embedding orbitals (impurity + bath)
+    nel          : int – total number of electrons (must be even for RHF ref.)
+    nimp         : int – number of impurity orbitals (first nimp of norb)
+    dm_guess_rhf   : ndarray – RHF density matrix initial guess
+    ncas         : int – number of active orbitals.  Defaults to norb (full space).
+    nelecas      : int – number of active electrons.  Defaults to nel (full space).
     chempot_imp  : float – chemical potential on impurity block
     printoutput  : bool
     sa_nstates   : int – number of states for state-averaged CASSCF (default 1 = SS)
@@ -44,7 +44,7 @@ def solve(CONST, OEI, FOCK, TEI, Norb, Nel, Nimp, DMguessRHF,
                    (warm restart).  If provided, these are used instead of the
                    RHF canonical MOs as the initial CASSCF orbital guess.
     ci_guess     : ndarray or None – CI vector(s) from a previous iteration.
-    OEI_S        : ndarray (Norb, Norb) or None – spin-dependent one-electron
+    oei_s        : ndarray (norb, norb) or None – spin-dependent one-electron
                    potential for open-shell environments.  When provided, the
                    CASSCF object is wrapped to inject spin-gradient corrections.
     **casscf_kwargs : extra keyword arguments set on the mcscf.CASSCF object
@@ -52,8 +52,8 @@ def solve(CONST, OEI, FOCK, TEI, Norb, Nel, Nimp, DMguessRHF,
 
     Returns
     -------
-    ImpurityEnergy : float
-    pyscfRDM1      : ndarray – 1-RDM in local orbital basis (for DMET loop)
+    impurity_energy : float
+    pyscf_rdm1      : ndarray – 1-RDM in local orbital basis (for dmet loop)
     cas_results    : dict – {
         'e_tot'     : float or ndarray   (SS: total energy; SA: weighted avg)
         'e_states'  : ndarray or None    (SA only: individual state energies)
@@ -67,15 +67,15 @@ def solve(CONST, OEI, FOCK, TEI, Norb, Nel, Nimp, DMguessRHF,
     '''
     # Default: full active space (equivalent to FCI within the embedding space)
     if ncas is None:
-        ncas = Norb
+        ncas = norb
     if nelecas is None:
-        nelecas = Nel
+        nelecas = nel
 
-    assert Nel % 2 == 0, "casscf::solve: Nel must be even (RHF reference required)"
-    assert ncas <= Norb, f"casscf::solve: ncas ({ncas}) cannot exceed Norb ({Norb})"
-    assert nelecas <= Nel, f"casscf::solve: nelecas ({nelecas}) cannot exceed Nel ({Nel})"
-    assert (Nel - nelecas) % 2 == 0, \
-        "casscf::solve: (Nel - nelecas) must be even (frozen core must be closed-shell)"
+    assert nel % 2 == 0, "casscf::solve: nel must be even (RHF reference required)"
+    assert ncas <= norb, f"casscf::solve: ncas ({ncas}) cannot exceed norb ({norb})"
+    assert nelecas <= nel, f"casscf::solve: nelecas ({nelecas}) cannot exceed nel ({nel})"
+    assert (nel - nelecas) % 2 == 0, \
+        "casscf::solve: (nel - nelecas) must be even (frozen core must be closed-shell)"
 
     if sa_nstates > 1:
         if sa_weights is None:
@@ -89,33 +89,33 @@ def solve(CONST, OEI, FOCK, TEI, Norb, Nel, Nimp, DMguessRHF,
 
     ctx = silent_stdout() if not printoutput else nullcontext()
 
-    FOCKcopy = FOCK.copy()
+    fock_copy = fock.copy()
     if chempot_imp != 0.0:
-        for orb in range(Nimp):
-            FOCKcopy[orb, orb] -= chempot_imp
+        for orb in range(nimp):
+            fock_copy[orb, orb] -= chempot_imp
 
     with ctx:
         mol = gto.Mole()
         mol.build(verbose=0)
         mol.atom.append(('C', (0, 0, 0)))
-        mol.nelectron = Nel
+        mol.nelectron = nel
         mol.incore_anyway = True
         mf = scf.RHF(mol)
-        mf.get_hcore = lambda *args: FOCKcopy
-        mf.get_ovlp  = lambda *args: np.eye(Norb)
-        mf._eri      = ao2mo.restore(8, TEI, Norb)
-        mf.scf(DMguessRHF)
-        DMloc = np.dot(np.dot(mf.mo_coeff, np.diag(mf.mo_occ)), mf.mo_coeff.T)
+        mf.get_hcore = lambda *args: fock_copy
+        mf.get_ovlp  = lambda *args: np.eye(norb)
+        mf._eri      = ao2mo.restore(8, tei, norb)
+        mf.scf(dm_guess_rhf)
+        dm_loc = np.dot(np.dot(mf.mo_coeff, np.diag(mf.mo_occ)), mf.mo_coeff.T)
         if not mf.converged:
             mf = mf.newton()
-            mf.scf(DMloc)
-            DMloc = np.dot(np.dot(mf.mo_coeff, np.diag(mf.mo_occ)), mf.mo_coeff.T)
+            mf.scf(dm_loc)
+            dm_loc = np.dot(np.dot(mf.mo_coeff, np.diag(mf.mo_occ)), mf.mo_coeff.T)
 
-        numPairs = Nel // 2
-        FOCKloc = (FOCKcopy
-                   + np.einsum('ijkl,ij->kl', TEI, DMloc)
-                   - 0.5 * np.einsum('ijkl,ik->jl', TEI, DMloc))
-        eigvals = np.linalg.eigvalsh(FOCKloc)
+        numPairs = nel // 2
+        fock_loc = (fock_copy
+                   + np.einsum('ijkl,ij->kl', tei, dm_loc)
+                   - 0.5 * np.einsum('ijkl,ik->jl', tei, dm_loc))
+        eigvals = np.linalg.eigvalsh(fock_loc)
         eigvals.sort()
         print("casscf::solve : RHF homo-lumo gap =", eigvals[numPairs] - eigvals[numPairs - 1])
 
@@ -129,9 +129,9 @@ def solve(CONST, OEI, FOCK, TEI, Norb, Nel, Nimp, DMguessRHF,
         if sa_nstates > 1:
             mc = mcscf.state_average_(mc, weights=sa_weights.tolist())
 
-        if OEI_S is not None:
+        if oei_s is not None:
             from solvers.qcsolver_utils import fix_casscf_for_nonsinglet_env
-            mc = fix_casscf_for_nonsinglet_env(mc, OEI_S)
+            mc = fix_casscf_for_nonsinglet_env(mc, oei_s)
 
         _mo0 = mo_guess if mo_guess is not None else None
         _ci0 = ci_guess if ci_guess is not None else None
@@ -185,30 +185,30 @@ def solve(CONST, OEI, FOCK, TEI, Norb, Nel, Nimp, DMguessRHF,
 
         print(f"casscf::solve : Full-space 1-RDM trace = {np.trace(dm1_mo):.6f}")
 
-        # Rotate from MO basis to local DMET orbital basis
+        # Rotate from MO basis to local dmet orbital basis
         C = mc.mo_coeff
-        pyscfRDM1 = C @ dm1_mo @ C.T
-        pyscfRDM2 = np.einsum('ai,ijkl->ajkl', C, dm2_mo)
-        pyscfRDM2 = np.einsum('bj,ajkl->abkl', C, pyscfRDM2)
-        pyscfRDM2 = np.einsum('ck,abkl->abcl', C, pyscfRDM2)
-        pyscfRDM2 = np.einsum('dl,abcl->abcd', C, pyscfRDM2)
+        pyscf_rdm1 = C @ dm1_mo @ C.T
+        pyscf_rdm2 = np.einsum('ai,ijkl->ajkl', C, dm2_mo)
+        pyscf_rdm2 = np.einsum('bj,ajkl->abkl', C, pyscf_rdm2)
+        pyscf_rdm2 = np.einsum('ck,abkl->abcl', C, pyscf_rdm2)
+        pyscf_rdm2 = np.einsum('dl,abcl->abcd', C, pyscf_rdm2)
 
         # -----------
-        # DMET impurity energy (half-projector formula)
-        ImpurityEnergy = (
-            CONST
-            + 0.25  * np.einsum('ij,ij->', pyscfRDM1[:Nimp,:],     FOCK[:Nimp,:] + OEI[:Nimp,:])
-            + 0.25  * np.einsum('ij,ij->', pyscfRDM1[:,:Nimp],     FOCK[:,:Nimp] + OEI[:,:Nimp])
-            + 0.125 * np.einsum('ijkl,ijkl->', pyscfRDM2[:Nimp,:,:,:], TEI[:Nimp,:,:,:])
-            + 0.125 * np.einsum('ijkl,ijkl->', pyscfRDM2[:,:Nimp,:,:], TEI[:,:Nimp,:,:])
-            + 0.125 * np.einsum('ijkl,ijkl->', pyscfRDM2[:,:,:Nimp,:], TEI[:,:,:Nimp,:])
-            + 0.125 * np.einsum('ijkl,ijkl->', pyscfRDM2[:,:,:,:Nimp], TEI[:,:,:,:Nimp])
+        # dmet impurity energy (half-projector formula)
+        impurity_energy = (
+            const
+            + 0.25  * np.einsum('ij,ij->', pyscf_rdm1[:nimp,:],     fock[:nimp,:] + oei[:nimp,:])
+            + 0.25  * np.einsum('ij,ij->', pyscf_rdm1[:,:nimp],     fock[:,:nimp] + oei[:,:nimp])
+            + 0.125 * np.einsum('ijkl,ijkl->', pyscf_rdm2[:nimp,:,:,:], tei[:nimp,:,:,:])
+            + 0.125 * np.einsum('ijkl,ijkl->', pyscf_rdm2[:,:nimp,:,:], tei[:,:nimp,:,:])
+            + 0.125 * np.einsum('ijkl,ijkl->', pyscf_rdm2[:,:,:nimp,:], tei[:,:,:nimp,:])
+            + 0.125 * np.einsum('ijkl,ijkl->', pyscf_rdm2[:,:,:,:nimp], tei[:,:,:,:nimp])
         )
 
     cas_results = {
         'e_tot'    : e_tot,
         'e_states' : e_states,
-        'e_imp'    : ImpurityEnergy,
+        'e_imp'    : impurity_energy,
         'ncas'     : ncas,
         'nelecas'  : nelecas,
         'nstates'  : sa_nstates,
@@ -217,44 +217,44 @@ def solve(CONST, OEI, FOCK, TEI, Norb, Nel, Nimp, DMguessRHF,
         'mo_coeff' : mc.mo_coeff,
     }
 
-    return ImpurityEnergy, pyscfRDM1, cas_results
+    return impurity_energy, pyscf_rdm1, cas_results
 
 
 # ---------------------------------------------------------------------------
-# SolverFactory entry point
+# solver_dispatcher entry point
 # ---------------------------------------------------------------------------
 
 def execute(task):
     """
-    SolverFactory-compatible wrapper for the CASSCF solver.
+    solver_dispatcher-compatible wrapper for the CASSCF solver.
 
     Unpacks the standardised task dict and calls solve(), which returns
-    a 3-tuple: (ImpurityEnergy, pyscfRDM1, cas_results).
+    a 3-tuple: (impurity_energy, pyscf_rdm1, cas_results).
 
     The warm-restart cache (mo_guess, ci_guess) and the open-shell spin
-    potential (OEI_S) are passed through transparently via the task dict.
+    potential (oei_s) are passed through transparently via the task dict.
 
     Parameters
     ----------
     task : dict
-        Must contain: CONST, dmetOEI, dmetFOCK, dmetTEI, Norb, Nel, Nimp,
-        DMguessRHF, chempot_imp.
+        Must contain: const, dmet_oei, dmet_fock, dmet_tei, norb, nel, nimp,
+        dm_guess_rhf, chempot_imp.
         Optional: ncas, nelecas, sa_nstates, sa_weights, casscf_kwargs,
-        mo_guess, ci_guess, OEI_S.
+        mo_guess, ci_guess, oei_s.
 
     Returns
     -------
-    (ImpurityEnergy, pyscfRDM1, cas_results) — same as solve().
+    (impurity_energy, pyscf_rdm1, cas_results) — same as solve().
     """
     return solve(
-        task['CONST'],
-        task['dmetOEI'],
-        task['dmetFOCK'],
-        task['dmetTEI'],
-        task['Norb'],
-        task['Nel'],
-        task['Nimp'],
-        task.get('DMguessRHF'),
+        task['const'],
+        task['dmet_oei'],
+        task['dmet_fock'],
+        task['dmet_tei'],
+        task['norb'],
+        task['nel'],
+        task['nimp'],
+        task.get('dm_guess_rhf'),
         ncas=task.get('ncas'),
         nelecas=task.get('nelecas'),
         chempot_imp=task.get('chempot_imp', 0.0),
@@ -262,6 +262,6 @@ def execute(task):
         sa_weights=task.get('sa_weights'),
         mo_guess=task.get('mo_guess'),
         ci_guess=task.get('ci_guess'),
-        OEI_S=task.get('OEI_S'),
+        oei_s=task.get('oei_s'),
         **task.get('casscf_kwargs', {}),
     )

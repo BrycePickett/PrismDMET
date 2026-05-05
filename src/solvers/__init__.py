@@ -3,25 +3,25 @@ Central dispatcher that maps method-key strings to solver implementations.
 
 Every solver module exposes a top-level execute(task) function that accepts a
 standardized task dictionary and returns a standardized result dictionary.
-SolverFactory.execute(task) delegates to the correct module based on
+solver_dispatcher.execute(task) delegates to the correct module based on
 task['method'], so dmet.py and the parallel worker do not need to know
 anything about individual solver signatures.
 
 Task dict required keys:
     method        : str    - solver key
-    CONST         : float  - frozen-core constant energy
-    dmetOEI       : ndarray (N,N)       - 1e integrals in DMET basis
-    dmetFOCK      : ndarray (N,N)       - Fock matrix in DMET basis
-    dmetTEI       : ndarray (N,N,N,N)   - 2e integrals in DMET basis
-    Norb          : int    - total embedding orbitals (impurity + bath)
-    Nel           : int    - electrons in the embedding space
-    Nimp          : int    - impurity orbitals (first Nimp of Norb)
+    const         : float  - frozen-core constant energy
+    dmet_oei       : ndarray (N,N)       - 1e integrals in dmet basis
+    dmet_fock      : ndarray (N,N)       - Fock matrix in dmet basis
+    dmet_tei       : ndarray (N,N,N,N)   - 2e integrals in dmet basis
+    norb          : int    - total embedding orbitals (impurity + bath)
+    nel           : int    - electrons in the embedding space
+    nimp          : int    - impurity orbitals (first nimp of norb)
     chempot_imp   : float  - chemical potential on the impurity block
     counter       : int    - fragment index
     src_path      : str    - absolute path to src/ for worker sys.path
 
 Task dict optional keys:
-    DMguessRHF    : ndarray or None
+    dm_guess_rhf    : ndarray or None
     CC_E_TYPE     : str
     eom_nroots    : int
     eom_type      : str
@@ -34,7 +34,7 @@ Task dict optional keys:
     casscf_kwargs : dict
     mo_guess      : ndarray or None
     ci_guess      : ndarray or None
-    OEI_S         : ndarray or None
+    oei_s         : ndarray or None
     nevpt2_kwargs : dict
     qdnevpt2_kwargs: dict
     mol_dumps     : str       - JSON from pyscf.gto.Mole.dumps()
@@ -105,12 +105,12 @@ def _ensure_src_path(task):
         sys.path.insert(0, src_path)
 
 
-class SolverFactory:
+class solver_dispatcher:
     """
-    Central dispatcher for all DMET fragment solvers.
+    Central dispatcher for all dmet fragment solvers.
 
     Usage:
-        result = SolverFactory.execute(task)
+        result = solver_dispatcher.execute(task)
 
     If a solver raises MemoryError or an OOM-like RuntimeError, the factory
     retries with the next cheaper method from FALLBACK_CHAIN. The result dict
@@ -142,22 +142,22 @@ class SolverFactory:
         method = task['method']
 
         dispatch = {
-            'flag_rhf'    : SolverFactory._run_rhf,
-            'ED'          : SolverFactory._run_fci,
-            'FCI'         : SolverFactory._run_fci,
-            'DMRG'        : SolverFactory._run_dmrg,
-            'DMRG-CheMPS2': SolverFactory._run_chemps2,
-            'CC'          : SolverFactory._run_cc,
-            'MP2'         : SolverFactory._run_mp2,
-            'EOM-CC'      : SolverFactory._run_eomcc,
-            'CASSCF'      : SolverFactory._run_casscf,
-            'QD-NEVPT2'   : SolverFactory._run_qdnevpt2,
-            'NEVPT2'      : SolverFactory._run_nevpt2,
+            'flag_rhf'    : solver_dispatcher._run_rhf,
+            'ED'          : solver_dispatcher._run_fci,
+            'FCI'         : solver_dispatcher._run_fci,
+            'DMRG'        : solver_dispatcher._run_dmrg,
+            'DMRG-CheMPS2': solver_dispatcher._run_chemps2,
+            'CC'          : solver_dispatcher._run_cc,
+            'MP2'         : solver_dispatcher._run_mp2,
+            'EOM-CC'      : solver_dispatcher._run_eomcc,
+            'CASSCF'      : solver_dispatcher._run_casscf,
+            'QD-NEVPT2'   : solver_dispatcher._run_qdnevpt2,
+            'NEVPT2'      : solver_dispatcher._run_nevpt2,
         }
 
         if method not in dispatch:
             raise ValueError(
-                f"SolverFactory.execute: unknown method='{method}'. "
+                f"solver_dispatcher.execute: unknown method='{method}'. "
                 f"Valid keys: {sorted(dispatch.keys())}"
             )
 
@@ -173,7 +173,7 @@ class SolverFactory:
 
             if fallback is None:
                 warnings.warn(
-                    f"\nPrismDMET OOM FATAL: fragment {counter}, "
+                    f"\nPrismdmet OOM FATAL: fragment {counter}, "
                     f"method '{method}' raised {type(exc).__name__}: {exc}. "
                     f"No fallback defined. Re-raising.",
                     RuntimeWarning, stacklevel=2,
@@ -181,7 +181,7 @@ class SolverFactory:
                 raise
 
             warnings.warn(
-                f"\nPrismDMET OOM FALLBACK: fragment {counter}, "
+                f"\nPrismdmet OOM FALLBACK: fragment {counter}, "
                 f"method '{method}' raised {type(exc).__name__}: {exc}. "
                 f"Retrying with '{fallback}'.",
                 RuntimeWarning, stacklevel=2,
@@ -191,7 +191,7 @@ class SolverFactory:
             task['method']        = fallback
             task['fallback_from'] = original_method
 
-            result = SolverFactory.execute(task)
+            result = solver_dispatcher.execute(task)
             result.setdefault('fallback_from', original_method)
             return result
 
@@ -258,3 +258,4 @@ class SolverFactory:
         energy, rdm1, nevpt2_res = nevpt2.execute(task)
         return {'counter': task['counter'], 'energy': energy,
                 'rdm1': rdm1, 'nevpt2_res': nevpt2_res}
+

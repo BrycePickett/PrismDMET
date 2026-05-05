@@ -1,8 +1,8 @@
 '''
-    EOM-CCSD solver for QC-DMET.
+    EOM-CCSD solver for QC-dmet.
 
-    Supports one-shot DMET only. Using this solver inside the self-consistent
-    DMET loop (selfconsistent()) will raise a RuntimeError.
+    Supports one-shot dmet only. Using this solver inside the self-consistent
+    dmet loop (selfconsistent()) will raise a RuntimeError.
 
     Supported EOM-CCSD variants (set via eom_type parameter):
         'EE-Singlet'  — Excitation energies, singlet manifold (default)
@@ -14,8 +14,8 @@
         'EA'          — Electron affinities (N -> N+1)
         'EA*'         — Perturbative EA-EOMCCSDStar correction
 
-    The solver returns the ground-state CCSD energy as ImpurityEnergy so that
-    the DMET chemical potential optimization (numeleccostfunction) is stable.
+    The solver returns the ground-state CCSD energy as impurity_energy so that
+    the dmet chemical potential optimization (numeleccostfunction) is stable.
     Excitation energies and absolute excited-state energies are accessible via
     the 'results' key returned in the auxiliary dictionary.
 '''
@@ -33,26 +33,26 @@ _VALID_EOM_TYPES = {
 _eV = 27.21138602  # Hartree to eV
 
 
-def solve(CONST, OEI, FOCK, TEI, Norb, Nel, Nimp, DMguessRHF,
+def solve(const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
           chempot_imp=0.0, printoutput=True,
           eom_type='EE-Singlet', nroots=3, koopmans=False, **eom_kwargs):
     '''
-    Solve a DMET impurity problem with CCSD followed by EOM-CCSD.
+    Solve a dmet impurity problem with CCSD followed by EOM-CCSD.
 
-    The ground-state CCSD energy and Lambda-RDM are used for the DMET
+    The ground-state CCSD energy and Lambda-RDM are used for the dmet
     embedding (chemical-potential optimisation and energy projection).
     EOM-CCSD provides excitation/ionisation/attachment energies on top.
 
     Parameters
     ----------
-    CONST        : float
-    OEI          : ndarray (Norb, Norb)
-    FOCK         : ndarray (Norb, Norb)
-    TEI          : ndarray (Norb, Norb, Norb, Norb)
-    Norb         : int
-    Nel          : int  (must be even for RHF)
-    Nimp         : int
-    DMguessRHF   : ndarray
+    const        : float
+    oei          : ndarray (norb, norb)
+    fock         : ndarray (norb, norb)
+    tei          : ndarray (norb, norb, norb, norb)
+    norb         : int
+    nel          : int  (must be even for RHF)
+    nimp         : int
+    dm_guess_rhf   : ndarray
     chempot_imp  : float
     printoutput  : bool
     eom_type     : str   — one of _VALID_EOM_TYPES (default 'EE-Singlet')
@@ -63,8 +63,8 @@ def solve(CONST, OEI, FOCK, TEI, Norb, Nel, Nimp, DMguessRHF,
 
     Returns
     -------
-    ImpurityEnergy : float   — CCSD ground-state impurity energy (for DMET loop)
-    pyscfRDM1      : ndarray — CCSD Lambda 1-RDM in local basis (for DMET loop)
+    impurity_energy : float   — CCSD ground-state impurity energy (for dmet loop)
+    pyscf_rdm1      : ndarray — CCSD Lambda 1-RDM in local basis (for dmet loop)
     eom_results    : dict    — {
         'eom_type'    : str,
         'E_ccsd'      : float,          ground-state CCSD energy (absolute)
@@ -82,37 +82,37 @@ def solve(CONST, OEI, FOCK, TEI, Norb, Nel, Nimp, DMguessRHF,
 
     ctx = silent_stdout() if not printoutput else nullcontext()
 
-    FOCKcopy = FOCK.copy()
+    fock_copy = fock.copy()
     if chempot_imp != 0.0:
-        for orb in range(Nimp):
-            FOCKcopy[orb, orb] -= chempot_imp
+        for orb in range(nimp):
+            fock_copy[orb, orb] -= chempot_imp
 
     with ctx:
         # ------------------------------------------------------------------
-        # RHF in the DMET embedding space
+        # RHF in the dmet embedding space
         # ------------------------------------------------------------------
         mol = gto.Mole()
         mol.build(verbose=0)
         mol.atom.append(('C', (0, 0, 0)))
-        mol.nelectron = Nel
+        mol.nelectron = nel
         mol.incore_anyway = True
         mf = scf.RHF(mol)
-        mf.get_hcore = lambda *args: FOCKcopy
-        mf.get_ovlp  = lambda *args: np.eye(Norb)
-        mf._eri      = ao2mo.restore(8, TEI, Norb)
-        mf.scf(DMguessRHF)
-        DMloc = np.dot(np.dot(mf.mo_coeff, np.diag(mf.mo_occ)), mf.mo_coeff.T)
+        mf.get_hcore = lambda *args: fock_copy
+        mf.get_ovlp  = lambda *args: np.eye(norb)
+        mf._eri      = ao2mo.restore(8, tei, norb)
+        mf.scf(dm_guess_rhf)
+        dm_loc = np.dot(np.dot(mf.mo_coeff, np.diag(mf.mo_occ)), mf.mo_coeff.T)
         if not mf.converged:
             mf = mf.newton()
-            mf.scf(DMloc)
-            DMloc = np.dot(np.dot(mf.mo_coeff, np.diag(mf.mo_occ)), mf.mo_coeff.T)
+            mf.scf(dm_loc)
+            dm_loc = np.dot(np.dot(mf.mo_coeff, np.diag(mf.mo_occ)), mf.mo_coeff.T)
 
-        assert Nel % 2 == 0
-        numPairs = Nel // 2
-        FOCKloc = (FOCKcopy
-                   + np.einsum('ijkl,ij->kl', TEI, DMloc)
-                   - 0.5 * np.einsum('ijkl,ik->jl', TEI, DMloc))
-        eigvals, eigvecs = np.linalg.eigh(FOCKloc)
+        assert nel % 2 == 0
+        numPairs = nel // 2
+        fock_loc = (fock_copy
+                   + np.einsum('ijkl,ij->kl', tei, dm_loc)
+                   - 0.5 * np.einsum('ijkl,ik->jl', tei, dm_loc))
+        eigvals, eigvecs = np.linalg.eigh(fock_loc)
         idx = eigvals.argsort()
         eigvals = eigvals[idx]; eigvecs = eigvecs[:, idx]
         print("eomcc::solve : RHF homo-lumo gap =", eigvals[numPairs] - eigvals[numPairs-1])
@@ -122,33 +122,33 @@ def solve(CONST, OEI, FOCK, TEI, Norb, Nel, Nimp, DMguessRHF,
         # ------------------------------------------------------------------
         ccsolver = ccsd.CCSD(mf)
         ccsolver.verbose = 5
-        ECORR, t1, t2 = ccsolver.ccsd()
-        ERHF  = mf.e_tot
-        ECCSD = ERHF + ECORR
-        print(f"eomcc::solve : E(RHF) = {ERHF:.10f}  E(CCSD) = {ECCSD:.10f}")
+        e_corr, t1, t2 = ccsolver.ccsd()
+        e_rhf  = mf.e_tot
+        e_ccsd = e_rhf + e_corr
+        print(f"eomcc::solve : E(RHF) = {e_rhf:.10f}  E(CCSD) = {e_ccsd:.10f}")
 
         ccsolver.solve_lambda()
-        pyscfRDM1 = ccsolver.make_rdm1()
-        pyscfRDM2 = ccsolver.make_rdm2()
-        pyscfRDM1 = 0.5 * (pyscfRDM1 + pyscfRDM1.T)
+        pyscf_rdm1 = ccsolver.make_rdm1()
+        pyscf_rdm2 = ccsolver.make_rdm2()
+        pyscf_rdm1 = 0.5 * (pyscf_rdm1 + pyscf_rdm1.T)
 
         # Rotate RDMs to local orbital basis
         C = mf.mo_coeff
-        pyscfRDM1 = np.dot(C, np.dot(pyscfRDM1, C.T))
-        pyscfRDM2 = np.einsum('ai,ijkl->ajkl', C, pyscfRDM2)
-        pyscfRDM2 = np.einsum('bj,ajkl->abkl', C, pyscfRDM2)
-        pyscfRDM2 = np.einsum('ck,abkl->abcl', C, pyscfRDM2)
-        pyscfRDM2 = np.einsum('dl,abcl->abcd', C, pyscfRDM2)
+        pyscf_rdm1 = np.dot(C, np.dot(pyscf_rdm1, C.T))
+        pyscf_rdm2 = np.einsum('ai,ijkl->ajkl', C, pyscf_rdm2)
+        pyscf_rdm2 = np.einsum('bj,ajkl->abkl', C, pyscf_rdm2)
+        pyscf_rdm2 = np.einsum('ck,abkl->abcl', C, pyscf_rdm2)
+        pyscf_rdm2 = np.einsum('dl,abcl->abcd', C, pyscf_rdm2)
 
-        # Ground-state impurity energy (DMET half-projector)
-        ImpurityEnergy = (
-            CONST
-            + 0.25  * np.einsum('ij,ij->', pyscfRDM1[:Nimp,:],     FOCK[:Nimp,:] + OEI[:Nimp,:])
-            + 0.25  * np.einsum('ij,ij->', pyscfRDM1[:,:Nimp],     FOCK[:,:Nimp] + OEI[:,:Nimp])
-            + 0.125 * np.einsum('ijkl,ijkl->', pyscfRDM2[:Nimp,:,:,:], TEI[:Nimp,:,:,:])
-            + 0.125 * np.einsum('ijkl,ijkl->', pyscfRDM2[:,:Nimp,:,:], TEI[:,:Nimp,:,:])
-            + 0.125 * np.einsum('ijkl,ijkl->', pyscfRDM2[:,:,:Nimp,:], TEI[:,:,:Nimp,:])
-            + 0.125 * np.einsum('ijkl,ijkl->', pyscfRDM2[:,:,:,:Nimp], TEI[:,:,:,:Nimp])
+        # Ground-state impurity energy (dmet half-projector)
+        impurity_energy = (
+            const
+            + 0.25  * np.einsum('ij,ij->', pyscf_rdm1[:nimp,:],     fock[:nimp,:] + oei[:nimp,:])
+            + 0.25  * np.einsum('ij,ij->', pyscf_rdm1[:,:nimp],     fock[:,:nimp] + oei[:,:nimp])
+            + 0.125 * np.einsum('ijkl,ijkl->', pyscf_rdm2[:nimp,:,:,:], tei[:nimp,:,:,:])
+            + 0.125 * np.einsum('ijkl,ijkl->', pyscf_rdm2[:,:nimp,:,:], tei[:,:nimp,:,:])
+            + 0.125 * np.einsum('ijkl,ijkl->', pyscf_rdm2[:,:,:nimp,:], tei[:,:,:nimp,:])
+            + 0.125 * np.einsum('ijkl,ijkl->', pyscf_rdm2[:,:,:,:nimp], tei[:,:,:,:nimp])
         )
 
         # ------------------------------------------------------------------
@@ -167,7 +167,7 @@ def solve(CONST, OEI, FOCK, TEI, Norb, Nel, Nimp, DMguessRHF,
         else:
             e_exc = np.asarray(e_exc)
 
-        E_states = ECCSD + e_exc
+        E_states = e_ccsd + e_exc
 
         print(f"\neomcc::solve : EOM-CCSD [{eom_type}] energies")
         print(f"  {'State':>6}  {'ΔE (Ha)':>14}  {'ΔE (eV)':>12}  {'E_abs (Ha)':>16}")
@@ -177,14 +177,14 @@ def solve(CONST, OEI, FOCK, TEI, Norb, Nel, Nimp, DMguessRHF,
 
     eom_results = {
         'eom_type'   : eom_type,
-        'E_ccsd'     : ECCSD,
+        'E_ccsd'     : e_ccsd,
         'delta_E'    : e_exc,
         'delta_E_eV' : e_exc * _eV,
         'E_states'   : E_states,
         'amplitudes' : amplitudes,
     }
 
-    return ImpurityEnergy, pyscfRDM1, eom_results
+    return impurity_energy, pyscf_rdm1, eom_results
 
 
 # ---------------------------------------------------------------------------
@@ -238,37 +238,37 @@ def _run_eom(ccsolver, eom_type, nroots, koopmans, eom_kwargs):
 
 
 # ---------------------------------------------------------------------------
-# SolverFactory entry point
+# solver_dispatcher entry point
 # ---------------------------------------------------------------------------
 
 def execute(task):
     """
-    SolverFactory-compatible wrapper for the EOM-CCSD solver.
+    solver_dispatcher-compatible wrapper for the EOM-CCSD solver.
 
     Unpacks the standardised task dict and calls solve(), which returns
-    a 3-tuple: (ImpurityEnergy, pyscfRDM1, eom_results).
+    a 3-tuple: (impurity_energy, pyscf_rdm1, eom_results).
 
     Parameters
     ----------
     task : dict
-        Must contain: CONST, dmetOEI, dmetFOCK, dmetTEI, Norb, Nel, Nimp,
-        DMguessRHF, chempot_imp.
+        Must contain: const, dmet_oei, dmet_fock, dmet_tei, norb, nel, nimp,
+        dm_guess_rhf, chempot_imp.
         Optional: eom_type (default 'EE-Singlet'), eom_nroots (default 3),
         eom_koopmans (default False), eom_kwargs (default {}).
 
     Returns
     -------
-    (ImpurityEnergy, pyscfRDM1, eom_results) — same as solve().
+    (impurity_energy, pyscf_rdm1, eom_results) — same as solve().
     """
     return solve(
-        task['CONST'],
-        task['dmetOEI'],
-        task['dmetFOCK'],
-        task['dmetTEI'],
-        task['Norb'],
-        task['Nel'],
-        task['Nimp'],
-        task.get('DMguessRHF'),
+        task['const'],
+        task['dmet_oei'],
+        task['dmet_fock'],
+        task['dmet_tei'],
+        task['norb'],
+        task['nel'],
+        task['nimp'],
+        task.get('dm_guess_rhf'),
         chempot_imp=task.get('chempot_imp', 0.0),
         eom_type=task.get('eom_type', 'EE-Singlet'),
         nroots=task.get('eom_nroots', 3),

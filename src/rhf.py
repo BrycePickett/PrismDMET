@@ -1,5 +1,5 @@
 '''
-    QC-DMET: a python implementation of density matrix embedding theory for ab initio quantum chemistry
+    QC-dmet: a python implementation of density matrix embedding theory for ab initio quantum chemistry
     Copyright (C) 2015 Sebastian Wouters
     
     This program is free software; you can redistribute it and/or modify
@@ -21,7 +21,7 @@ import numpy as np
 import scipy.sparse.linalg
 from pyscf import gto, scf, ao2mo
 
-def solve_ERI( OEI, TEI, DMguess, numPairs ):
+def solve_ERI( OEI, TEI, dm_guess, numPairs ):
 
     mol = gto.Mole()
     mol.build(verbose=3)
@@ -34,13 +34,13 @@ def solve_ERI( OEI, TEI, DMguess, numPairs ):
     mf.get_ovlp = lambda *args: np.eye( L )
     mf._eri = ao2mo.restore(8, TEI, L)
     
-    mf.scf( DMguess )
-    DMloc = np.dot(np.dot( mf.mo_coeff, np.diag( mf.mo_occ )), mf.mo_coeff.T )
+    mf.scf( dm_guess )
+    dm_loc = np.dot(np.dot( mf.mo_coeff, np.diag( mf.mo_occ )), mf.mo_coeff.T )
     if ( mf.converged == False ):
         mf = mf.newton()
-        mf.scf( DMloc )
-        DMloc = np.dot(np.dot( mf.mo_coeff, np.diag( mf.mo_occ )), mf.mo_coeff.T )
-    return DMloc
+        mf.scf( dm_loc )
+        dm_loc = np.dot(np.dot( mf.mo_coeff, np.diag( mf.mo_occ )), mf.mo_coeff.T )
+    return dm_loc
     
 def wrap_my_jk( mol_orig, ao2basis ): # mol_orig works in ao
 
@@ -69,7 +69,7 @@ def wrap_my_veff( mol_orig, ao2basis ): # mol_orig works in ao
         
     return my_veff
 
-def solve_JK( OEI, mol_orig, ao2basis, DMguess, numPairs ):
+def solve_JK( OEI, mol_orig, ao2basis, dm_guess, numPairs ):
 
     mol = gto.Mole()
     mol.build(verbose=0)
@@ -86,7 +86,7 @@ def solve_JK( OEI, mol_orig, ao2basis, DMguess, numPairs ):
     mf.max_cycle = 500
     mf.damp_factor = 0.33
     
-    mf.scf( DMguess )
-    DMloc = np.dot(np.dot( mf.mo_coeff, np.diag( mf.mo_occ )), mf.mo_coeff.T )
-    return DMloc
+    mf.scf( dm_guess )
+    dm_loc = np.dot(np.dot( mf.mo_coeff, np.diag( mf.mo_occ )), mf.mo_coeff.T )
+    return dm_loc
     

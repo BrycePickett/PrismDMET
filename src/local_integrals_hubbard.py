@@ -1,5 +1,5 @@
 '''
-    QC-DMET: a python implementation of density matrix embedding theory for ab initio quantum chemistry
+    QC-dmet: a python implementation of density matrix embedding theory for ab initio quantum chemistry
     Copyright (C) 2015 Sebastian Wouters
     
     This program is free software; you can redistribute it and/or modify
@@ -64,42 +64,42 @@ class localintegrals_hubbard:
         
         return self.activeOEI
         
-    def loc_fock( self, DMloc=None ):
-        if DMloc is None:
+    def loc_fock( self, dm_loc=None ):
+        if dm_loc is None:
             return self.activeFOCK
         JKloc   = np.zeros( [self.Norbs], dtype=float )
         for orb in range( self.Norbs ):
-            JKloc[ orb ] = 0.5 * self.HubbardU * DMloc[ orb, orb ]
+            JKloc[ orb ] = 0.5 * self.HubbardU * dm_loc[ orb, orb ]
         JKloc   = np.diag( JKloc )
-        FOCKloc = self.activeOEI + JKloc
-        return FOCKloc
+        fock_loc = self.activeOEI + JKloc
+        return fock_loc
 
     def loc_tei( self ):
     
         return self.activeERI
         
-    def dmet_oei( self, loc2dmet, numActive ):
+    def dmet_oei( self, loc_2_dmet, numActive ):
     
-        OEIdmet = np.dot( np.dot( loc2dmet[:,:numActive].T, self.activeOEI ), loc2dmet[:,:numActive] )
+        OEIdmet = np.dot( np.dot( loc_2_dmet[:,:numActive].T, self.activeOEI ), loc_2_dmet[:,:numActive] )
         return OEIdmet
         
-    def dmet_fock( self, loc2dmet, numActive, coreDMloc ):
+    def dmet_fock( self, loc_2_dmet, numActive, coreDMloc ):
     
-        FOCKdmet = np.dot( np.dot( loc2dmet[:,:numActive].T, self.loc_fock( coreDMloc ) ), loc2dmet[:,:numActive] )
+        FOCKdmet = np.dot( np.dot( loc_2_dmet[:,:numActive].T, self.loc_fock( coreDMloc ) ), loc_2_dmet[:,:numActive] )
         return FOCKdmet
         
-    def dmet_init_guess_rhf( self, loc2dmet, numActive, numPairs, Nimp, chempot_imp ):
+    def dmet_init_guess_rhf( self, loc_2_dmet, numActive, numPairs, Nimp, chempot_imp ):
     
-        Fock_small = np.dot( np.dot( loc2dmet[:,:numActive].T, self.activeFOCK ), loc2dmet[:,:numActive] )
+        Fock_small = np.dot( np.dot( loc_2_dmet[:,:numActive].T, self.activeFOCK ), loc_2_dmet[:,:numActive] )
         if (chempot_imp != 0.0):
             for orb in range(Nimp):
                 Fock_small[ orb, orb ] -= chempot_imp
         eigvals, eigvecs = np.linalg.eigh( Fock_small )
         eigvecs = eigvecs[ :, eigvals.argsort() ]
-        DMguess = 2 * np.dot( eigvecs[ :, :numPairs ], eigvecs[ :, :numPairs ].T )
-        return DMguess
+        dm_guess = 2 * np.dot( eigvecs[ :, :numPairs ], eigvecs[ :, :numPairs ].T )
+        return dm_guess
         
-    def dmet_tei( self, loc2dmet, numAct ):
+    def dmet_tei( self, loc_2_dmet, numAct ):
     
         TEIdmet = np.zeros( [ numAct, numAct, numAct, numAct ] )
         for orb1 in range(numAct):
@@ -108,7 +108,7 @@ class localintegrals_hubbard:
                     for orb4 in range(numAct):
                         value = 0.0
                         for orb in range( self.Norbs ):
-                            value += loc2dmet[ orb, orb1 ] * loc2dmet[ orb, orb2 ] * loc2dmet[ orb, orb3 ] * loc2dmet[ orb, orb4 ]
+                            value += loc_2_dmet[ orb, orb1 ] * loc_2_dmet[ orb, orb2 ] * loc_2_dmet[ orb, orb3 ] * loc_2_dmet[ orb, orb4 ]
                         TEIdmet[ orb1, orb2, orb3, orb4 ] = self.HubbardU * value
         return TEIdmet
         

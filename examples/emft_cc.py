@@ -1,5 +1,5 @@
 '''
-    QC-DMET: a python implementation of density matrix embedding theory for ab initio quantum chemistry
+    QC-dmet: a python implementation of density matrix embedding theory for ab initio quantum chemistry
     Copyright (C) 2015 Sebastian Wouters
     
     This program is free software; you can redistribute it and/or modify
@@ -166,13 +166,13 @@ ERHF2 = mf2.e_tot
 ECCSD2 = ERHF2 + ECORR2
 
 ############
-#   DMET   #
+#   dmet   #
 ############
 
 if ( True ):
-    # Perform DMET on the large system (mol1)
-    myInts = local_integrals.localintegrals( mf1, list(range( mol1.nao_nr())), 'meta_lowdin' )
-    myInts.molden( 'emft-loc.molden' )
+    # Perform dmet on the large system (mol1)
+    my_ints = local_integrals.local_integrals( mf1, list(range( mol1.nao_nr())), 'meta_lowdin' )
+    my_ints.molden( 'emft-loc.molden' )
     
     # Define physical units by atom index: 
     if ( thestructure == 'reactants' ): # 1-chlorodecane
@@ -184,10 +184,10 @@ if ( True ):
 
     for n_carbon_units in range( 0, 5 ): # 0, 1, 2, 3, 4 units + Unit 0
         atom_groups = [ [item for sub in atom_units[0 : n_carbon_units+1] for item in sub] ]
-        impurityClusters = make_fragments( mol1, myInts, atom_groups )
+        impurity_clusters = make_fragments( mol1, my_ints, atom_groups )
 
-        theDMET = dmet.dmet( myInts, impurityClusters, isTranslationInvariant=False, 
+        thedmet = dmet.dmet( my_ints, impurity_clusters, isTranslationInvariant=False, 
                              method='CC', SCmethod='NONE', CC_E_TYPE='CASCI' )
         
-        the_energy = theDMET.selfconsistent()
-        print("######  DMET(", n_carbon_units,"C , CCSD ) /", thebasis1, "/", thebasis2, " =", the_energy + ECCSD2)
+        the_energy = thedmet.selfconsistent()
+        print("######  dmet(", n_carbon_units,"C , CCSD ) /", thebasis1, "/", thebasis2, " =", the_energy + ECCSD2)

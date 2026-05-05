@@ -1,5 +1,5 @@
 '''
-    QC-DMET: a python implementation of density matrix embedding theory for ab initio quantum chemistry
+    QC-dmet: a python implementation of density matrix embedding theory for ab initio quantum chemistry
     Copyright (C) 2015 Sebastian Wouters
     
     This program is free software; you can redistribute it and/or modify
@@ -23,7 +23,7 @@ from dmet import make_fragments
 from pyscf import gto, scf, ao2mo
 import numpy as np
 
-DMguess  = None
+dm_guess  = None
 #old_umat = None
 
 bondlengths = np.array([0.7, 1.0])
@@ -46,7 +46,7 @@ for bondlength in bondlengths:
     mf = scf.RHF(mol)
     mf.verbose = 3
     mf.max_cycle = 1000
-    mf.scf(dm0=DMguess)
+    mf.scf(dm0=dm_guess)
 
     if ( False ):   
         ENUCL = mf.mol.energy_nuc()
@@ -57,28 +57,28 @@ for bondlength in bondlengths:
         print("bl =", bondlength," and energy =", Energy)
         
     else:
-        myInts = local_integrals.localintegrals( mf, list(range( mol.nao_nr())), 'meta_lowdin' )
-        myInts.molden( 'hydrogen-loc.molden' )
-        myInts.TI_OK = True # Only s functions
+        my_ints = local_integrals.local_integrals( mf, list(range( mol.nao_nr())), 'meta_lowdin' )
+        my_ints.molden( 'hydrogen-loc.molden' )
+        my_ints.TI_OK = True # Only s functions
 
         # Build fragments with the helper: 2 consecutive atoms per impurity
         atoms_per_imp = 2
         atom_groups = [ list(range(i, i+atoms_per_imp)) for i in range(0, nat, atoms_per_imp) ]
-        impurityClusters = make_fragments( mol, myInts, atom_groups )
+        impurity_clusters = make_fragments( mol, my_ints, atom_groups )
         isTranslationInvariant = True # OK because only s-functions and meta-lowdin
 
         SCmethod = 'LSTSQ'
-        print("Start FCI DMET")
-        dmetFCI = dmet.dmet( myInts, impurityClusters, isTranslationInvariant,
+        print("Start FCI dmet")
+        dmetFCI = dmet.dmet( my_ints, impurity_clusters, isTranslationInvariant,
                              method='FCI', SCmethod=SCmethod, doDET=False )
         e_fci = dmetFCI.selfconsistent()
-        print("FCI DMET Energy =", e_fci)
+        print("FCI dmet Energy =", e_fci)
 
-        print("\nStart DMRG DMET")
-        dmetDMRG = dmet.dmet( myInts, impurityClusters, isTranslationInvariant,
+        print("\nStart DMRG dmet")
+        dmetDMRG = dmet.dmet( my_ints, impurity_clusters, isTranslationInvariant,
                               method='DMRG', SCmethod=SCmethod, doDET=False )
         e_dmrg = dmetDMRG.selfconsistent()
-        print("DMRG DMET Energy =", e_dmrg)
+        print("DMRG dmet Energy =", e_dmrg)
 
         print( "\nDifference between FCI and DMRG: %e" % abs(e_fci - e_dmrg) )
         Energy = e_fci

@@ -1,29 +1,29 @@
 '''
-    QD-NEVPT2 solver for QC-DMET using Prism (https://github.com/sokolov-group/prism).
+    QD-NEVPT2 solver for QC-dmet using Prism (https://github.com/sokolov-group/prism).
 
     IMPORTANT: Unlike the other solvers (FCI, CCSD, CASSCF), this solver operates
-    in the PHYSICAL molecular basis, not in the DMET embedding orbital basis. This
+    in the PHYSICAL molecular basis, not in the dmet embedding orbital basis. This
     is a fundamental requirement of Prism's interface, which needs the real PySCF
     mol / mf / mc objects (it calls mol.energy_nuc(), mol.intor_symmetric(), etc.).
 
     Workflow
     --------
-    1. The user builds their DMET system as normal (local_integrals, fragments).
+    1. The user builds their dmet system as normal (local_integrals, fragments).
     2. Instead of calling dmet.dmet(..., method='CASSCF'), they use
        dmet.dmet(..., method='QD-NEVPT2') and supply the real mf object.
     3. Inside doexact, a full SA-CASSCF is run on the real molecule using the
-       DMET-defined active space (ncas, nelecas). The active orbital space
+       dmet-defined active space (ncas, nelecas). The active orbital space
        corresponds to the selected impurity fragment.
     4. Prism QD-NEVPT2 is run on the resulting mc object.
-    5. The SA-weighted CASSCF 1-RDM (in the DMET embedding basis) is used for
+    5. The SA-weighted CASSCF 1-RDM (in the dmet embedding basis) is used for
        the u-matrix fitting loop; QD-NEVPT2 provides the correlated energies.
 
     Limitations
     -----------
-    - Only compatible with one-shot DMET. Calling selfconsistent() with
+    - Only compatible with one-shot dmet. Calling selfconsistent() with
       method='QD-NEVPT2' raises a RuntimeError because the Prism interface
       requires the real molecular integrals and cannot be embedded in the
-      standard DMET u-matrix loop.
+      standard dmet u-matrix loop.
     - The active space (ncas, nelecas) must be specified explicitly.
     - Requires Prism to be installed and importable.
 '''
@@ -63,7 +63,7 @@ def solve(mf_real, ncas, nelecas,
     '''
     Run SA-CASSCF + QD-NEVPT2 via Prism on a real PySCF mf object.
 
-    This function is not called directly by the DMET loop — it is invoked
+    This function is not called directly by the dmet loop — it is invoked
     through dmet.doexact() when method='QD-NEVPT2'. It can also be used as
     a standalone function for testing.
 
@@ -181,12 +181,12 @@ def solve(mf_real, ncas, nelecas,
 
 
 # ---------------------------------------------------------------------------
-# SolverFactory entry point
+# solver_dispatcher entry point
 # ---------------------------------------------------------------------------
 
 def execute(task):
     """
-    SolverFactory-compatible wrapper for the QD-NEVPT2 solver.
+    solver_dispatcher-compatible wrapper for the QD-NEVPT2 solver.
 
     Supports two transport modes for the physical SCF object (mirroring the
     pattern in ``solvers/nevpt2.py``):

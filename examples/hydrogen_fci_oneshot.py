@@ -11,16 +11,16 @@ mol.basis = 'sto-3g'
 mol.build(verbose=0)
 mf = scf.RHF(mol).run()
 
-myInts = local_integrals.localintegrals(mf, list(range(mol.nao_nr())), 'meta_lowdin')
-fragments = make_fragments(mol, myInts, [[0, 1]])
+my_ints = local_integrals.local_integrals(mf, list(range(mol.nao_nr())), 'meta_lowdin')
+fragments = make_fragments(mol, my_ints, [[0, 1]])
 
 print("--- Testing SCmethod='NONE' ---")
-d1 = dmet.dmet(myInts, fragments, isTranslationInvariant=False, method='FCI', SCmethod='NONE')
+d1 = dmet.dmet(my_ints, fragments, isTranslationInvariant=False, method='FCI', SCmethod='NONE')
 e1 = d1.selfconsistent()
 mu1 = d1.mu_imp
 
 print("\n--- Testing oneshot(optimize_mu=True) ---")
-d2 = dmet.dmet(myInts, fragments, isTranslationInvariant=False, method='FCI')
+d2 = dmet.dmet(my_ints, fragments, isTranslationInvariant=False, method='FCI')
 e2 = d2.oneshot(optimize_mu=True)
 mu2 = d2.mu_imp
 
