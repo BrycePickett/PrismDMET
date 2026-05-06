@@ -83,7 +83,11 @@ class QMMMBuilder:
         with pc_layers.
     mm_termination : str
         Element used to fully-coordinate the outer MM boundary
-        (default 'Cu'). Set to 'O' for the old conformal-shell behavior.
+        Element that forms the boundary of the outer passivation shell.
+        Only this element is added during boundary coordination.
+        Default 'Cu' matches Michael's production model (cluster terminates
+        in Cu, adding Cu atoms to satisfy dangling-bond coordination).
+        Use 'O' to terminate in oxygen instead.
     defect_type : str
         'pristine'       — no defect.
         'vacancy'        — remove central defect_element; replace with
@@ -227,7 +231,9 @@ class QMMMBuilder:
         qm_raw, qm_center = self._make_cluster(
             cfg.unitcell, self.center_element, rad=qm_rad
         )
-        qm_raw = self._fully_coordinate(qm_raw, atom_type=self.target_element)
+        qm_raw = self._fully_coordinate(
+            qm_raw, atom_type=self._complement_element(self.target_element)
+        )
 
         # --- 3. Formal charges on QM (no coord-scaling) --------------------
         charges     = self.alt_charges or cfg.canonical_charges
@@ -579,21 +585,28 @@ class QMMMBuilder:
             if self._dist2([cx, cy, cz], at[1:4]) < (rad + tol) ** 2
         ]
 
+    def _complement_element(self, element: str) -> Optional[str]:
+        """Return the first element in the unitcell that is not *element*."""
+        for at in self.config.unitcell:
+            if at[0] != element:
+                return at[0]
+        return None
+
     def _fully_coordinate(
         self, cluster: list, atom_type: Optional[str] = None
     ) -> list:
         """
         Add missing bond-level neighbours to fully coordinate *cluster*.
 
-        Port of fully_coordinate().  A one-bond-cutoff shell is computed
-        via _get_shell, then optionally filtered to exclude *atom_type*
-        (e.g. 'O' — adds only the Oxygens needed to coordinate dangling Cu).
+        If *atom_type* is given, only atoms of that element are added
+        (e.g. 'Cu' adds only Cu to satisfy dangling-bond coordination
+        at the cluster boundary).  If None, all bonding neighbours are added.
         """
-        cfg      = self.config
+        cfg       = self.config
         bond_frac = cfg.bond_cutoff / cfg.characteristic_length
         new_atoms = self._get_shell(cluster, shell_layers=bond_frac + cfg.tol)
         if atom_type:
-            new_atoms = [a for a in new_atoms if a[0] != atom_type]
+            new_atoms = [a for a in new_atoms if a[0] == atom_type]
         return cluster + new_atoms
 
     def _partition(
