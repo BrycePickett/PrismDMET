@@ -105,7 +105,7 @@ class MaterialConfig:
 # Cu2O (cuprite, Pn-3m) — HSE06/ONCVPSP optimised unit cell
 # Exactly reproduces the parameters from michael_code/config.py (Rev 1)
 # ---------------------------------------------------------------------------
-CU2O_CONFIG = MaterialConfig(
+cu2o_hse06_opt_config = MaterialConfig(
     name="Cu2O_HSE06",
     lattice_constant=4.29820000,          # Å — HSE06/ONCVPSP (2026-04-26)
     bond_cutoff=1.86117520,               # Cu-O = a * sqrt(3) / 4
@@ -119,5 +119,26 @@ CU2O_CONFIG = MaterialConfig(
         ['Cu', 3.22365000, 3.22365000, 3.22365000],
         ['O',  2.14910000, 2.14910000, 2.14910000],
         ['O',  0.00000000, 0.00000000, 4.29820000],
+    ],
+)
+
+# ---------------------------------------------------------------------------
+# Cu2O (cuprite, Pn-3m) — Materials Project
+# Derived from examples/qmmm_check/Cu2O.cif
+# ---------------------------------------------------------------------------
+cu2o_matproj_config = MaterialConfig(
+    name="Cu2O_MP",
+    lattice_constant=4.24669932,
+    bond_cutoff=1.83887475,
+    canonical_charges={'Cu': 1.0, 'O': -2.0},
+    bulk_coordinations={'Cu': 2, 'O': 4},
+    ecp_exclude=[],
+    unitcell=[
+        ['Cu', 1.06167483, 1.06167483, 3.18502449],
+        ['Cu', 3.18502449, 1.06167483, 1.06167483],
+        ['Cu', 1.06167483, 3.18502449, 1.06167483],
+        ['Cu', 3.18502449, 3.18502449, 3.18502449],
+        ['O',  2.12334966, 2.12334966, 2.12334966],
+        ['O',  0.00000000, 0.00000000, 0.00000000],
     ],
 )
