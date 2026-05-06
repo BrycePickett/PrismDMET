@@ -261,6 +261,7 @@ class QMMMCluster:
     def to_xyz(
         self,
         filename: str,
+        region: str = 'full',
         mode: str = 'visual',
         include_charges: bool = False,
         overwrite: bool = True,
@@ -272,13 +273,16 @@ class QMMMCluster:
         ----------
         filename : str
             Output file path.
+        region : str
+            'full'    — all four regions.
+            'qm'      — QM atoms only.
+            'ecp'     — ECP boundary atoms only.
+            'mm'      — MM point charges only.
+            'qm_ghost'— QM + ghost atoms.
         mode : str
-            'visual'  — human-readable element labels for structure
-                        viewers (ghost → 'X', ECP → 'Th').
+            'visual'  — raw element labels (e.g. 'Cu', 'O').
             'pyscf'   — PySCF labels (e.g. 'Cu0', 'X-Cu1', 'ghost-Cu').
                         Useful for debugging mol.atom.
-            'full'    — all four regions, visual labels.
-            'qm_only' — QM + ghost atoms only, visual labels.
         include_charges : bool
             If True, append the point charge as a 5th column (produces
             a .qxyz-style file readable by Molden/Chemcraft).
@@ -289,16 +293,20 @@ class QMMMCluster:
         if not overwrite and filepath.exists():
             raise FileExistsError(f"File '{filepath}' already exists.")
 
-        mode_map = {
-            'visual':  [REGION_QM, REGION_ECP, REGION_MM, REGION_GHOST],
-            'pyscf':   [REGION_QM, REGION_ECP, REGION_GHOST],
-            'full':    [REGION_QM, REGION_ECP, REGION_MM, REGION_GHOST],
-            'qm_only': [REGION_QM, REGION_GHOST],
+        region_map = {
+            'full':     [REGION_QM, REGION_ECP, REGION_MM, REGION_GHOST],
+            'qm':       [REGION_QM],
+            'ecp':      [REGION_ECP],
+            'mm':       [REGION_MM],
+            'qm_ghost': [REGION_QM, REGION_GHOST],
         }
-        if mode not in mode_map:
-            raise ValueError(f"mode must be one of {list(mode_map.keys())}")
+        if region not in region_map:
+            raise ValueError(f"region must be one of {list(region_map.keys())}")
+            
+        if mode not in ('visual', 'pyscf'):
+            raise ValueError("mode must be 'visual' or 'pyscf'")
 
-        selected = [a for a in self._atoms if a.region in mode_map[mode]]
+        selected = [a for a in self._atoms if a.region in region_map[region]]
 
         with open(filepath, 'w') as f:
             f.write(f'{len(selected)}\n')
@@ -310,8 +318,7 @@ class QMMMCluster:
                 if mode == 'pyscf':
                     label = a.pyscf_label
                 else:
-                    vis = _VIS_LABELS[a.region]
-                    label = vis if vis else a.element
+                    label = a.element
                 x, y, z = a.coords
                 row = f'{label:<6}  {x:15.8f}  {y:15.8f}  {z:15.8f}'
                 if include_charges:
