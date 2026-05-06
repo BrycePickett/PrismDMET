@@ -46,8 +46,9 @@ class QMMMBuilder:
     ...     target_element = 'Cu',
     ...     center_element = 'Cu',
     ...     qm_target_size = 19,
-    ...     ecp_thickness  = 1,
-    ...     pc_thickness   = 3,
+    ...     ecp_layers     = 1,
+    ...     total_layers   = 12.5,
+    ...     mm_termination = 'Cu',
     ...     defect_type    = 'pristine',
     ... )
     >>> cluster = builder.build()
@@ -69,13 +70,20 @@ class QMMMBuilder:
         Exactly one of qm_target_size / qm_radius must be supplied.
     qm_radius : float, optional
         Explicit QM sphere radius in Å (bypasses SKZCAM scan).
-    ecp_thickness : float
+    ecp_layers : float
         ECP shell thickness in units of config.characteristic_length.
-        Matches Michael's ecp_layers parameter.
-    pc_thickness : float
-        Additional MM shell thickness beyond the ECP shell,
-        in units of config.characteristic_length.
-        Matches Michael's pc_layers parameter.
+    pc_layers : float, optional
+        MM shell thickness beyond the ECP shell, in units of
+        config.characteristic_length.  Mutually exclusive with total_layers.
+    total_layers : float, optional
+        Total cluster radius in units of config.characteristic_length,
+        measured from the central atom (origin-based).  Reproduces
+        Michael's ``get_sphere(central, sphere_layers=N)`` behavior so the
+        cluster size is constant across all QM sizes.  Mutually exclusive
+        with pc_layers.
+    mm_termination : str
+        Element used to fully-coordinate the outer MM boundary
+        (default 'Cu'). Set to 'O' for the old conformal-shell behavior.
     defect_type : str
         'pristine'       — no defect.
         'vacancy'        — remove central defect_element; replace with
@@ -104,8 +112,10 @@ class QMMMBuilder:
         center_element:         str             = 'Cu',
         qm_target_size:         Optional[int]   = None,
         qm_radius:              Optional[float] = None,
-        ecp_thickness:          float           = 1.0,
-        pc_thickness:           float           = 3.0,
+        ecp_layers:             float           = 1.0,
+        pc_layers:              Optional[float] = None,
+        total_layers:           Optional[float] = None,
+        mm_termination:         str             = 'Cu',
         defect_type:            str             = 'pristine',
         defect_element:         Optional[str]   = None,
         substitutional_element: Optional[str]   = None,
@@ -125,6 +135,15 @@ class QMMMBuilder:
             raise ValueError(
                 "Provide exactly one of qm_target_size or qm_radius."
             )
+        if pc_layers is not None and total_layers is not None:
+            raise ValueError(
+                "Provide exactly one of pc_layers or total_layers, not both."
+            )
+        if pc_layers is None and total_layers is None:
+            raise ValueError(
+                "Provide either pc_layers (conformal shell) or "
+                "total_layers (origin-based, matches Michael's get_sphere)."
+            )
         if defect_type not in _valid_defects:
             raise ValueError(
                 f"Unknown defect_type '{defect_type}'. "
@@ -141,8 +160,10 @@ class QMMMBuilder:
         self.center_element         = center_element
         self.qm_target_size         = qm_target_size
         self.qm_radius              = qm_radius
-        self.ecp_thickness          = ecp_thickness
-        self.pc_thickness           = pc_thickness
+        self.ecp_layers             = ecp_layers
+        self.pc_layers              = pc_layers
+        self.total_layers           = total_layers
+        self.mm_termination         = mm_termination
         self.defect_type            = defect_type
         self.defect_element         = defect_element or center_element
         self.substitutional_element = substitutional_element
@@ -178,8 +199,11 @@ class QMMMBuilder:
         2. Cut QM sphere; fully-coordinate target_element at boundary.
         3. Assign formal charges to QM region (no coordination-scaling).
         4. Build ECP shell (formal charges, no scaling).
-        5. Build full cluster (QM + out to ECP+PC) with coord-scaling
-           and neutralization — ensures sum(ECP+MM) = −QM_charge.
+        5. Build full environment with coord-scaling and neutralization.
+           Two modes:
+           - total_layers: origin-based absolute sphere (Michael's method).
+             Total cluster size is constant across all QM sizes.
+           - pc_layers: conformal shell grown outward from the QM surface.
         6. Partition into regions; apply defect.
         7. Package into QMMMCluster.
         """
@@ -200,8 +224,9 @@ class QMMMBuilder:
                 qm_rad = self.qm_radius
 
         # --- 2. QM region ---------------------------------------------------
-        qm_raw, _ = self._make_cluster(cfg.unitcell, self.center_element,
-                                       rad=qm_rad)
+        qm_raw, qm_center = self._make_cluster(
+            cfg.unitcell, self.center_element, rad=qm_rad
+        )
         qm_raw = self._fully_coordinate(qm_raw, atom_type=self.target_element)
 
         # --- 3. Formal charges on QM (no coord-scaling) --------------------
@@ -211,21 +236,26 @@ class QMMMBuilder:
         self._qm_charge = round(sum(a[4] for a in qm_charged), 6)
 
         # --- 4. ECP shell — formal charges, no scaling ---------------------
-        ecp_raw     = self._get_shell(qm_raw,
-                                      shell_layers=self.ecp_thickness)
+        ecp_raw     = self._get_shell(qm_raw, shell_layers=self.ecp_layers)
         ecp_charged = self._assign_charges(ecp_raw, charges,
                                            coordination_scaling=False)
 
-        # --- 5. Full cluster for neutralization ----------------------------
-        # Pass QM coords + PC shell to assign_charges + make_neutral.
-        # Matching Michael's partition(): cluster = qm_region + get_shell(...)
-        # After neutralization: sum(ECP+MM charges) = -QM_charge exactly.
-        pc_shell_raw = self._get_shell(
-            qm_raw,
-            shell_layers=self.ecp_thickness + self.pc_thickness,
-        )
-        full_raw     = [a[:4] for a in qm_raw] + pc_shell_raw
-        full_raw     = self._fully_coordinate(full_raw, atom_type='O')
+        # --- 5. Full environment for neutralization ------------------------
+        if self.total_layers is not None:
+            # Origin-based: one fixed sphere from the central atom.
+            # Matches: cluster = central + get_sphere(central, total_layers)
+            total_rad = self.total_layers * cfg.characteristic_length
+            full_raw  = self._get_sphere_absolute(qm_center, total_rad)
+        else:
+            # Conformal: shell grown outward from the QM surface.
+            pc_shell_raw = self._get_shell(
+                qm_raw,
+                shell_layers=self.ecp_layers + self.pc_layers,
+            )
+            full_raw = [a[:4] for a in qm_raw] + pc_shell_raw
+
+        full_raw     = self._fully_coordinate(full_raw,
+                                              atom_type=self.mm_termination)
         full_charged = self._assign_charges(
             full_raw, charges,
             coordination_scaling=self.coordination_scaling,
@@ -456,8 +486,8 @@ class QMMMBuilder:
         """
         Return atoms within shell_layers * characteristic_length of *cluster*.
 
-        Port of get_shell().  Uses characteristic_length so the shell
-        thickness is correct for all lattice geometries.
+        Surface-based (conformal): shell thickness is measured outward from
+        the surface of *cluster*, not from the central atom.
         """
         cfg       = self.config
         cl        = cfg.characteristic_length
@@ -514,6 +544,40 @@ class QMMMBuilder:
                     shell_coords.add(ct)
                     shell_atoms.append([lab_f[idx]] + list(ct))
         return shell_atoms
+
+    def _get_sphere_absolute(self, central_atom: list, rad: float) -> list:
+        """
+        Return all atoms within *rad* Å of *central_atom* (origin-based).
+
+        Reproduces Michael's ``get_sphere(central, sphere_layers=N)``.
+        The sphere boundary is fixed to the central atom regardless of the
+        QM size, so total cluster size is constant across scaling studies.
+        """
+        cfg = self.config
+        cl  = cfg.characteristic_length
+        tol = cfg.tol
+        p   = cfg.precision
+
+        dim = int(2 * math.ceil(rad / cl) + 1)
+        if dim % 2 == 0:
+            dim += 1
+
+        temp_lat, lat_center = self._make_supercell(
+            cfg.unitcell, [dim]*3, center=self.center_element
+        )
+
+        # align the supercell center onto the exact central_atom position
+        dx = [central_atom[i+1] - lat_center[i+1] for i in range(3)]
+        lattice = [
+            [at[0]] + [round(at[i+1] + dx[i], p) for i in range(3)]
+            for at in temp_lat
+        ]
+
+        cx, cy, cz = central_atom[1], central_atom[2], central_atom[3]
+        return [
+            at for at in lattice
+            if self._dist2([cx, cy, cz], at[1:4]) < (rad + tol) ** 2
+        ]
 
     def _fully_coordinate(
         self, cluster: list, atom_type: Optional[str] = None
