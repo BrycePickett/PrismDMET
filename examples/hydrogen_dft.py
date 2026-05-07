@@ -1,9 +1,9 @@
 """
-hydrogen_dft.py -- DFT impurity solvers in PrismDMET (H2).
+hydrogen_dft.py -- DFT impurity solvers in PrismDMET.
 
-Compares RKS, UKS, and ROKS one-shot DMET on the H2 molecule against the
-corresponding standard PySCF DFT energies.  For a single-fragment DMET where
-the full system is the impurity (nimp == norb), the two should agree exactly.
+Compares RKS, ROKS, and UKS one-shot DMET against standard PySCF energies
+for H2 and H3. For a single-fragment DMET where the full system is the 
+impurity (nimp == norb), the DMET and PySCF energies should agree exactly.
 
 Usage::
 
@@ -15,41 +15,53 @@ from pyscf import gto, scf, dft
 import local_integrals, dmet
 from dmet import make_fragments
 
-mol = gto.M(atom='H 0 0 0; H 0 0 0.74', basis='sto-3g', verbose=0)
-mf  = scf.RHF(mol).run()
+# ============================================================
+# H2 (closed-shell, 2 electrons)
+# ============================================================
+mol2 = gto.M(atom='H 0 0 0; H 0 0 0.74', basis='sto-3g', verbose=0)
+mf2  = scf.RHF(mol2).run()
+ints2  = local_integrals.LocalIntegrals(mf2, list(range(mol2.nao_nr())), 'meta_lowdin')
+frags2 = make_fragments(mol2, ints2, [[0, 1]])
 
-ints  = local_integrals.LocalIntegrals(mf, list(range(mol.nao_nr())), 'meta_lowdin')
-frags = make_fragments(mol, ints, [[0, 1]])
-
-print('H2 DFT Comparison: PySCF Full System vs One-shot DMET')
+print('H2 DFT Comparison: PySCF Full System vs One-shot DMET (PBE)')
 print('-' * 60)
 
-# PBE RKS
-mf_pyscf = dft.RKS(mol, xc='pbe').run()
-e_dmet   = dmet.DMET(ints, frags, False, method='RKS', xc='pbe').oneshot()
-print(f'RKS  (PBE):   PySCF = {mf_pyscf.e_tot:.8f} Ha | DMET = {e_dmet:.8f} Ha')
+# RKS
+mf_pyscf = dft.RKS(mol2, xc='pbe').run()
+e_dmet   = dmet.DMET(ints2, frags2, False, method='RKS', xc='pbe').oneshot()
+print(f'RKS:  PySCF = {mf_pyscf.e_tot:.8f} Ha | DMET = {e_dmet:.8f} Ha')
 
-# PBE UKS
-mf_pyscf = dft.UKS(mol, xc='pbe').run()
-e_dmet   = dmet.DMET(ints, frags, False, method='UKS', xc='pbe').oneshot()
-print(f'UKS  (PBE):   PySCF = {mf_pyscf.e_tot:.8f} Ha | DMET = {e_dmet:.8f} Ha')
+# ROKS (Identical to RKS for closed-shell)
+mf_pyscf = dft.ROKS(mol2, xc='pbe').run()
+e_dmet   = dmet.DMET(ints2, frags2, False, method='ROKS', xc='pbe').oneshot()
+print(f'ROKS: PySCF = {mf_pyscf.e_tot:.8f} Ha | DMET = {e_dmet:.8f} Ha')
 
-# PBE ROKS (same as RKS for closed-shell H2; spin=0)
-mf_pyscf = dft.ROKS(mol, xc='pbe').run()
-e_dmet   = dmet.DMET(ints, frags, False, method='ROKS', xc='pbe').oneshot()
-print(f'ROKS (PBE):   PySCF = {mf_pyscf.e_tot:.8f} Ha | DMET = {e_dmet:.8f} Ha')
+# UKS
+mf_pyscf = dft.UKS(mol2, xc='pbe').run()
+e_dmet   = dmet.DMET(ints2, frags2, False, method='UKS', xc='pbe').oneshot()
+print(f'UKS:  PySCF = {mf_pyscf.e_tot:.8f} Ha | DMET = {e_dmet:.8f} Ha')
 
-# B3LYP RKS
-mf_pyscf = dft.RKS(mol, xc='b3lyp').run()
-e_dmet   = dmet.DMET(ints, frags, False, method='RKS', xc='b3lyp').oneshot()
-print(f'RKS  (B3LYP): PySCF = {mf_pyscf.e_tot:.8f} Ha | DMET = {e_dmet:.8f} Ha')
+# ============================================================
+# H3 (open-shell doublet, 3 electrons, spin=1)
+# ============================================================
+print()
+print('H3 DFT Comparison: PySCF Full System vs One-shot DMET (PBE, spin=1)')
+print('-' * 60)
 
-# B3LYP UKS
-mf_pyscf = dft.UKS(mol, xc='b3lyp').run()
-e_dmet   = dmet.DMET(ints, frags, False, method='UKS', xc='b3lyp').oneshot()
-print(f'UKS  (B3LYP): PySCF = {mf_pyscf.e_tot:.8f} Ha | DMET = {e_dmet:.8f} Ha')
+mol3 = gto.M(atom='H 0 0 0; H 0 0 0.74; H 0 0 1.48',
+             basis='sto-3g', spin=1, verbose=0)
+mf3  = scf.ROHF(mol3).run()
+ints3  = local_integrals.LocalIntegrals(mf3, list(range(mol3.nao_nr())), 'meta_lowdin')
+frags3 = make_fragments(mol3, ints3, [[0, 1, 2]])
 
-# B3LYP ROKS
-mf_pyscf = dft.ROKS(mol, xc='b3lyp').run()
-e_dmet   = dmet.DMET(ints, frags, False, method='ROKS', xc='b3lyp').oneshot()
-print(f'ROKS (B3LYP): PySCF = {mf_pyscf.e_tot:.8f} Ha | DMET = {e_dmet:.8f} Ha')
+# Note: RKS is not applicable to odd-electron systems in standard PySCF/PrismDMET.
+
+# ROKS
+mf_pyscf = dft.ROKS(mol3, xc='pbe').run()
+e_dmet   = dmet.DMET(ints3, frags3, False, method='ROKS', xc='pbe').oneshot()
+print(f'ROKS: PySCF = {mf_pyscf.e_tot:.8f} Ha | DMET = {e_dmet:.8f} Ha')
+
+# UKS
+mf_pyscf = dft.UKS(mol3, xc='pbe').run()
+e_dmet   = dmet.DMET(ints3, frags3, False, method='UKS', xc='pbe').oneshot()
+print(f'UKS:  PySCF = {mf_pyscf.e_tot:.8f} Ha | DMET = {e_dmet:.8f} Ha')
