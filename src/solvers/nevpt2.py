@@ -34,7 +34,7 @@ def solve(mf_real, ncas, nelecas,
     CASSCF → NEVPT2 pipeline is used.
 
     For excited states (nstates > 1), the correct multi-step procedure is:
-        1. SA-CASSCF with nstates states to get optimised MOs.
+        1. SA-CASSCF with nstates states to get optimized MOs.
         2. Multi-root CASCI with those MOs (nroots = nstates).
         3. Per-state SC-NEVPT2 via mrpt.NEVPT(mc_casci, root=i).
 

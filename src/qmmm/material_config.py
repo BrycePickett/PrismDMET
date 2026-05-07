@@ -102,7 +102,7 @@ class MaterialConfig:
 
 
 # ---------------------------------------------------------------------------
-# Cu2O (cuprite, Pn-3m) — HSE06/ONCVPSP optimised unit cell
+# Cu2O (cuprite, Pn-3m) — HSE06/ONCVPSP optimized unit cell
 # Exactly reproduces the parameters from michael_code/config.py (Rev 1)
 # ---------------------------------------------------------------------------
 cu2o_hse06_opt_config = MaterialConfig(
