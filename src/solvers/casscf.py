@@ -18,7 +18,7 @@ def solve(const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
           sa_nstates=1, sa_weights=None,
           frozen=None,
           mo_guess=None, ci_guess=None,
-          oei_s=None,
+          oei_s=None, spin=None,
           **casscf_kwargs):
     '''
     Solve a dmet impurity problem at the CASSCF level.
@@ -71,11 +71,20 @@ def solve(const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
     if nelecas is None:
         nelecas = nel
 
-    assert nel % 2 == 0, "casscf::solve: nel must be even (RHF reference required)"
-    assert ncas <= norb, f"casscf::solve: ncas ({ncas}) cannot exceed norb ({norb})"
-    assert nelecas <= nel, f"casscf::solve: nelecas ({nelecas}) cannot exceed nel ({nel})"
-    assert (nel - nelecas) % 2 == 0, \
-        "casscf::solve: (nel - nelecas) must be even (frozen core must be closed-shell)"
+    # Auto-detect spin: if nel is odd (or caller passes spin > 0) use ROHF reference.
+    # This guarantees a qualitatively correct orbital guess for open-shell CASSCF.
+    _spin = spin if spin is not None else (nel % 2)
+    _use_rohf = (_spin != 0)
+
+    if _use_rohf:
+        assert ncas <= norb, f"casscf::solve: ncas ({ncas}) cannot exceed norb ({norb})"
+        assert nelecas <= nel, f"casscf::solve: nelecas ({nelecas}) cannot exceed nel ({nel})"
+    else:
+        assert nel % 2 == 0, "casscf::solve: nel must be even (RHF reference required)"
+        assert ncas <= norb, f"casscf::solve: ncas ({ncas}) cannot exceed norb ({norb})"
+        assert nelecas <= nel, f"casscf::solve: nelecas ({nelecas}) cannot exceed nel ({nel})"
+        assert (nel - nelecas) % 2 == 0, \
+            "casscf::solve: (nel - nelecas) must be even (frozen core must be closed-shell)"
 
     if sa_nstates > 1:
         if sa_weights is None:
@@ -99,8 +108,15 @@ def solve(const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
         mol.build(verbose=0)
         mol.atom.append(('C', (0, 0, 0)))
         mol.nelectron = nel
+        mol.spin = _spin
         mol.incore_anyway = True
-        mf = scf.RHF(mol)
+
+        if _use_rohf:
+            mf = scf.ROHF(mol)
+            print(f"casscf::solve : Using ROHF reference (spin={_spin}, nel={nel})")
+        else:
+            mf = scf.RHF(mol)
+
         mf.get_hcore = lambda *args: fock_copy
         mf.get_ovlp  = lambda *args: np.eye(norb)
         mf._eri      = ao2mo.restore(8, tei, norb)
@@ -263,5 +279,6 @@ def execute(task):
         mo_guess=task.get('mo_guess'),
         ci_guess=task.get('ci_guess'),
         oei_s=task.get('oei_s'),
+        spin=task.get('spin'),
         **task.get('casscf_kwargs', {}),
     )

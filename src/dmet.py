@@ -69,13 +69,15 @@ class DMET:
                   casscf_kwargs=None,
                   mf_real=None, qdnevpt2_kwargs=None, nevpt2_kwargs=None,
                   use_symmetry=False, symmetry_map=None,
-                  parallel=False, max_workers=None, bath_tol=1e-13 ):
+                  parallel=False, max_workers=None, bath_tol=1e-13,
+                  xc='pbe', spin_polarized=False ):
 
         if ( is_translation_invariant == True ):
             assert( the_ints.TI_OK == True )
 
         _valid_methods = {'ED', 'FCI', 'DMRG', 'DMRG-CheMPS2', 'CC', 'MP2', 'RHF',
-                          'EOM-CC', 'CASSCF', 'QD-NEVPT2', 'NEVPT2'}
+                          'EOM-CC', 'CASSCF', 'QD-NEVPT2', 'NEVPT2',
+                          'UHF', 'ROHF', 'RKS', 'UKS', 'ROKS'}
         assert method in _valid_methods, \
             f"DMET: unknown method='{method}'. Valid: {sorted(_valid_methods)}"
         if method in ('QD-NEVPT2', 'NEVPT2'):
@@ -125,6 +127,7 @@ class DMET:
         self.qdnevpt2_results  = []  # populated by doexact() when method='QD-NEVPT2'
         self.nevpt2_kwargs     = nevpt2_kwargs or {}
         self.nevpt2_results    = []  # populated by doexact() when method='NEVPT2'
+        self.dft_results       = []  # populated by doexact() when method is DFT
         self.BATH_ORBS  = None
         self.fit_imp_bath = fit_imp_bath
         self.do_det      = do_det
@@ -133,6 +136,8 @@ class DMET:
         self.altcostfunc = use_constrained_opt
         self.oei_s      = None  # spin-dependent 1e potential for open-shell envs
         self.bath_tol   = bath_tol
+        self.xc         = xc           # XC functional for DFT solvers
+        self.spin_polarized = spin_polarized  # enable independent alpha/beta mu optimization
 
         # --- Efficiency: symmetry mapping ---
         self.use_symmetry = use_symmetry
@@ -475,6 +480,10 @@ class DMET:
                 'mo_guess'      : _mo_guess,
                 'nevpt2_kwargs' : self.nevpt2_kwargs,
                 'qdnevpt2_kwargs': self.qdnevpt2_kwargs,
+                # --- DFT / open-shell options --------------------------------
+                'xc'            : self.xc,
+                'spin'          : nelec_in_imp % 2,
+                'spin_polarized': self.spin_polarized,
                 # --- Serialized physical molecule (NEVPT2 / QD-NEVPT2) -----
                 # Keys present only when self.mf_real is not None.
                 # Solver wrappers detect 'mol_dumps' to choose the
@@ -582,6 +591,8 @@ class DMET:
                 self.qdnevpt2_results.append(res['qdnevpt2_res'])
             if 'nevpt2_res' in res:
                 self.nevpt2_results.append(res['nevpt2_res'])
+            if 'dft_res' in res:
+                self.dft_results.append(res['dft_res'])
 
             self.energy += IMP_energy
             self.frag_energies.append(IMP_energy)
@@ -836,6 +847,10 @@ class DMET:
             'mo_guess'      : _mo_guess_cas,
             'ci_guess'      : _ci_guess_cas,
             'oei_s'         : _dmet_oei_s,
+            # DFT / open-shell options
+            'xc'            : self.xc,
+            'spin'          : nelec_in_imp % 2,
+            'spin_polarized': self.spin_polarized,
             # NEVPT2 / QD-NEVPT2: live PySCF objects (not picklable; sequential only)
             'mf_real'       : self.mf_real,
             'nevpt2_kwargs' : self.nevpt2_kwargs,
@@ -1103,6 +1118,36 @@ class DMET:
         print("      (chemical potential , number of electrons) = (", chempot_imp, "," , Nelec_dmet ,")")
         return Nelec_dmet - Nelec_target
 
+    def numeleccostfunction_spinpol( self, chempot_pair ):
+        """Cost function for spin-polarized DMET (independent alpha/beta mu).
+
+        Parameters
+        ----------
+        chempot_pair : array-like, shape (2,)
+            [mu_alpha, mu_beta].
+
+        Returns
+        -------
+        ndarray shape (2,) — [error_alpha, error_beta].
+        """
+        mu_a, mu_b = float(chempot_pair[0]), float(chempot_pair[1])
+        # Run doexact with alpha mu; beta mu is stored for the solvers to read.
+        self._chempot_imp_beta = mu_b
+        Nelec_total = self.doexact(mu_a)
+        # Collect alpha and beta electron counts from stored spin-polarized RDMs
+        Nelec_a = sum(
+            np.trace(rdm.get('rdm1_alpha', rdm.get('rdm1', np.zeros((1,1))))[:s, :s])
+            for rdm, s in zip(self._spinpol_rdms, self.imp_size)
+        ) if hasattr(self, '_spinpol_rdms') else Nelec_total / 2.0
+        Nelec_b = Nelec_total - Nelec_a
+        target_a = self.ints.Nelec_alpha if hasattr(self.ints, 'Nelec_alpha') \
+                   else self.ints.Nelec / 2.0
+        target_b = self.ints.Nelec_beta if hasattr(self.ints, 'Nelec_beta') \
+                   else self.ints.Nelec / 2.0
+        print(f"      (mu_a, mu_b, N_a, N_b) = ({mu_a:.6f}, {mu_b:.6f}, "
+              f"{Nelec_a:.4f}, {Nelec_b:.4f})")
+        return np.array([Nelec_a - target_a, Nelec_b - target_b])
+
     def selfconsistent( self ):
 
         if self.method in ('EOM-CC', 'QD-NEVPT2', 'NEVPT2'):
@@ -1236,11 +1281,16 @@ class DMET:
 
         Parameters
         ----------
-        mu_imp : float
-            Chemical potential applied to the impurity orbitals. Default 0.0.
+        mu_imp : float or array-like of length 2
+            Chemical potential applied to the impurity orbitals.
+            * float     — single spin-symmetric mu (default 0.0).
+            * [mu_a, mu_b] — only used when optimize_mu=True and
+              spin_polarized=True; seeds the 2D root search.
         optimize_mu : bool
             If True, optimize the chemical potential to match the target
             number of electrons. If False, use the fixed mu_imp.
+            When spin_polarized=True, runs a 2D root search for
+            (mu_alpha, mu_beta).
 
         Returns
         -------
@@ -1249,10 +1299,29 @@ class DMET:
         """
         if optimize_mu:
             from scipy import optimize
-            try:
-                self.mu_imp = optimize.newton( self.numeleccostfunction, mu_imp )
-            except RuntimeError:
-                print("Warning: Newton solver for mu_imp did not converge. Using last value.")
+            if self.spin_polarized:
+                # 2D root search: find [mu_alpha, mu_beta] independently.
+                mu0 = np.array(mu_imp) if hasattr(mu_imp, '__len__') \
+                      else np.array([float(mu_imp), float(mu_imp)])
+                try:
+                    sol = optimize.fsolve(
+                        self.numeleccostfunction_spinpol,
+                        mu0,
+                        full_output=True,
+                    )
+                    mu_a, mu_b = sol[0]
+                    print(f"  Spin-polarized mu: alpha={mu_a:.8f}, beta={mu_b:.8f}")
+                except Exception as exc:
+                    print(f"Warning: spin-polarized mu optimization failed ({exc}). "
+                          f"Falling back to spin-symmetric mu.")
+                    self.mu_imp = float(mu_imp) if not hasattr(mu_imp, '__len__') \
+                                  else float(mu_imp[0])
+                    self.doexact(self.mu_imp)
+            else:
+                try:
+                    self.mu_imp = optimize.newton( self.numeleccostfunction, mu_imp )
+                except RuntimeError:
+                    print("Warning: Newton solver for mu_imp did not converge. Using last value.")
         else:
             self.mu_imp = mu_imp
             self.doexact( self.mu_imp )

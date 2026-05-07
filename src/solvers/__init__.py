@@ -42,6 +42,10 @@ Task dict optional keys:
     mf_mo_energy  : ndarray   - canonical MO energies
     mf_mo_occ     : ndarray   - MO occupations
     mf_e_tot      : float     - total RHF energy
+    xc            : str       - XC functional for DFT solvers (default 'pbe')
+    spin          : int       - 2S (number of unpaired electrons, default nel%2)
+    spin_polarized: bool      - UHF/UKS: return separate alpha/beta RDMs
+    chempot_imp_beta: float   - UHF/UKS spin_polarized: independent beta mu
 
 Result dict required keys:
     counter       : int
@@ -73,6 +77,7 @@ import warnings
 PARALLEL_ELIGIBLE = frozenset({
     'ED', 'FCI', 'CC', 'MP2', 'EOM-CC', 'DMRG', 'flag_rhf',
     'CASSCF', 'NEVPT2', 'QD-NEVPT2',
+    'RKS', 'UKS', 'ROKS', 'UHF', 'ROHF',
 })
 
 FALLBACK_CHAIN = {
@@ -84,6 +89,11 @@ FALLBACK_CHAIN = {
     'NEVPT2'    : 'CASSCF',
     'CC'        : 'MP2',
     'EOM-CC'    : 'CC',
+    # DFT fallbacks: unrestricted -> restricted open-shell -> restricted
+    'UKS'       : 'ROKS',
+    'ROKS'      : 'RKS',
+    'UHF'       : 'ROHF',
+    'ROHF'      : 'flag_rhf',
 }
 
 
@@ -153,6 +163,13 @@ class SolverDispatcher:
             'CASSCF'      : SolverDispatcher._run_casscf,
             'QD-NEVPT2'   : SolverDispatcher._run_qdnevpt2,
             'NEVPT2'      : SolverDispatcher._run_nevpt2,
+            # Open-shell HF
+            'UHF'         : SolverDispatcher._run_uhf,
+            'ROHF'        : SolverDispatcher._run_rohf,
+            # DFT
+            'RKS'         : SolverDispatcher._run_dft,
+            'UKS'         : SolverDispatcher._run_dft,
+            'ROKS'        : SolverDispatcher._run_dft,
         }
 
         if method not in dispatch:
@@ -258,4 +275,19 @@ class SolverDispatcher:
         energy, rdm1, nevpt2_res = nevpt2.execute(task)
         return {'counter': task['counter'], 'energy': energy,
                 'rdm1': rdm1, 'nevpt2_res': nevpt2_res}
+
+    @staticmethod
+    def _run_uhf(task):
+        from solvers import uhf
+        return uhf.execute(task)
+
+    @staticmethod
+    def _run_rohf(task):
+        from solvers import uhf
+        return uhf.execute(task)
+
+    @staticmethod
+    def _run_dft(task):
+        from solvers import dft
+        return dft.execute(task)
 
