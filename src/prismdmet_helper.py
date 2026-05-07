@@ -32,8 +32,12 @@ class PrismDMETHelper:
 
     def __init__(self, locints, list_H1, use_constrained_opt, minFunc):
         self.locints  = locints
-        assert self.locints.Nelec % 2 == 0, "Nelec must be even (closed-shell reference)"
+        self._is_open_shell = (self.locints.Nelec % 2 != 0)
         self.numPairs = self.locints.Nelec // 2
+        
+        # For open-shell (odd Nelec), track alpha/beta counts for 1-RDM construction
+        self.num_alpha = (self.locints.Nelec + self.locints.mol.spin) // 2
+        self.num_beta  = (self.locints.Nelec - self.locints.mol.spin) // 2
         self.altcf    = use_constrained_opt
         self.minFunc  = None
 
@@ -71,6 +75,8 @@ class PrismDMETHelper:
         umat_loc : ndarray (Norbs, Norbs)
             The correlation potential in the LMO basis.
         """
+        if self._is_open_shell and doSCF:
+            raise NotImplementedError("Open-shell DMET iterative SCF loops are not yet supported.")
         if self.altcf and self.minFunc == 'oei':
             oei = self.locints.loc_oei() + umat_loc
         else:
@@ -88,6 +94,8 @@ class PrismDMETHelper:
         Compute the 1-RDM derivative dγ/du via the C-level RHF response function.
         Used to build the analytical gradient of the cost function.
         """
+        if self._is_open_shell:
+            raise NotImplementedError("DMET chemical-potential optimization requires an even electron count.")
         oei = self.locints.loc_fock() + umat_loc
         if doSCF:
             dm_loc = self._build_1rdm(oei, self.numPairs)
@@ -115,10 +123,18 @@ class PrismDMETHelper:
         return rdm_deriv.reshape((self.Nterms, self.locints.Norbs, self.locints.Norbs), order='C')
 
     def _build_1rdm(self, oei, numPairs):
-        """Build the idempotent 1-RDM by occupying the lowest numPairs eigenstates of oei."""
+        """Build the 1-RDM by occupying the lowest eigenstates of oei."""
         eigenvals, eigenvecs = np.linalg.eigh(oei)
         idx = eigenvals.argsort()
-        return 2 * np.dot(eigenvecs[:, idx[:numPairs]], eigenvecs[:, idx[:numPairs]].T)
+        
+        if self._is_open_shell:
+            # Build separate alpha and beta densities for open-shell
+            # (assumes oei is spin-independent trial Hamiltonian)
+            dm_a = np.dot(eigenvecs[:, idx[:self.num_alpha]], eigenvecs[:, idx[:self.num_alpha]].T)
+            dm_b = np.dot(eigenvecs[:, idx[:self.num_beta]],  eigenvecs[:, idx[:self.num_beta]].T)
+            return dm_a + dm_b
+        else:
+            return 2 * np.dot(eigenvecs[:, idx[:numPairs]], eigenvecs[:, idx[:numPairs]].T)
 
     def constructbath(self, OneDM, impurity_orbs, numBathOrbs, threshold=1e-13):
         """

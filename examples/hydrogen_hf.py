@@ -5,15 +5,8 @@ Compares HF one-shot DMET against standard PySCF energies for H2 and H3.
 For a single-fragment DMET where the full system is the impurity (nimp == norb),
 the DMET and PySCF energies should agree exactly.
 
-Current status
---------------
-  - UHF H2: known energy discrepancy under investigation (pre-existing issue
-    in the uhf.py energy partitioning formula).
-  - H3 (3 electrons): the DMET chemical-potential optimizer in
-    prismdmet_helper.py requires an even electron count; open-shell systems
-    with an odd number of electrons are not yet supported by the default
-    DMET helper.  Use spin_polarized=True with a UHF reference and the
-    modified helper when available.
+The UHF energy partitioning bug and the odd-electron system blocker in the 
+DMET helper have been resolved.
 
 Usage::
 
@@ -42,7 +35,7 @@ mf_uhf = scf.UHF(mol).run()
 print(f'UHF (PySCF):    {mf_uhf.e_tot:.8f} Ha')
 
 e_dmet_uhf = dmet.DMET(ints, frags, False, method='UHF').oneshot()
-print(f'UHF DMET:       {e_dmet_uhf:.8f} Ha  (discrepancy under investigation)')
+print(f'UHF DMET:       {e_dmet_uhf:.8f} Ha')
 
 # ============================================================
 # H3 (open-shell doublet, 3 electrons, spin=1)
@@ -58,5 +51,15 @@ mf_uhf3 = scf.UHF(mol3).run()
 
 print(f'ROHF (PySCF):   {mf_rohf.e_tot:.8f} Ha')
 print(f'UHF  (PySCF):   {mf_uhf3.e_tot:.8f} Ha')
-print('DMET: odd-electron open-shell systems are not yet supported by the',
-      'default DMET chemical-potential optimizer.')
+
+# Build local integrals from ROHF reference
+ints3 = local_integrals.LocalIntegrals(mf_rohf, list(range(mol3.nao_nr())), 'meta_lowdin')
+frags3 = make_fragments(mol3, ints3, [[0, 1, 2]])
+
+# Run UHF DMET one-shot
+e_dmet_uhf3 = dmet.DMET(ints3, frags3, False, method='UHF').oneshot()
+print(f'UHF DMET:       {e_dmet_uhf3:.8f} Ha')
+
+# Run ROHF DMET one-shot
+e_dmet_rohf3 = dmet.DMET(ints3, frags3, False, method='ROHF').oneshot()
+print(f'ROHF DMET:      {e_dmet_rohf3:.8f} Ha')

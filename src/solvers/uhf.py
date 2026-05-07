@@ -89,13 +89,17 @@ def solve_uhf(const, oei, fock, tei, norb, nel, nimp, dm_guess,
     JK_a, JK_b = mf.get_veff(None, dm=mf.make_rdm1())
     JK_tot = JK_a + JK_b
 
-    energy = (
-        const
-        + 0.25 * np.einsum('ji,ij->', rdm1_tot[:, :nimp], fock[:nimp, :] + oei[:nimp, :])
-        + 0.25 * np.einsum('ji,ij->', rdm1_tot[:nimp, :], fock[:, :nimp] + oei[:, :nimp])
-        + 0.25 * np.einsum('ji,ij->', rdm1_tot[:, :nimp], JK_tot[:nimp, :])
-        + 0.25 * np.einsum('ji,ij->', rdm1_tot[:nimp, :], JK_tot[:, :nimp])
-    )
+    e1_a = 0.5 * (np.einsum('ji,ij->', rdm1_a[:, :nimp], fock[:nimp, :] + oei[:nimp, :]) +
+                  np.einsum('ji,ij->', rdm1_a[:nimp, :], fock[:, :nimp] + oei[:, :nimp]))
+    e1_b = 0.5 * (np.einsum('ji,ij->', rdm1_b[:, :nimp], fock[:nimp, :] + oei[:nimp, :]) +
+                  np.einsum('ji,ij->', rdm1_b[:nimp, :], fock[:, :nimp] + oei[:, :nimp]))
+
+    e2_a = 0.5 * (np.einsum('ji,ij->', rdm1_a[:, :nimp], JK_a[:nimp, :]) +
+                  np.einsum('ji,ij->', rdm1_a[:nimp, :], JK_a[:, :nimp]))
+    e2_b = 0.5 * (np.einsum('ji,ij->', rdm1_b[:, :nimp], JK_b[:nimp, :]) +
+                  np.einsum('ji,ij->', rdm1_b[:nimp, :], JK_b[:, :nimp]))
+
+    energy = const + 0.5 * (e1_a + e1_b + e2_a + e2_b)
 
     if spin_polarized:
         return energy, rdm1_a, rdm1_b
@@ -129,19 +133,24 @@ def solve_rohf(const, oei, fock, tei, norb, nel, nimp, dm_guess,
         mf = mf.newton()
         mf.scf(mf.make_rdm1())
 
-    rdm1_raw = mf.make_rdm1()
-    rdm1 = rdm1_raw[0] + rdm1_raw[1] if rdm1_raw.ndim == 3 else rdm1_raw
-    JK   = mf.get_veff(None, dm=rdm1)
+    rdm1_a, rdm1_b = mf.make_rdm1()
+    rdm1_tot = rdm1_a + rdm1_b
 
-    energy = (
-        const
-        + 0.25 * np.einsum('ji,ij->', rdm1[:, :nimp], fock[:nimp, :] + oei[:nimp, :])
-        + 0.25 * np.einsum('ji,ij->', rdm1[:nimp, :], fock[:, :nimp] + oei[:, :nimp])
-        + 0.25 * np.einsum('ji,ij->', rdm1[:, :nimp], JK[:nimp, :])
-        + 0.25 * np.einsum('ji,ij->', rdm1[:nimp, :], JK[:, :nimp])
-    )
+    JK_a, JK_b = mf.get_veff(None, dm=mf.make_rdm1())
 
-    return energy, rdm1
+    e1_a = 0.5 * (np.einsum('ji,ij->', rdm1_a[:, :nimp], fock[:nimp, :] + oei[:nimp, :]) +
+                  np.einsum('ji,ij->', rdm1_a[:nimp, :], fock[:, :nimp] + oei[:, :nimp]))
+    e1_b = 0.5 * (np.einsum('ji,ij->', rdm1_b[:, :nimp], fock[:nimp, :] + oei[:nimp, :]) +
+                  np.einsum('ji,ij->', rdm1_b[:nimp, :], fock[:, :nimp] + oei[:, :nimp]))
+
+    e2_a = 0.5 * (np.einsum('ji,ij->', rdm1_a[:, :nimp], JK_a[:nimp, :]) +
+                  np.einsum('ji,ij->', rdm1_a[:nimp, :], JK_a[:, :nimp]))
+    e2_b = 0.5 * (np.einsum('ji,ij->', rdm1_b[:, :nimp], JK_b[:nimp, :]) +
+                  np.einsum('ji,ij->', rdm1_b[:nimp, :], JK_b[:, :nimp]))
+
+    energy = const + 0.5 * (e1_a + e1_b + e2_a + e2_b)
+
+    return energy, rdm1_tot
 
 
 # ---------------------------------------------------------------------------
