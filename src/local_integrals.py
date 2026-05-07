@@ -48,8 +48,8 @@ class LocalIntegrals:
         self.fullJKao   = _v[0] if _v.ndim == 3 else _v
         self.fullFOCKao = the_mf.get_hcore() + self.fullJKao
 
-        # Spin potential (F_alpha - F_beta)/2 in LMO basis; None for RHF
-        self.activeVSPIN = self._compute_spin_oei(the_mf)
+        # Spin potential computed after ao2loc is built (see below)
+        self.activeVSPIN = None
 
         # Active space bookkeeping
         self._which  = localizationtype
@@ -90,6 +90,10 @@ class LocalIntegrals:
                 self.ao2loc = np.dot(self.ao2loc, ao_rotation.T)
             self.TI_OK = False
         assert self.loc_ortho() < 1e-8, "LMO basis is not orthonormal"
+
+        # Spin potential (F_alpha - F_beta)/2 in LMO basis; None for RHF.
+        # Computed here, after ao2loc is built.
+        self.activeVSPIN = self._compute_spin_oei(the_mf)
 
         # Frozen-core effective Hamiltonian (core contribution to oei)
         self.frozenDMmo  = np.array(the_mf.mo_occ, copy=True)

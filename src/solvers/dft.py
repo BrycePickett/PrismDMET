@@ -11,46 +11,139 @@ Supported method keys
 
 The XC functional is set via task['xc'] (default 'pbe').
 
-Embedding Hamiltonian convention
----------------------------------
-The DMET impurity problem is solved purely algebraically: the one-electron
-Hamiltonian (fock + chemical potential shift), two-electron integrals, and
-overlap are all supplied as dense matrices.  PySCF's DFT classes require a
-real-space numerical grid to evaluate the XC potential.  We satisfy this by
-constructing a minimal dummy molecule (a single H atom) whose sole purpose is
-to anchor a grid -- the actual density is then evaluated in that grid using
-the embedding MOs.  The dummy basis has exactly `norb` s-type functions so
-that the AO dimension matches the embedding space throughout.
-
 Energy partitioning
 -------------------
-The half-projector formula from rhf.py is used with the KS effective
-potential (J + Vxc) in place of the HF exchange.
+Unlike Hartree-Fock, the Kohn-Sham effective potential V_KS = V_J + V_xc
+cannot be partitioned algebraically: V_xc is the functional derivative of
+E_xc[rho], not the energy density. The half-projector formula used in RHF
+(where 0.5 * Tr(D * V_HF) = E_J + E_x) does not apply to DFT.
+
+The correct approach is to evaluate the KS total energy on the real molecule
+using the embedding density. The solver:
+
+  1. Deserializes the real physical molecule from task['dft_mol_dumps'].
+  2. Reconstructs the DMET one-electron Hamiltonian in AO space using the
+     ao2loc and loc_2_dmet transformation matrices.
+  3. Runs a KS calculation on the real molecule with the DMET-modified
+     one-electron Hamiltonian. This ensures that V_xc is evaluated with the
+     correct AO basis and real-space grid.
+  4. Returns the fragment energy as w_imp * (mf.e_tot - E_nuc), where
+     w_imp = Tr(D_imp) / N_el is the fraction of electrons on impurity orbitals.
+     This reduces to mf.e_tot - E_nuc exactly when nimp == norb.
+
+The localization correction term accounts for the substitution of the DMET
+Fock matrix in place of the bare one-electron integrals:
+
+  E_imp = w_imp * (mf.e_tot - E_nuc)
+        + 0.5 * Tr_imp(D_loc * (oei - fock))
+
+For one-shot DMET (oei == fock), the correction vanishes.
+
+Grid and AO integrals
+---------------------
+By running on the real molecule, the TEI used for J are the AO integrals of
+the physical system (not the localized embedding TEI). This is appropriate
+because the physical J interaction is what the XC functional is calibrated
+against. The embedding TEI enter implicitly through the converged density
+from which J and V_xc are derived.
 """
 
 import numpy as np
-from pyscf import ao2mo, gto, dft as pyscf_dft
+from pyscf import gto, dft as pyscf_dft
 
 
 # ---------------------------------------------------------------------------
-# Private helper
+# Private helpers
 # ---------------------------------------------------------------------------
 
-def _embedding_mol(norb, nel, spin=0):
-    """Build a minimal dummy Mole for the embedding space.
+def _reconstruct_mol(mol_dumps):
+    """Deserialize a Mole object from its JSON string dump."""
+    return gto.loads(mol_dumps)
 
-    A single H atom provides the coordinate anchor for the numerical grid.
-    The basis is padded to exactly `norb` s-type functions so that the AO
-    dimension matches the size of the embedding Hamiltonian.
+
+def _build_hcore_ao(mol, ao2loc, loc_2_dmet, fock_emb, oei_emb, chempot_imp, nimp_emb):
+    """Reconstruct the DMET one-electron Hamiltonian in AO space.
+
+    The embedding Hamiltonian uses dmet_fock (with optional chempot shift)
+    in place of the bare hcore. This function transforms it back to AO space
+    so that the KS calculation can be run on the real molecule with the
+    physically correct AO basis and XC grid.
+
+    The AO hcore is:
+        h_AO = h_AO_real + C_emb @ (fock_emb - oei_emb) @ C_emb^T
+
+    where C_emb = ao2loc @ loc_2_dmet is the AO-to-embedding transformation.
+
+    Parameters
+    ----------
+    mol : Mole
+        Real physical molecule.
+    ao2loc : ndarray, shape (nao, nloc)
+        AO to localized-orbital transformation.
+    loc_2_dmet : ndarray, shape (nloc, norb)
+        Localized-orbital to DMET embedding-orbital transformation.
+    fock_emb : ndarray, shape (norb, norb)
+        Fock matrix in the embedding basis (with chempot already subtracted).
+    oei_emb : ndarray, shape (norb, norb)
+        One-electron integrals in the embedding basis.
+
+    Returns
+    -------
+    h_ao : ndarray, shape (nao, nao)
     """
-    mol = gto.Mole()
-    mol.atom  = [['H', (0, 0, 0)]]
-    mol.basis = {'H': [[0, [1.0, 1.0]] for _ in range(norb)]}
-    mol.nelectron    = nel
-    mol.spin         = spin
-    mol.incore_anyway = True
-    mol.build(verbose=0)
-    return mol
+    from pyscf.scf import hf as pyscf_hf
+    h_real = pyscf_hf.get_hcore(mol)
+
+    # AO-to-embedding transformation
+    C_emb = ao2loc @ loc_2_dmet  # (nao, norb)
+
+    # Correction for using fock in place of oei as hcore
+    delta = fock_emb - oei_emb   # zero for one-shot DMET
+    h_ao  = h_real + C_emb @ delta @ C_emb.T
+    return h_ao
+
+
+def _impurity_weight(rdm1_emb, ao2loc, loc_2_dmet, mol, nimp, nel):
+    """Compute the electron fraction residing on impurity orbitals.
+
+    For a single-fragment DMET where nimp == norb, this is 1.0 exactly.
+
+    Parameters
+    ----------
+    rdm1_emb : ndarray, shape (norb, norb) or (2, norb, norb)
+        Density matrix in the embedding basis.
+    nimp : int
+        Number of impurity orbitals.
+    nel : int
+        Total number of electrons.
+
+    Returns
+    -------
+    float
+        w_imp = Tr(D_imp) / N_el
+    """
+    rdm1 = rdm1_emb[0] + rdm1_emb[1] if rdm1_emb.ndim == 3 else rdm1_emb
+    return float(np.trace(rdm1[:nimp, :nimp])) / nel
+
+
+def _oei_correction(rdm1_emb, oei, fock, ao2loc, loc_2_dmet, nimp):
+    """Half-projector correction for the fock-vs-oei substitution.
+
+    For one-shot DMET (oei == fock), this is zero. For self-consistent DMET,
+    this term accounts for the correlation potential shift.
+
+    Returns
+    -------
+    float
+    """
+    diff = oei - fock
+    if np.max(np.abs(diff)) < 1e-14:
+        return 0.0
+    rdm1 = rdm1_emb[0] + rdm1_emb[1] if rdm1_emb.ndim == 3 else rdm1_emb
+    return 0.5 * (
+        np.einsum('ij,ji->', rdm1[:, :nimp], diff[:nimp, :]) +
+        np.einsum('ij,ji->', rdm1[:nimp, :], diff[:, :nimp])
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -58,70 +151,76 @@ def _embedding_mol(norb, nel, spin=0):
 # ---------------------------------------------------------------------------
 
 def solve_rks(const, oei, fock, tei, norb, nel, nimp, dm_guess,
-              xc='pbe', chempot_imp=0.0):
+              xc='pbe', chempot_imp=0.0,
+              mol=None, ao2loc=None, loc_2_dmet=None):
     """Solve the embedding Hamiltonian at the RKS level.
 
     Parameters
     ----------
     const : float
-        Constant energy offset (core + nuclear repulsion partition).
+        Constant energy offset (nuclear repulsion partition from dmet.py).
     oei : ndarray, shape (norb, norb)
         One-electron integrals in the embedding basis.
     fock : ndarray, shape (norb, norb)
         Fock matrix in the embedding basis.
     tei : ndarray, shape (norb, norb, norb, norb)
-        Two-electron integrals in the embedding basis.
+        Two-electron integrals in the embedding basis (not used for J/K here).
     norb : int
-        Number of orbitals in the embedding space.
+        Number of embedding orbitals.
     nel : int
         Number of electrons (must be even for RKS).
     nimp : int
-        Number of impurity orbitals (energy projection cutoff).
+        Number of impurity orbitals.
     dm_guess : ndarray or None
-        Initial density matrix guess.
+        Initial AO density matrix guess.
     xc : str
-        XC functional string accepted by PySCF (e.g. 'pbe', 'b3lyp').
+        XC functional string accepted by PySCF.
     chempot_imp : float
         Chemical potential shift applied to impurity diagonal elements.
+    mol : Mole or None
+        Real physical molecule. Required for correct XC grid evaluation.
+    ao2loc : ndarray or None
+        AO-to-localized-orbital matrix.
+    loc_2_dmet : ndarray or None
+        Localized-to-embedding orbital matrix.
 
     Returns
     -------
     energy : float
-    rdm1 : ndarray, shape (norb, norb)
+    rdm1 : ndarray, shape (norb, norb)  -- density matrix in embedding basis
     dft_res : dict  -- keys: 'mo_energy', 'mo_occ', 'mo_coeff'
     """
     assert nel % 2 == 0, 'RKS requires an even number of electrons.'
 
-    h1 = fock.copy()
+    h_emb = fock.copy()
     if chempot_imp != 0.0:
         for i in range(nimp):
-            h1[i, i] -= chempot_imp
+            h_emb[i, i] -= chempot_imp
 
-    mol = _embedding_mol(norb, nel, spin=0)
-    mf  = pyscf_dft.RKS(mol)
+    # Build AO-space hcore for the real molecule.
+    h_ao = _build_hcore_ao(mol, ao2loc, loc_2_dmet, h_emb, oei,
+                           chempot_imp, nimp)
+
+    mf = pyscf_dft.RKS(mol)
     mf.xc        = xc
-    mf.get_hcore = lambda *args: h1
-    mf.get_ovlp  = lambda *args: np.eye(norb)
-    mf._eri      = ao2mo.restore(8, tei, norb)
-    # Supply a guess if none is provided; PySCF's minao guess fails on the
-    # degenerate dummy basis (all exponents identical).
-    if dm_guess is None:
-        dm_guess = np.diag([nel / norb] * norb)
+    mf.get_hcore = lambda *args: h_ao
     mf.scf(dm_guess)
     if not mf.converged:
         mf = mf.newton()
         mf.scf(mf.make_rdm1())
 
-    rdm1 = mf.make_rdm1()
-    JK   = mf.get_veff(None, dm=rdm1)
+    # Transform AO density matrix to embedding basis to recover rdm1_emb.
+    S       = mol.intor_symmetric('int1e_ovlp')
+    C_emb   = ao2loc @ loc_2_dmet    # (nao, norb)
+    C_inv   = C_emb.T @ S            # (norb, nao)  -- left inverse when C_emb^T S C_emb = I
+    rdm1_ao = mf.make_rdm1()
+    rdm1    = C_inv @ rdm1_ao @ C_inv.T
 
-    energy = (
-        const
-        + 0.25 * np.einsum('ji,ij->', rdm1[:, :nimp], fock[:nimp, :] + oei[:nimp, :])
-        + 0.25 * np.einsum('ji,ij->', rdm1[:nimp, :], fock[:, :nimp] + oei[:, :nimp])
-        + 0.25 * np.einsum('ji,ij->', rdm1[:, :nimp], JK[:nimp, :])
-        + 0.25 * np.einsum('ji,ij->', rdm1[:nimp, :], JK[:, :nimp])
-    )
+    # Impurity energy: fraction of electrons on impurity x KS electronic energy
+    w_imp  = _impurity_weight(rdm1, ao2loc, loc_2_dmet, mol, nimp, nel)
+    e_elec = mf.e_tot - mol.energy_nuc()
+    energy = const + w_imp * e_elec + _oei_correction(rdm1, oei, fock,
+                                                       ao2loc, loc_2_dmet, nimp)
 
     dft_res = {'mo_energy': mf.mo_energy, 'mo_occ': mf.mo_occ, 'mo_coeff': mf.mo_coeff}
     return energy, rdm1, dft_res
@@ -133,7 +232,8 @@ def solve_rks(const, oei, fock, tei, norb, nel, nimp, dm_guess,
 
 def solve_uks(const, oei, fock, tei, norb, nel, nimp, dm_guess,
               xc='pbe', chempot_imp=0.0,
-              spin_polarized=False, chempot_imp_beta=None):
+              spin_polarized=False, chempot_imp_beta=None,
+              mol=None, ao2loc=None, loc_2_dmet=None):
     """Solve the embedding Hamiltonian at the UKS level.
 
     Parameters
@@ -144,7 +244,6 @@ def solve_uks(const, oei, fock, tei, norb, nel, nimp, dm_guess,
         If False (default), return the spin-summed total RDM.
     chempot_imp_beta : float or None
         Independent beta chemical potential. Used only when spin_polarized=True.
-        Defaults to chempot_imp if not provided.
 
     Returns
     -------
@@ -154,30 +253,34 @@ def solve_uks(const, oei, fock, tei, norb, nel, nimp, dm_guess,
     """
     spin = nel % 2
 
-    h1_a = fock.copy()
+    h_emb_a = fock.copy()
     if chempot_imp != 0.0:
         for i in range(nimp):
-            h1_a[i, i] -= chempot_imp
+            h_emb_a[i, i] -= chempot_imp
 
-    h1_b = h1_a.copy()
+    h_emb_b = h_emb_a.copy()
     if spin_polarized and chempot_imp_beta is not None:
-        h1_b = fock.copy()
+        h_emb_b = fock.copy()
         for i in range(nimp):
-            h1_b[i, i] -= chempot_imp_beta
+            h_emb_b[i, i] -= chempot_imp_beta
 
-    mol = _embedding_mol(norb, nel, spin=spin)
-    mf  = pyscf_dft.UKS(mol)
-    mf.xc       = xc
-    # get_hcore must return a 2D (spin-free) matrix for UKS energy_elec.
-    # The chemical potential shifts are equal for both spins here.
-    mf.get_hcore = lambda *args: h1_a
-    mf.get_ovlp  = lambda *args: np.eye(norb)
-    mf._eri      = ao2mo.restore(8, tei, norb)
-    # For spin-polarized DMET, inject a differential beta shift into the
-    # Fock build so the two channels see different effective potentials.
-    if spin_polarized and chempot_imp_beta is not None:
-        _shift = np.diag([chempot_imp - chempot_imp_beta] * nimp +
-                         [0.0] * (norb - nimp))
+    h_ao_a = _build_hcore_ao(mol, ao2loc, loc_2_dmet, h_emb_a, oei,
+                              chempot_imp, nimp)
+    h_ao_b = _build_hcore_ao(mol, ao2loc, loc_2_dmet, h_emb_b, oei,
+                              chempot_imp_beta if spin_polarized and chempot_imp_beta is not None
+                              else chempot_imp, nimp)
+
+    mol_spin = gto.loads(mol.dumps())
+    mol_spin.spin = spin
+    mol_spin.build(verbose=0)
+
+    mf = pyscf_dft.UKS(mol_spin)
+    mf.xc = xc
+    # For UKS, get_hcore must return a spin-averaged (2D) hcore for energy_elec.
+    # Spin-dependent shifts are applied via get_fock override.
+    mf.get_hcore = lambda *args: h_ao_a
+    if spin_polarized and chempot_imp_beta is not None and not np.allclose(h_ao_a, h_ao_b):
+        _shift_ao = h_ao_a - h_ao_b
         _base_get_fock = mf.get_fock
         def _get_fock_spinpol(h1e=None, s1e=None, vhf=None, dm=None, cycle=-1,
                               diis=None, diis_start_cycle=None,
@@ -185,35 +288,31 @@ def solve_uks(const, oei, fock, tei, norb, nel, nimp, dm_guess,
             f_a, f_b = _base_get_fock(h1e, s1e, vhf, dm, cycle, diis,
                                       diis_start_cycle, level_shift_factor,
                                       damp_factor)
-            return np.array([f_a, f_b - _shift])
+            return np.array([f_a, f_b - _shift_ao])
         mf.get_fock = _get_fock_spinpol
-    if dm_guess is None:
-        occ = nel / (2 * norb)
-        dm0 = np.diag([occ] * norb)
-        dm_guess = np.array([dm0, dm0])
     mf.scf(dm_guess)
     if not mf.converged:
         mf = mf.newton()
         mf.scf(mf.make_rdm1())
 
-    rdm1_a, rdm1_b = mf.make_rdm1()
-    JK_a, JK_b    = mf.get_veff(None, dm=mf.make_rdm1())
-    rdm1_tot = rdm1_a + rdm1_b
-    JK_tot   = JK_a  + JK_b
+    S       = mol_spin.intor_symmetric('int1e_ovlp')
+    C_emb   = ao2loc @ loc_2_dmet
+    C_inv   = C_emb.T @ S
+    rdm1_ao_a, rdm1_ao_b = mf.make_rdm1()
+    rdm1_a  = C_inv @ rdm1_ao_a @ C_inv.T
+    rdm1_b  = C_inv @ rdm1_ao_b @ C_inv.T
+    rdm1    = rdm1_a + rdm1_b
 
-    energy = (
-        const
-        + 0.25 * np.einsum('ji,ij->', rdm1_tot[:, :nimp], fock[:nimp, :] + oei[:nimp, :])
-        + 0.25 * np.einsum('ji,ij->', rdm1_tot[:nimp, :], fock[:, :nimp] + oei[:, :nimp])
-        + 0.25 * np.einsum('ji,ij->', rdm1_tot[:, :nimp], JK_tot[:nimp, :])
-        + 0.25 * np.einsum('ji,ij->', rdm1_tot[:nimp, :], JK_tot[:, :nimp])
-    )
+    w_imp  = _impurity_weight(rdm1, ao2loc, loc_2_dmet, mol_spin, nimp, nel)
+    e_elec = mf.e_tot - mol_spin.energy_nuc()
+    energy = const + w_imp * e_elec + _oei_correction(rdm1, oei, fock,
+                                                       ao2loc, loc_2_dmet, nimp)
 
     dft_res = {'mo_energy': mf.mo_energy, 'mo_occ': mf.mo_occ, 'mo_coeff': mf.mo_coeff}
 
     if spin_polarized:
         return energy, rdm1_a, rdm1_b, dft_res
-    return energy, rdm1_tot, dft_res
+    return energy, rdm1, dft_res
 
 
 # ---------------------------------------------------------------------------
@@ -221,48 +320,52 @@ def solve_uks(const, oei, fock, tei, norb, nel, nimp, dm_guess,
 # ---------------------------------------------------------------------------
 
 def solve_roks(const, oei, fock, tei, norb, nel, nimp, dm_guess,
-               xc='pbe', chempot_imp=0.0):
+               xc='pbe', chempot_imp=0.0,
+               mol=None, ao2loc=None, loc_2_dmet=None):
     """Solve the embedding Hamiltonian at the ROKS level.
 
     Returns
     -------
     energy : float
-    rdm1 : ndarray, shape (norb, norb)  -- spin-summed total RDM
+    rdm1 : ndarray, shape (norb, norb)  -- spin-summed density matrix in embedding basis
     dft_res : dict -- keys: 'mo_energy', 'mo_occ', 'mo_coeff'
     """
     spin = nel % 2
 
-    h1 = fock.copy()
+    h_emb = fock.copy()
     if chempot_imp != 0.0:
         for i in range(nimp):
-            h1[i, i] -= chempot_imp
+            h_emb[i, i] -= chempot_imp
 
-    mol = _embedding_mol(norb, nel, spin=spin)
-    mf  = pyscf_dft.ROKS(mol)
+    h_ao = _build_hcore_ao(mol, ao2loc, loc_2_dmet, h_emb, oei,
+                           chempot_imp, nimp)
+
+    mol_spin = gto.loads(mol.dumps())
+    mol_spin.spin = spin
+    mol_spin.build(verbose=0)
+
+    mf = pyscf_dft.ROKS(mol_spin)
     mf.xc        = xc
-    mf.get_hcore = lambda *args: h1
-    mf.get_ovlp  = lambda *args: np.eye(norb)
-    mf._eri      = ao2mo.restore(8, tei, norb)
-    if dm_guess is None:
-        occ = nel / (2 * norb)
-        dm0 = np.diag([occ] * norb)
-        dm_guess = np.array([dm0, dm0])
+    mf.get_hcore = lambda *args: h_ao
     mf.scf(dm_guess)
     if not mf.converged:
         mf = mf.newton()
         mf.scf(mf.make_rdm1())
 
-    rdm1_raw = mf.make_rdm1()
-    rdm1 = rdm1_raw[0] + rdm1_raw[1] if rdm1_raw.ndim == 3 else rdm1_raw
-    JK   = mf.get_veff(None, dm=rdm1)
+    S       = mol_spin.intor_symmetric('int1e_ovlp')
+    C_emb   = ao2loc @ loc_2_dmet
+    C_inv   = C_emb.T @ S
+    rdm1_ao_raw = mf.make_rdm1()
+    if rdm1_ao_raw.ndim == 3:
+        rdm1_ao = rdm1_ao_raw[0] + rdm1_ao_raw[1]
+    else:
+        rdm1_ao = rdm1_ao_raw
+    rdm1 = C_inv @ rdm1_ao @ C_inv.T
 
-    energy = (
-        const
-        + 0.25 * np.einsum('ji,ij->', rdm1[:, :nimp], fock[:nimp, :] + oei[:nimp, :])
-        + 0.25 * np.einsum('ji,ij->', rdm1[:nimp, :], fock[:, :nimp] + oei[:, :nimp])
-        + 0.25 * np.einsum('ji,ij->', rdm1[:, :nimp], JK[:nimp, :])
-        + 0.25 * np.einsum('ji,ij->', rdm1[:nimp, :], JK[:, :nimp])
-    )
+    w_imp  = _impurity_weight(rdm1, ao2loc, loc_2_dmet, mol_spin, nimp, nel)
+    e_elec = mf.e_tot - mol_spin.energy_nuc()
+    energy = const + w_imp * e_elec + _oei_correction(rdm1, oei, fock,
+                                                       ao2loc, loc_2_dmet, nimp)
 
     dft_res = {'mo_energy': mf.mo_energy, 'mo_occ': mf.mo_occ, 'mo_coeff': mf.mo_coeff}
     return energy, rdm1, dft_res
@@ -277,9 +380,15 @@ def execute(task):
 
     Routes to solve_rks, solve_uks, or solve_roks based on task['method'].
 
-    Relevant task keys
+    Required task keys
     ------------------
     method           : 'RKS', 'UKS', or 'ROKS'
+    dft_mol_dumps    : JSON string from mol.dumps() for the real physical molecule
+    ao2loc           : ndarray -- AO-to-localized-orbital transformation
+    loc_2_dmet       : ndarray -- localized-to-embedding-orbital transformation
+
+    Optional task keys
+    ------------------
     xc               : XC functional string (default 'pbe')
     spin_polarized   : bool -- UKS only; enables independent alpha/beta mu
     chempot_imp_beta : float -- independent beta chemical potential (UKS + spin_polarized)
@@ -287,6 +396,8 @@ def execute(task):
     method         = task['method']
     xc             = task.get('xc', 'pbe')
     spin_polarized = task.get('spin_polarized', False)
+
+    mol = _reconstruct_mol(task['dft_mol_dumps'])
 
     common = dict(
         const       = task['const'],
@@ -299,6 +410,9 @@ def execute(task):
         dm_guess    = task.get('dm_guess_rhf'),
         xc          = xc,
         chempot_imp = task.get('chempot_imp', 0.0),
+        mol         = mol,
+        ao2loc      = task['ao2loc'],
+        loc_2_dmet  = task['loc_2_dmet'],
     )
 
     if method == 'RKS':

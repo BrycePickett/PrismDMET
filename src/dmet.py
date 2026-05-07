@@ -450,6 +450,17 @@ class DMET:
                     'mf_e_tot'     : self.mf_real.e_tot,
                 }
 
+            # DFT solvers need the real molecule (for XC grid) and the
+            # AO-to-localized-orbital transformation to back-transform the
+            # embedding density to AO space for correct XC evaluation.
+            _dft_mol_info = {}
+            if _method_key in ('RKS', 'UKS', 'ROKS'):
+                _dft_mol_info = {
+                    'dft_mol_dumps' : self.ints.mol.dumps(),
+                    'ao2loc'        : self.ints.ao2loc,
+                    'loc_2_dmet'    : loc_2_dmet,
+                }
+
             task = {
                 # --- Core identity ------------------------------------------
                 'counter'       : counter,
@@ -484,6 +495,8 @@ class DMET:
                 'xc'            : self.xc,
                 'spin'          : nelec_in_imp % 2,
                 'spin_polarized': self.spin_polarized,
+                # --- DFT mol and localization info --------------------------
+                **_dft_mol_info,
                 # --- Serialized physical molecule (NEVPT2 / QD-NEVPT2) -----
                 # Keys present only when self.mf_real is not None.
                 # Solver wrappers detect 'mol_dumps' to choose the
@@ -851,6 +864,10 @@ class DMET:
             'xc'            : self.xc,
             'spin'          : nelec_in_imp % 2,
             'spin_polarized': self.spin_polarized,
+            # DFT mol and localization info (sequential path has live objects)
+            'dft_mol_dumps' : self.ints.mol.dumps() if method_key in ('RKS', 'UKS', 'ROKS') else None,
+            'ao2loc'        : self.ints.ao2loc       if method_key in ('RKS', 'UKS', 'ROKS') else None,
+            'loc_2_dmet'    : loc_2_dmet             if method_key in ('RKS', 'UKS', 'ROKS') else None,
             # NEVPT2 / QD-NEVPT2: live PySCF objects (not picklable; sequential only)
             'mf_real'       : self.mf_real,
             'nevpt2_kwargs' : self.nevpt2_kwargs,
