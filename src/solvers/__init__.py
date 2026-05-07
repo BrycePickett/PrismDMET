@@ -153,6 +153,7 @@ class SolverDispatcher:
 
         dispatch = {
             'flag_rhf'    : SolverDispatcher._run_rhf,
+            'RHF'         : SolverDispatcher._run_rhf,
             'ED'          : SolverDispatcher._run_fci,
             'FCI'         : SolverDispatcher._run_fci,
             'DMRG'        : SolverDispatcher._run_dmrg,
