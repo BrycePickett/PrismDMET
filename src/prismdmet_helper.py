@@ -3,7 +3,6 @@ Prismdmet helper: C-extension interface and core dmet linear-algebra routines.
 Wraps libprismdmet.so (C) for the RHF response (1-RDM derivative w.r.t. u-matrix).
 """
 
-import local_integrals
 import rhf
 import numpy as np
 import ctypes
@@ -150,10 +149,10 @@ class PrismDMETHelper:
         coreOccupations : ndarray
             Occupation numbers of the environment (core) orbitals.
         """
-        embeddingOrbs  = np.matrix(1 - impurity_orbs)
-        if embeddingOrbs.shape[0] > 1:
-            embeddingOrbs = embeddingOrbs.T
-        isEmbedding    = np.dot(embeddingOrbs.T, embeddingOrbs) == 1
+        embeddingOrbs  = np.array(1 - impurity_orbs, dtype=float)
+        if embeddingOrbs.ndim == 1:
+            embeddingOrbs = embeddingOrbs[:, np.newaxis]  # (Norbs, 1)
+        isEmbedding    = np.dot(embeddingOrbs, embeddingOrbs.T) == 1
         numEmbedOrbs   = int(np.sum(embeddingOrbs))
         embedding1RDM  = np.reshape(OneDM[isEmbedding], (numEmbedOrbs, numEmbedOrbs))
 

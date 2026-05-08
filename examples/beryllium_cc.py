@@ -17,11 +17,9 @@
     51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 '''
 
-import sys
 import local_integrals, dmet, ring_helper
 from dmet import make_fragments
 from pyscf import gto, scf
-from pyscf.cc import ccsd
 import numpy as np
 
 ###  Disclaimer: run one of the three cases for root following
@@ -57,15 +55,7 @@ for bl in thecases:
 
     dm_guess = np.dot( np.dot( mf.mo_coeff, np.diag( mf.mo_occ ) ), mf.mo_coeff.T )
 
-    if ( False ):   
-        ccsolver = ccsd.CCSD( mf )
-        ccsolver.verbose = 5
-        e_corr, t1, t2 = ccsolver.ccsd()
-        e_ccsd = mf.e_tot + e_corr
-        print("e_ccsd for bondlength ",bl," =", e_ccsd)
-
-    #elif ( bl < 3.35 ):
-    else:
+    if True:
         #localization_type = 'meta_lowdin'
         #localization_type = 'boys'
         localization_type = 'meta_lowdin'
