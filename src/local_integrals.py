@@ -43,9 +43,15 @@ class LocalIntegrals:
         self.mol     = the_mf.mol
         self.the_mf  = the_mf
         self.fullEhf = the_mf.e_tot
-        self.fullDMao   = np.dot(np.dot(the_mf.mo_coeff, np.diag(the_mf.mo_occ)), the_mf.mo_coeff.T)
-        _v              = the_mf.get_veff(self.mol, self.fullDMao)
-        self.fullJKao   = _v[0] if _v.ndim == 3 else _v
+        _dm = the_mf.make_rdm1()
+        if _dm.ndim == 3:  # UHF: (2, nao, nao)
+            self.fullDMao = _dm[0] + _dm[1]
+            _v = the_mf.get_veff(self.mol, _dm)        # 3D input → correct per-spin exchange
+            self.fullJKao = 0.5 * (_v[0] + _v[1])     # spin-averaged Veff
+        else:
+            self.fullDMao = _dm
+            _v = the_mf.get_veff(self.mol, self.fullDMao)
+            self.fullJKao = _v[0] if _v.ndim == 3 else _v
         self.fullFOCKao = the_mf.get_hcore() + self.fullJKao
 
         # Spin potential computed after ao2loc is built (see below)
@@ -56,13 +62,29 @@ class LocalIntegrals:
         self.active  = np.zeros([self.mol.nao_nr()], dtype=int)
         self.active[active_orbs] = 1
         self.Norbs   = np.sum(self.active)
-        self.Nelec   = int(np.rint(self.mol.nelectron - np.sum(the_mf.mo_occ[self.active == 0])))
+        _mo_occ = the_mf.mo_occ
+        _frozen_mask = self.active == 0
+        if _mo_occ.ndim == 2:  # UHF: sum frozen electrons from both spin channels
+            if np.any(_frozen_mask):
+                raise NotImplementedError(
+                    "Frozen-core UHF references are not supported. "
+                    "Pass active_orbs=list(range(mol.nao_nr()))."
+                )
+            _frozen_elec = 0.0
+        else:
+            _frozen_elec = np.sum(_mo_occ[_frozen_mask])
+        self.Nelec = int(np.rint(self.mol.nelectron - _frozen_elec))
 
         # Build the AO → LMO transformation (ao2loc)
         if self._which in ('meta_lowdin', 'boys'):
             if self._which == 'meta_lowdin':
                 assert self.Norbs == self.mol.nao_nr(), "meta_lowdin requires full active space"
             if self._which == 'boys':
+                if the_mf.mo_coeff.ndim == 3:
+                    raise NotImplementedError(
+                        "Boys localization requires a single set of spatial orbitals. "
+                        "Use 'meta_lowdin' or 'iao' for UHF references."
+                    )
                 self.ao2loc = the_mf.mo_coeff[:, self.active == 1]
             if self.Norbs == self.mol.nao_nr():
                 nao.AOSHELL[4] = ['1s0p0d0f', '2s1p0d0f']  # redefine Be valence shell
@@ -96,11 +118,15 @@ class LocalIntegrals:
         self.activeVSPIN = self._compute_spin_oei(the_mf)
 
         # Frozen-core effective Hamiltonian (core contribution to oei)
-        self.frozenDMmo  = np.array(the_mf.mo_occ, copy=True)
-        self.frozenDMmo[self.active == 1] = 0
-        self.frozenDMao  = np.dot(np.dot(the_mf.mo_coeff, np.diag(self.frozenDMmo)), the_mf.mo_coeff.T)
-        _v_frozen        = the_mf.get_veff(self.mol, self.frozenDMao)
-        self.frozenJKao  = _v_frozen[0] if _v_frozen.ndim == 3 else _v_frozen
+        if _mo_occ.ndim == 2:  # UHF: frozen core already blocked above, so frozenDM = 0
+            self.frozenDMao = np.zeros_like(self.fullDMao)
+            self.frozenJKao = np.zeros_like(self.fullJKao)
+        else:
+            self.frozenDMmo  = _mo_occ.copy()
+            self.frozenDMmo[self.active == 1] = 0
+            self.frozenDMao  = the_mf.mo_coeff @ np.diag(self.frozenDMmo) @ the_mf.mo_coeff.T
+            _v_frozen        = the_mf.get_veff(self.mol, self.frozenDMao)
+            self.frozenJKao  = _v_frozen[0] if _v_frozen.ndim == 3 else _v_frozen
         self.frozenOEIao = self.fullFOCKao - self.fullJKao + self.frozenJKao
 
         # Active-space integrals in LMO basis
