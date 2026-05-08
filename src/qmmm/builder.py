@@ -23,7 +23,6 @@ from .cluster import (
     AtomRecord, QMMMCluster,
     REGION_QM, REGION_ECP, REGION_MM, REGION_GHOST,
 )
-from .ecp_library import has_ecp
 
 
 # Internal list format:
@@ -297,8 +296,6 @@ class QMMMBuilder:
 
         num_target_uc = sum(1 for at in cfg.unitcell
                             if at[0] == self.target_element)
-        # estimate supercell size — use characteristic_length for safety
-        cl = cfg.characteristic_length
         dim = int(math.ceil(
             (1 / num_target_uc * upper_bound * (6 / math.pi)) ** (1/3) + 1
         ))
@@ -325,6 +322,9 @@ class QMMMBuilder:
                     result[tot_target] = round(current_rad2 ** 0.5, p)
                 tot_target  += 1
                 current_rad2 = r2
+
+        if current_rad2 is not None:
+            result[tot_target] = round(current_rad2 ** 0.5, p)
 
         return {k: v for k, v in result.items() if k <= upper_bound}
 

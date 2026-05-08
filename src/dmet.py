@@ -3,7 +3,6 @@ Prismdmet core dmet driver.
 Built on QC-dmet (Wouters et al., 2015) under GPL-v2.
 """
 
-import local_integrals
 import prismdmet_helper
 import numpy as np
 from scipy import optimize
@@ -72,8 +71,8 @@ class DMET:
                   parallel=False, max_workers=None, bath_tol=1e-13,
                   xc='pbe', spin_polarized=False ):
 
-        if ( is_translation_invariant == True ):
-            assert( the_ints.TI_OK == True )
+        if is_translation_invariant:
+            assert the_ints.TI_OK
 
         _valid_methods = {'ED', 'FCI', 'DMRG', 'DMRG-CheMPS2', 'CC', 'MP2', 'RHF',
                           'EOM-CC', 'CASSCF', 'QD-NEVPT2', 'NEVPT2',
@@ -95,7 +94,7 @@ class DMET:
                 raise ValueError(
                     "method='QD-NEVPT2' requires sa_nstates >= 2 for state-averaging."
                 )
-        assert (( sc_method == 'LSTSQ' ) or ( sc_method == 'BFGS' ) or ( sc_method == 'NONE' ))
+        assert sc_method in {'LSTSQ', 'BFGS', 'NONE'}
         _valid_cc_etypes = {'LAMBDA', 'LAMBDA_AMP', 'LAMBDA_ZERO', 'CASCI', 'CCSD(T)', 'CCSD(T)_RDM', 'EOM-CCSD'}
         assert CC_E_TYPE in _valid_cc_etypes, f"DMET: unknown CC_E_TYPE='{CC_E_TYPE}'. Valid: {_valid_cc_etypes}"
 
@@ -164,9 +163,9 @@ class DMET:
         self.minFunc    = None
         if self.altcostfunc:
             self.minFunc = 'FOCK_INIT'  # 'oei'
-            assert (self.fit_imp_bath == False)
-            assert (self.do_det == False)
-            assert (self.sc_method == 'BFGS' or self.sc_method == 'NONE')
+            assert not self.fit_imp_bath
+            assert not self.do_det
+            assert self.sc_method in {'BFGS', 'NONE'}
 
         if (( self.method == 'CC' ) and ( self.CC_E_TYPE == 'CASCI' )):
             assert( len( self.impClust ) == 1 )
@@ -179,10 +178,10 @@ class DMET:
                     f"DMET: unknown eom_type='{eom_type}'. Valid: {sorted(_EOM_SET)}"
                 )
 
-        if ( self.do_det == True ):
+        if self.do_det:
             # DET only fits impurity diagonal; see Bulik, PRB 89, 035140 (2014)
             self.fit_imp_bath = False
-            if ( self.do_det_NO == True ):
+            if self.do_det_NO:
                 self.NOvecs = None
                 self.NOdiag = None
 
@@ -190,9 +189,9 @@ class DMET:
         self.print_rdm = print_rdm
 
         allOne = self.testclusters()
-        if ( allOne == False ):
+        if not allOne:
             # Incomplete tiling: impurity orbitals must be the first in the Hamiltonian.
-            assert( self.TransInv == False )
+            assert not self.TransInv
 
         self.energy   = 0.0
         self.imp_1RDM = []
@@ -211,8 +210,6 @@ class DMET:
         if hasattr(self.ints, 'loc_spin_oei'):
             self.oei_s = self.ints.loc_spin_oei()   # None for RHF, ndarray for ROHF/UHF
 
-        np.set_printoptions(precision=3, linewidth=160)
-        
     def testclusters( self ):
     
         quicktest = np.zeros([ self.norb ], dtype=int)
@@ -615,7 +612,7 @@ class DMET:
             self.energy += IMP_energy
             self.frag_energies.append(IMP_energy)
             self.imp_1RDM.append( IMP_1RDM )
-            if ( self.do_det == True ) and ( self.do_det_NO == True ):
+            if self.do_det and self.do_det_NO:
                 RDMeigenvals, RDMeigenvecs = np.linalg.eigh( IMP_1RDM[ :num_imp_orbs, :num_imp_orbs ] )
                 self.NOvecs.append( RDMeigenvecs )
                 self.NOdiag.append( RDMeigenvals )
@@ -1057,7 +1054,7 @@ class DMET:
                 if ( self.fit_imp_bath == True ):
                     local_derivative = np.dot( np.dot( self.dmetOrbs[ count ].T, RDMderivs_rot[ countgr, :, : ] ), self.dmetOrbs[ count ] )
                 else:
-                    if ( self.do_det == True ) and ( self.do_det_NO == True ):
+                    if self.do_det and self.do_det_NO:
                         local_derivative = RDMderivs_rot[ countgr, jumpsquare : jumpsquare + self.imp_size[ count ],\
                                                                    jumpsquare : jumpsquare + self.imp_size[ count ] ]
                         jumpsquare += self.imp_size[ count ]
@@ -1100,9 +1097,9 @@ class DMET:
         gradient_reference = self.costfunction_derivative( umatflat )
         hessian = np.zeros( [ len( umatflat ), len( umatflat ) ], dtype=float )
         for cnt in range( len( umatflat ) ):
-            gradient = umatflat.copy()
-            gradient[ cnt ] += stepsize
-            gradient = self.costfunction_derivative( gradient )
+            umat_perturbed = umatflat.copy()
+            umat_perturbed[ cnt ] += stepsize
+            gradient = self.costfunction_derivative( umat_perturbed )
             hessian[ :, cnt ] = ( gradient - gradient_reference ) / stepsize
         hessian = 0.5 * ( hessian + hessian.T )
         eigvals, eigvecs = np.linalg.eigh( hessian )
@@ -1404,7 +1401,7 @@ def make_fragments( mol, myInts, atom_groups ):
         impurity_clusters.append(mask)
         covered += mask
 
-    if not np.all(covered >= 0):
+    if np.any(covered > 1):
         raise ValueError("make_fragments: overlapping atom groups detected.")
 
     return impurity_clusters

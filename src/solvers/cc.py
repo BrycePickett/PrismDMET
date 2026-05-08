@@ -226,11 +226,6 @@ def solve( const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
             pyscf_rdm1 = 0.5 * (pyscf_rdm1 + pyscf_rdm1.T)
             pyscf_rdm1, pyscf_rdm2 = _rotate_rdms_to_local(mf, pyscf_rdm1, pyscf_rdm2)
 
-            ECCSDbis = const + np.einsum('ij,ij->', fock_copy, pyscf_rdm1) \
-                             + 0.5 * np.einsum('ijkl,ijkl->', tei, pyscf_rdm2)
-            print("ECCSD1 =", e_ccsd)
-            print("ECCSD2 =", ECCSDbis)
-
             impurity_energy = _compute_impurity_energy(
                 const, fock_copy, oei, tei, nimp, pyscf_rdm1, pyscf_rdm2,
                 fock, chempot_imp
@@ -279,10 +274,7 @@ def _compute_impurity_energy(const, fock_copy, oei, tei, nimp,
           + 0.125 * np.einsum('ijkl,ijkl->', pyscf_rdm2[:,:,:nimp,:], tei[:,:,:nimp,:]) \
           + 0.125 * np.einsum('ijkl,ijkl->', pyscf_rdm2[:,:,:,:nimp], tei[:,:,:,:nimp])
 
-    if chempot_imp != 0.0:
-        # Chemical potential contribution already in fock_copy; restore it
-        pass  # Energy decomposition via oei+fock naturally absorbs chempot
-
+    # chempot already absorbed by fock_copy; no correction needed
     return E_imp + extra_energy
 
 
