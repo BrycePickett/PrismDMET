@@ -331,7 +331,12 @@ class DMET:
         self.energy   = 0.0
         self.imp_1RDM = []
         self.dmetOrbs = []
-        self.frag_energies = []  # per-fragment energies for symmetry reuse
+        self.frag_energies    = []
+        self.dft_results      = []
+        self.eom_results      = []
+        self.cas_results      = []
+        self.qdnevpt2_results = []
+        self.nevpt2_results   = []
         if ( self.do_det == True ) and ( self.do_det_NO == True ):
             self.NOvecs = []
             self.NOdiag = []
