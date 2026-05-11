@@ -154,7 +154,12 @@ def solve(const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
         mc.kernel(_mo0, _ci0)
 
         ncore = mc.ncore
-        ci_solver_base = pyscf_fci.direct_spin0.FCI()
+        if _use_rohf:
+            _nelecas_fci = ((nelecas + 1) // 2, nelecas // 2)
+            ci_solver_base = pyscf_fci.direct_spin1.FCI()
+        else:
+            _nelecas_fci = nelecas
+            ci_solver_base = pyscf_fci.direct_spin0.FCI()
 
         if sa_nstates > 1:
             # SA-CASSCF: per-state CAS RDMs, then take weighted average
@@ -162,7 +167,7 @@ def solve(const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
             rdm1_cas = np.zeros((ncas, ncas))
             rdm2_cas = np.zeros((ncas, ncas, ncas, ncas))
             for w, ci_vec in zip(sa_weights, ci_vecs):
-                r1, r2 = ci_solver_base.make_rdm12(ci_vec, ncas, nelecas)
+                r1, r2 = ci_solver_base.make_rdm12(ci_vec, ncas, _nelecas_fci)
                 rdm1_cas += w * r1
                 rdm2_cas += w * r2
             e_states = np.array(mc.e_states)
@@ -172,7 +177,7 @@ def solve(const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
                 print(f"  State {i}: {e:.10f} Ha  (weight={sa_weights[i]:.4f})")
             print(f"  Weighted average: {e_tot:.10f} Ha")
         else:
-            rdm1_cas, rdm2_cas = ci_solver_base.make_rdm12(mc.ci, ncas, nelecas)
+            rdm1_cas, rdm2_cas = ci_solver_base.make_rdm12(mc.ci, ncas, _nelecas_fci)
             e_states = None
             e_tot    = mc.e_tot
             print(f"\ncasscf::solve : CASSCF energy = {e_tot:.10f} Ha")

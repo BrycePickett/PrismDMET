@@ -647,7 +647,7 @@ class DMET:
                 from pyscf import scf
                 from types import MethodType
                 mol_ = self.ints.mol
-                mf_  = scf.RHF(mol_)
+                mf_  = scf.ROHF(mol_) if mol_.spin != 0 else scf.RHF(mol_)
 
                 impOrbs = remainingOrbs==1
                 xorb = np.dot(mf_.get_ovlp(), self.ints.ao2loc)
