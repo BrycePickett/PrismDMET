@@ -254,6 +254,36 @@ class QMMMCluster:
                     basis[lbl] = gto.basis.load(qm_basis, a.element)
         return basis
 
+    def auxbasis_dict(self, library='cu2o_jkfit') -> dict:
+        """
+        Return a mol.auxbasis dictionary for density fitting.
+
+        Covers all QM and ghost atoms; ECP boundary atoms are excluded
+        (they carry no basis functions).
+
+        Parameters
+        ----------
+        library : str
+            Auxbasis library to use. Currently only 'cu2o_jkfit' is
+            supported (def2-universal-jkfit valence-only, GTH-compatible).
+
+        Example
+        -------
+        >>> mf.with_df.auxbasis = cluster.auxbasis_dict()
+        """
+        from .auxbasis_library import cu2o_jkfit
+        _loaders = {'cu2o_jkfit': cu2o_jkfit}
+        if library not in _loaders:
+            raise ValueError(f"Unknown auxbasis library '{library}'. "
+                             f"Available: {list(_loaders)}")
+        loader = _loaders[library]
+        auxbasis = {}
+        for a in self.qm_atoms + self.ghost_atoms:
+            lbl = a.pyscf_label
+            if lbl not in auxbasis:
+                auxbasis[lbl] = loader(a.element)
+        return auxbasis
+
     # ------------------------------------------------------------------
     # XYZ file export
     # ------------------------------------------------------------------

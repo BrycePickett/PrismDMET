@@ -162,8 +162,9 @@ class LocalIntegrals:
             dm_b = np.dot(mo * (occ == 2), mo.T)
 
         hcore  = the_mf.get_hcore()
-        fock_a = hcore + pyscf_scf.hf.get_veff(self.mol, np.stack([dm_a, dm_b]), 0, 0, 1)[0]
-        fock_b = hcore + pyscf_scf.hf.get_veff(self.mol, np.stack([dm_a, dm_b]), 0, 0, 1)[1]
+        veff   = the_mf.get_veff(self.mol, np.stack([dm_a, dm_b]))
+        fock_a = hcore + veff[0]
+        fock_b = hcore + veff[1]
 
         spin_loc = self.ao2loc.T @ (0.5 * (fock_a - fock_b)) @ self.ao2loc
         print(f"localintegrals: open-shell reference detected; ||oei_s||_F = {np.linalg.norm(spin_loc):.6f}")

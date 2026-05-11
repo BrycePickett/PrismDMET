@@ -160,7 +160,7 @@ def _reconstruct_mf_from_task(task):
     mol = pyscf.gto.Mole.loads(task['mol_dumps'])
     mol.build(verbose=0)
 
-    mf = pyscf.scf.RHF(mol)
+    mf = pyscf.scf.ROHF(mol) if mol.spin != 0 else pyscf.scf.RHF(mol)
     # Inject pre-computed MO state — no SCF cycles run.
     mf.mo_coeff  = task['mf_mo_coeff']
     mf.mo_energy = task['mf_mo_energy']

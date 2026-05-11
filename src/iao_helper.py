@@ -76,7 +76,20 @@ def construct_iao( mol, mf ):
     Norbs = mol.nao_nr()
 
     # Knizia, JCTC 9, 4834-4843, 2013 -- appendix C
-    ao2occ = mf.mo_coeff[ :, mf.mo_occ > 0.5 ]
+    # For UKS/UHF (mo_coeff shape (2, nao, nmo)), build the spin-averaged
+    # density matrix and extract its effectively-occupied natural orbitals.
+    if np.ndim(mf.mo_coeff) == 3:
+        mo_a, mo_b   = mf.mo_coeff[0], mf.mo_coeff[1]
+        occ_a, occ_b = mf.mo_occ[0],   mf.mo_occ[1]
+        dm_a  = np.dot(mo_a[:, occ_a > 0.5], mo_a[:, occ_a > 0.5].T)
+        dm_b  = np.dot(mo_b[:, occ_b > 0.5], mo_b[:, occ_b > 0.5].T)
+        DM1   = 0.5 * (dm_a + dm_b)
+        eigs, vecs = np.linalg.eigh(DM1)
+        ao2occ = vecs[:, eigs > 0.5]
+    else:
+        ao2occ = mf.mo_coeff[ :, mf.mo_occ > 0.5 ]
+        DM1    = np.dot( ao2occ, ao2occ.T )
+
     pmol   = mol.copy()
     pmol.build( False, False, basis='minao' )
     S21    = gto.mole.intor_cross( 'cint1e_ovlp_sph', pmol, mol )
@@ -86,7 +99,6 @@ def construct_iao( mol, mf ):
     P12    = np.linalg.solve( S1, S21.T )
     Cp     = np.dot( P12, X )
     Cp     = orthogonalize_iao( Cp, S1 )
-    DM1    = np.dot( ao2occ, ao2occ.T )
     DM2    = np.dot( Cp, Cp.T )
     A      = 2 * np.dot( DM1, np.dot( S1, np.dot( DM2, S21.T ) ) ) + P12 - np.dot( DM1 + DM2, S21.T )
     ao2iao = orthogonalize_iao( A, S1 )

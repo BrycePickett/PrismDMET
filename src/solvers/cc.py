@@ -84,8 +84,9 @@ def solve( const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
         mol.build(verbose=0)
         mol.atom.append(('C', (0, 0, 0)))
         mol.nelectron = nel
+        mol.spin      = nel % 2
         mol.incore_anyway = True
-        mf = scf.RHF(mol)
+        mf = scf.ROHF(mol) if mol.spin != 0 else scf.RHF(mol)
         mf.get_hcore = lambda *args: fock_copy
         mf.get_ovlp  = lambda *args: np.eye(norb)
         mf._eri      = ao2mo.restore(8, tei, norb)
@@ -96,8 +97,6 @@ def solve( const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
             mf.scf(dm_loc)
             dm_loc = np.dot(np.dot(mf.mo_coeff, np.diag(mf.mo_occ)), mf.mo_coeff.T)
 
-        # Sanity checks on the RHF solution
-        assert nel % 2 == 0
         numPairs = nel // 2
         fock_loc = fock_copy + np.einsum('ijkl,ij->kl', tei, dm_loc) \
                            - 0.5 * np.einsum('ijkl,ik->jl', tei, dm_loc)
