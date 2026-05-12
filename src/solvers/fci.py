@@ -19,16 +19,28 @@ def solve( const, oei, fock, tei, norb, nel, nimp, chempot_imp=0.0, printoutput=
     mf.get_ovlp = lambda *args: np.eye( norb )
     mf._eri = ao2mo.restore(8, tei, norb)
 
-    with silent_stdout() if not printoutput else nullcontext():
-        mf.scf()
+    if nel % 2 == 0:
+        fci_nel = nel
+    else:
+        fci_nel = ((nel + 1) // 2, nel // 2)
 
-        assert( nel % 2 == 0 )
-        cisolver = fci.direct_spin0.FCI()
+    with silent_stdout() if not printoutput else nullcontext():
+        if nel % 2 == 0:
+            mf.scf()
+            cisolver = fci.direct_spin0.FCI()
+        else:
+            mol.spin = 1
+            mf = scf.ROHF(mol)
+            mf.get_hcore = lambda *args: fock_copy
+            mf.get_ovlp  = lambda *args: np.eye(norb)
+            mf._eri      = ao2mo.restore(8, tei, norb)
+            mf.scf()
+            cisolver = fci.direct_spin1.FCI()
         cisolver.verbose = 0
         cisolver.max_cycle = 200
         cisolver.conv_tol = 1e-12
-        EnergyFCI, FCIvector = cisolver.kernel( fock_copy, tei, norb, nel, ecore=const )
-        two_rdm = cisolver.make_rdm2( FCIvector, norb, nel )
+        EnergyFCI, FCIvector = cisolver.kernel( fock_copy, tei, norb, fci_nel, ecore=const )
+        two_rdm = cisolver.make_rdm2( FCIvector, norb, fci_nel )
 
     one_rdm = np.einsum( 'ijkk->ij', two_rdm ) / ( nel - 1 )
 

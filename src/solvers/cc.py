@@ -97,18 +97,6 @@ def solve( const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
             mf.scf(dm_loc)
             dm_loc = np.dot(np.dot(mf.mo_coeff, np.diag(mf.mo_occ)), mf.mo_coeff.T)
 
-        numPairs = nel // 2
-        fock_loc = fock_copy + np.einsum('ijkl,ij->kl', tei, dm_loc) \
-                           - 0.5 * np.einsum('ijkl,ik->jl', tei, dm_loc)
-        eigvals, eigvecs = np.linalg.eigh(fock_loc)
-        idx = eigvals.argsort()
-        eigvals = eigvals[idx]
-        eigvecs = eigvecs[:, idx]
-        print("cc::solve : RHF homo-lumo gap =", eigvals[numPairs] - eigvals[numPairs-1])
-        dm_loc2 = 2 * np.dot(eigvecs[:, :numPairs], eigvecs[:, :numPairs].T)
-        print("Two-norm difference of 1-RDM(RHF) and 1-RDM(fock(RHF)) =",
-              np.linalg.norm(dm_loc - dm_loc2))
-
         # --------------------------------------------------------------
         # CCSD kernel  (always computed – needed by all variants)
         # --------------------------------------------------------------
@@ -122,7 +110,6 @@ def solve( const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
         # CASCI energy type  – single-energy variant, no projection
         # ==============================================================
         if energytype == 'CASCI':
-            print("e_ccsd =", e_ccsd)
             ccsolver.solve_lambda()
             pyscf_rdm1 = ccsolver.make_rdm1()
             pyscf_rdm1 = 0.5 * (pyscf_rdm1 + pyscf_rdm1.T)
