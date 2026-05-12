@@ -252,7 +252,7 @@ class DMET:
     
         thearray = []
         maxiter = len( self.impClust )
-        if ( self.TransInv == True ):
+        if self.TransInv:
             maxiter = 1
         for counter in range( maxiter ):
             impurity_orbs = np.abs(self.impClust[ counter ])
@@ -264,8 +264,8 @@ class DMET:
     def makelist_H1( self ):
     
         theH1 = []
-        if ( self.do_det == True ): # Do density embedding theory
-            if ( self.TransInv == True ): # Translational invariance assumed
+        if self.do_det: # Do density embedding theory
+            if self.TransInv: # Translational invariance assumed
                 localsize = self.imp_size[ 0 ]
                 for row in range( localsize ):
                     H1 = np.zeros( [ self.norb, self.norb ], dtype=int )
@@ -282,7 +282,7 @@ class DMET:
                         theH1.append( H1 )
                     jumpsquare += localsize
         else: # Do density MATRIX embedding theory
-            if ( self.TransInv == True ): # Translational invariance assumed
+            if self.TransInv: # Translational invariance assumed
                 localsize = self.imp_size[ 0 ]
                 for row in range( localsize ):
                     for col in range( row, localsize ):
@@ -307,7 +307,7 @@ class DMET:
     def make_mask( self ):
     
         themask = np.zeros( [ self.norb, self.norb ], dtype=bool )
-        if ( self.do_det == True ): # Do density embedding theory
+        if self.do_det: # Do density embedding theory
             jump = 0
             for localsize in self.imp_size: # self.imp_size has length 1 if self.TransInv
                 for row in range( localsize ):
@@ -334,12 +334,12 @@ class DMET:
         self.cas_results      = []
         self.qdnevpt2_results = []
         self.nevpt2_results   = []
-        if ( self.do_det == True ) and ( self.do_det_NO == True ):
+        if self.do_det and self.do_det_NO:
             self.NOvecs = []
             self.NOdiag = []
-        
+
         maxiter = len( self.impClust )
-        if ( self.TransInv == True ):
+        if self.TransInv:
             maxiter = 1
             
         remainingOrbs = np.ones( [ len( self.impClust[ 0 ] ) ], dtype=float )
@@ -619,13 +619,13 @@ class DMET:
 
             remainingOrbs -= impurity_orbs
         
-        if ( self.do_det == True ) and ( self.do_det_NO == True ):
+        if self.do_det and self.do_det_NO:
             self.NOrotation = self.constructNOrotation()
         
         Nelectrons = 0.0
         for counter in range( maxiter ):
             Nelectrons += np.trace( self.imp_1RDM[counter][ :self.imp_size[counter], :self.imp_size[counter] ] )
-        if ( self.TransInv == True ):
+        if self.TransInv:
             Nelectrons = Nelectrons * len( self.impClust )
             self.energy = self.energy * len( self.impClust )
             remainingOrbs[:] = 0
@@ -905,7 +905,7 @@ class DMET:
             jumpsquare += self.imp_size[ count ]
         for count in range( jumpsquare, self.norb ):
             myNOrotation[ count, count ] = 1.0
-        if ( self.TransInv == True ):
+        if self.TransInv:
             size = self.imp_size[ 0 ]
             for it in range( 1, self.norb // size ):
                 myNOrotation[ it*size:(it+1)*size, it*size:(it+1)*size ] = myNOrotation[ 0:size, 0:size ]
@@ -954,11 +954,11 @@ class DMET:
         
         thesize = 0
         for count in range(len(self.imp_size)):
-            if ( self.do_det == True ): # Do density embedding theory: fit only impurity
+            if self.do_det: # Do density embedding theory: fit only impurity
                 thesize += self.imp_size[ count ]
-                assert ( self.fit_imp_bath == False )
+                assert not self.fit_imp_bath
             else: # Do density MATRIX embedding theory
-                if ( self.fit_imp_bath == True ):
+                if self.fit_imp_bath:
                     thesize += self.dmetOrbs[count].shape[1] * self.dmetOrbs[count].shape[1]
                 else:
                     thesize += self.imp_size[ count ] * self.imp_size[ count ]
@@ -966,14 +966,14 @@ class DMET:
         
         jump = 0
         for count in range( len( self.imp_size ) ): # self.imp_size has length 1 if self.TransInv
-            if ( self.fit_imp_bath == True ):
+            if self.fit_imp_bath:
                 mf_1RDM = np.dot( np.dot( self.dmetOrbs[ count ].T, one_rdm_loc ), self.dmetOrbs[ count ] )
                 ed_1RDM = self.imp_1RDM[count]
             else:
                 mf_1RDM = (one_rdm_loc[:,np.flatnonzero(self.impClust[count])])[np.flatnonzero(self.impClust[count]),:]
                 ed_1RDM = self.imp_1RDM[count][:self.imp_size[count],:self.imp_size[count]]
-            if ( self.do_det == True ): # Do density embedding theory
-                if ( self.do_det_NO == True ): # Work in the NO basis
+            if self.do_det: # Do density embedding theory
+                if self.do_det_NO: # Work in the NO basis
                     theerror = np.diag( np.dot( np.dot( self.NOvecs[ count ].T, mf_1RDM ), self.NOvecs[ count ] ) ) - self.NOdiag[ count ]
                 else: # Work in the lattice basis
                     theerror = np.diag( mf_1RDM - ed_1RDM )
@@ -1036,11 +1036,11 @@ class DMET:
         
         thesize = 0
         for count in range(len(self.imp_size)):
-            if ( self.do_det == True ): # Do density embedding theory: fit only impurity
+            if self.do_det: # Do density embedding theory: fit only impurity
                 thesize += self.imp_size[ count ]
-                assert ( self.fit_imp_bath == False )
+                assert not self.fit_imp_bath
             else: # Do density MATRIX embedding theory
-                if ( self.fit_imp_bath == True ):
+                if self.fit_imp_bath:
                     thesize += self.dmetOrbs[count].shape[1] * self.dmetOrbs[count].shape[1]
                 else:
                     thesize += self.imp_size[ count ] * self.imp_size[ count ]
@@ -1051,7 +1051,7 @@ class DMET:
             jump = 0
             jumpsquare = 0
             for count in range( len( self.imp_size ) ): # self.imp_size has length 1 if self.TransInv
-                if ( self.fit_imp_bath == True ):
+                if self.fit_imp_bath:
                     local_derivative = np.dot( np.dot( self.dmetOrbs[ count ].T, RDMderivs_rot[ countgr, :, : ] ), self.dmetOrbs[ count ] )
                 else:
                     if self.do_det and self.do_det_NO:
@@ -1060,7 +1060,7 @@ class DMET:
                         jumpsquare += self.imp_size[ count ]
                     else:
                         local_derivative = ((RDMderivs_rot[ countgr, :, : ])[:,np.flatnonzero(self.impClust[count])])[np.flatnonzero(self.impClust[count]),:]
-                if ( self.do_det == True ): # Do density embedding theory
+                if self.do_det: # Do density embedding theory
                     local_derivative = np.diag( local_derivative )
                     error_deriv[ jump : jump + len( local_derivative ) ] = local_derivative
                     jump += len( local_derivative )
@@ -1113,7 +1113,7 @@ class DMET:
         umatsquare[ self.mask ] = umatflat
         umatsquare = umatsquare.T
         umatsquare[ self.mask ] = umatflat
-        if ( self.TransInv == True ):
+        if self.TransInv:
             size = self.imp_size[ 0 ]
             for it in range( 1, self.norb // size ):
                 umatsquare[ it*size:(it+1)*size, it*size:(it+1)*size ] = umatsquare[ 0:size, 0:size ]
