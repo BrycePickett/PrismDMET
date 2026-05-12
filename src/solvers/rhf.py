@@ -39,7 +39,7 @@ def solve( const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf, chempot_imp=0.0
     mf._eri = ao2mo.restore(8, tei, norb)
     mf.scf( dm_guess_rhf )
     dm_loc = np.dot(np.dot( mf.mo_coeff, np.diag( mf.mo_occ )), mf.mo_coeff.T )
-    if ( mf.converged == False ):
+    if not mf.converged:
         mf = mf.newton()
         mf.scf( dm_loc )
         dm_loc = np.dot(np.dot( mf.mo_coeff, np.diag( mf.mo_occ )), mf.mo_coeff.T )

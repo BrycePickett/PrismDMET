@@ -89,14 +89,15 @@ def solve(const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
 
     with ctx:
         # ------------------------------------------------------------------
-        # RHF in the dmet embedding space
+        # SCF reference in the dmet embedding space
         # ------------------------------------------------------------------
         mol = gto.Mole()
         mol.build(verbose=0)
         mol.atom.append(('C', (0, 0, 0)))
         mol.nelectron = nel
+        mol.spin      = nel % 2
         mol.incore_anyway = True
-        mf = scf.RHF(mol)
+        mf = scf.ROHF(mol) if mol.spin != 0 else scf.RHF(mol)
         mf.get_hcore = lambda *args: fock_copy
         mf.get_ovlp  = lambda *args: np.eye(norb)
         mf._eri      = ao2mo.restore(8, tei, norb)
@@ -107,25 +108,13 @@ def solve(const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
             mf.scf(dm_loc)
             dm_loc = np.dot(np.dot(mf.mo_coeff, np.diag(mf.mo_occ)), mf.mo_coeff.T)
 
-        assert nel % 2 == 0
-        numPairs = nel // 2
-        fock_loc = (fock_copy
-                   + np.einsum('ijkl,ij->kl', tei, dm_loc)
-                   - 0.5 * np.einsum('ijkl,ik->jl', tei, dm_loc))
-        eigvals, eigvecs = np.linalg.eigh(fock_loc)
-        idx = eigvals.argsort()
-        eigvals = eigvals[idx]; eigvecs = eigvecs[:, idx]
-        print("eomcc::solve : RHF homo-lumo gap =", eigvals[numPairs] - eigvals[numPairs-1])
-
         # ------------------------------------------------------------------
         # Ground-state CCSD + lambda equations
         # ------------------------------------------------------------------
         ccsolver = ccsd.CCSD(mf)
         ccsolver.verbose = 5
         e_corr, t1, t2 = ccsolver.ccsd()
-        e_rhf  = mf.e_tot
-        e_ccsd = e_rhf + e_corr
-        print(f"eomcc::solve : E(RHF) = {e_rhf:.10f}  E(CCSD) = {e_ccsd:.10f}")
+        e_ccsd = mf.e_tot + e_corr
 
         ccsolver.solve_lambda()
         pyscf_rdm1 = ccsolver.make_rdm1()
