@@ -61,52 +61,35 @@ def _reconstruct_mol(mol_dumps):
     return gto.loads(mol_dumps)
 
 
-def _build_hcore_ao(mol, ao2loc, loc_2_dmet, fock_emb, oei_emb, chempot_imp, nimp_emb):
+def _build_hcore_ao(mol, ao2loc, loc_2_dmet, fock_emb, oei_emb, chempot_imp, nimp_emb,
+                    mm_coords=None, mm_charges=None):
     """Reconstruct the DMET one-electron Hamiltonian in AO space.
-
-    The embedding Hamiltonian uses dmet_fock (with optional chempot shift)
-    in place of the bare hcore. This function transforms it back to AO space
-    so that the KS calculation can be run on the real molecule with the
-    physically correct AO basis and XC grid.
 
     The AO hcore is:
         h_AO = h_AO_real + C_emb @ (fock_emb - oei_emb) @ C_emb^T
 
-    where C_emb = ao2loc @ loc_2_dmet is the AO-to-embedding transformation.
-
-    Parameters
-    ----------
-    mol : Mole
-        Real physical molecule.
-    ao2loc : ndarray, shape (nao, nloc)
-        AO to localized-orbital transformation.
-    loc_2_dmet : ndarray, shape (nloc, norb)
-        Localized-orbital to DMET embedding-orbital transformation.
-    fock_emb : ndarray, shape (norb, norb)
-        Fock matrix in the embedding basis (with chempot already subtracted).
-    oei_emb : ndarray, shape (norb, norb)
-        One-electron integrals in the embedding basis.
-
-    Returns
-    -------
-    h_ao : ndarray, shape (nao, nao)
+    where C_emb = ao2loc @ loc_2_dmet and h_AO_real includes MM point charges
+    when mm_coords and mm_charges are provided.
     """
     from pyscf.scf import hf as pyscf_hf
     h_real = pyscf_hf.get_hcore(mol)
+    if mm_coords is not None and mm_charges is not None and len(mm_coords) > 0:
+        import pyscf.scf
+        import pyscf.qmmm
+        h_real = pyscf.qmmm.mm_charge(pyscf.scf.RHF(mol), mm_coords, mm_charges).get_hcore()
 
-    # AO-to-embedding transformation
     C_emb = ao2loc @ loc_2_dmet  # (nao, norb)
-
-    # Correction for using fock in place of oei as hcore
     delta = fock_emb - oei_emb   # zero for one-shot DMET
     h_ao  = h_real + C_emb @ delta @ C_emb.T
     return h_ao
 
 
-def _impurity_weight(rdm1_emb, ao2loc, loc_2_dmet, mol, nimp, nel):
+def _impurity_weight(rdm1_emb, ao2loc, loc_2_dmet, mol, nimp, nel_total):
     """Compute the electron fraction residing on impurity orbitals.
 
     For a single-fragment DMET where nimp == norb, this is 1.0 exactly.
+    For multi-fragment DMET, nel_total must be the TOTAL system electron count
+    so that the weights across all fragments sum to 1.
 
     Parameters
     ----------
@@ -114,16 +97,16 @@ def _impurity_weight(rdm1_emb, ao2loc, loc_2_dmet, mol, nimp, nel):
         Density matrix in the embedding basis.
     nimp : int
         Number of impurity orbitals.
-    nel : int
-        Total number of electrons.
+    nel_total : int
+        Total number of electrons in the full system.
 
     Returns
     -------
     float
-        w_imp = Tr(D_imp) / N_el
+        w_imp = Tr(D_imp) / N_el_total
     """
     rdm1 = rdm1_emb[0] + rdm1_emb[1] if rdm1_emb.ndim == 3 else rdm1_emb
-    return float(np.trace(rdm1[:nimp, :nimp])) / nel
+    return float(np.trace(rdm1[:nimp, :nimp])) / nel_total
 
 
 def _oei_correction(rdm1_emb, oei, fock, ao2loc, loc_2_dmet, nimp):
@@ -152,7 +135,8 @@ def _oei_correction(rdm1_emb, oei, fock, ao2loc, loc_2_dmet, nimp):
 
 def solve_rks(const, oei, fock, tei, norb, nel, nimp, dm_guess,
               xc='pbe', chempot_imp=0.0,
-              mol=None, ao2loc=None, loc_2_dmet=None):
+              mol=None, ao2loc=None, loc_2_dmet=None,
+              mm_coords=None, mm_charges=None, nel_total=None):
     """Solve the embedding Hamiltonian at the RKS level.
 
     Parameters
@@ -197,9 +181,9 @@ def solve_rks(const, oei, fock, tei, norb, nel, nimp, dm_guess,
         for i in range(nimp):
             h_emb[i, i] -= chempot_imp
 
-    # Build AO-space hcore for the real molecule.
     h_ao = _build_hcore_ao(mol, ao2loc, loc_2_dmet, h_emb, oei,
-                           chempot_imp, nimp)
+                           chempot_imp, nimp,
+                           mm_coords=mm_coords, mm_charges=mm_charges)
 
     mf = pyscf_dft.RKS(mol)
     mf.xc        = xc
@@ -216,8 +200,7 @@ def solve_rks(const, oei, fock, tei, norb, nel, nimp, dm_guess,
     rdm1_ao = mf.make_rdm1()
     rdm1    = C_inv @ rdm1_ao @ C_inv.T
 
-    # Impurity energy: fraction of electrons on impurity x KS electronic energy
-    w_imp  = _impurity_weight(rdm1, ao2loc, loc_2_dmet, mol, nimp, nel)
+    w_imp  = _impurity_weight(rdm1, ao2loc, loc_2_dmet, mol, nimp, nel_total or nel)
     e_elec = mf.e_tot - mol.energy_nuc()
     energy = const + w_imp * e_elec + _oei_correction(rdm1, oei, fock,
                                                        ao2loc, loc_2_dmet, nimp)
@@ -233,7 +216,8 @@ def solve_rks(const, oei, fock, tei, norb, nel, nimp, dm_guess,
 def solve_uks(const, oei, fock, tei, norb, nel, nimp, dm_guess,
               xc='pbe', chempot_imp=0.0,
               spin_polarized=False, chempot_imp_beta=None,
-              mol=None, ao2loc=None, loc_2_dmet=None):
+              mol=None, ao2loc=None, loc_2_dmet=None,
+              mm_coords=None, mm_charges=None, nel_total=None):
     """Solve the embedding Hamiltonian at the UKS level.
 
     Parameters
@@ -265,10 +249,12 @@ def solve_uks(const, oei, fock, tei, norb, nel, nimp, dm_guess,
             h_emb_b[i, i] -= chempot_imp_beta
 
     h_ao_a = _build_hcore_ao(mol, ao2loc, loc_2_dmet, h_emb_a, oei,
-                              chempot_imp, nimp)
+                              chempot_imp, nimp,
+                              mm_coords=mm_coords, mm_charges=mm_charges)
     h_ao_b = _build_hcore_ao(mol, ao2loc, loc_2_dmet, h_emb_b, oei,
                               chempot_imp_beta if spin_polarized and chempot_imp_beta is not None
-                              else chempot_imp, nimp)
+                              else chempot_imp, nimp,
+                              mm_coords=mm_coords, mm_charges=mm_charges)
 
     mol_spin = gto.loads(mol.dumps())
     mol_spin.spin = spin
@@ -303,7 +289,7 @@ def solve_uks(const, oei, fock, tei, norb, nel, nimp, dm_guess,
     rdm1_b  = C_inv @ rdm1_ao_b @ C_inv.T
     rdm1    = rdm1_a + rdm1_b
 
-    w_imp  = _impurity_weight(rdm1, ao2loc, loc_2_dmet, mol_spin, nimp, nel)
+    w_imp  = _impurity_weight(rdm1, ao2loc, loc_2_dmet, mol_spin, nimp, nel_total or nel)
     e_elec = mf.e_tot - mol_spin.energy_nuc()
     energy = const + w_imp * e_elec + _oei_correction(rdm1, oei, fock,
                                                        ao2loc, loc_2_dmet, nimp)
@@ -321,7 +307,8 @@ def solve_uks(const, oei, fock, tei, norb, nel, nimp, dm_guess,
 
 def solve_roks(const, oei, fock, tei, norb, nel, nimp, dm_guess,
                xc='pbe', chempot_imp=0.0,
-               mol=None, ao2loc=None, loc_2_dmet=None):
+               mol=None, ao2loc=None, loc_2_dmet=None,
+               mm_coords=None, mm_charges=None, nel_total=None):
     """Solve the embedding Hamiltonian at the ROKS level.
 
     Returns
@@ -338,7 +325,8 @@ def solve_roks(const, oei, fock, tei, norb, nel, nimp, dm_guess,
             h_emb[i, i] -= chempot_imp
 
     h_ao = _build_hcore_ao(mol, ao2loc, loc_2_dmet, h_emb, oei,
-                           chempot_imp, nimp)
+                           chempot_imp, nimp,
+                           mm_coords=mm_coords, mm_charges=mm_charges)
 
     mol_spin = gto.loads(mol.dumps())
     mol_spin.spin = spin
@@ -362,7 +350,7 @@ def solve_roks(const, oei, fock, tei, norb, nel, nimp, dm_guess,
         rdm1_ao = rdm1_ao_raw
     rdm1 = C_inv @ rdm1_ao @ C_inv.T
 
-    w_imp  = _impurity_weight(rdm1, ao2loc, loc_2_dmet, mol_spin, nimp, nel)
+    w_imp  = _impurity_weight(rdm1, ao2loc, loc_2_dmet, mol_spin, nimp, nel_total or nel)
     e_elec = mf.e_tot - mol_spin.energy_nuc()
     energy = const + w_imp * e_elec + _oei_correction(rdm1, oei, fock,
                                                        ao2loc, loc_2_dmet, nimp)
@@ -413,6 +401,9 @@ def execute(task):
         mol         = mol,
         ao2loc      = task['ao2loc'],
         loc_2_dmet  = task['loc_2_dmet'],
+        mm_coords   = task.get('mm_coords'),
+        mm_charges  = task.get('mm_charges'),
+        nel_total   = task.get('nel_total'),
     )
 
     if method == 'RKS':
