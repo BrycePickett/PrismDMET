@@ -869,7 +869,7 @@ class DMET:
             # DFT mol and localization info (sequential path has live objects)
             'dft_mol_dumps' : self.ints.mol.dumps() if method_key in ('RKS', 'UKS', 'ROKS') else None,
             'ao2loc'        : self.ints.ao2loc       if method_key in ('RKS', 'UKS', 'ROKS') else None,
-            'loc_2_dmet'    : loc_2_dmet             if method_key in ('RKS', 'UKS', 'ROKS') else None,
+            'loc_2_dmet'    : loc_2_dmet[:, :norb_in_imp] if method_key in ('RKS', 'UKS', 'ROKS') else None,
             # NEVPT2 / QD-NEVPT2: live PySCF objects (not picklable; sequential only)
             'mf_real'       : self.mf_real,
             'nevpt2_kwargs' : self.nevpt2_kwargs,
