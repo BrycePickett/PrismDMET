@@ -17,7 +17,7 @@
     51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 '''
 
-from pyscf import gto
+from pyscf.lo import iao as pyscf_iao
 import numpy as np
 import scipy
 
@@ -29,7 +29,7 @@ def construct_p_list( mol, pmol ):
     
     for item in mol.spheric_labels():
         for pitem in pmol.spheric_labels():
-            if (( pitem[0] == item[0] ) and ( pitem[1] == item[1] ) and ( pitem[2] == item[2] ) and ( pitem[3] == item[3] )):
+            if (pitem[1] == item[1] and pitem[2] == item[2] and pitem[3] == item[3]):
                 p_list[ counter_mol ] = 1
         counter_mol += 1
     
@@ -90,18 +90,14 @@ def construct_iao( mol, mf ):
         ao2occ = mf.mo_coeff[ :, mf.mo_occ > 0.5 ]
         DM1    = np.dot( ao2occ, ao2occ.T )
 
-    pmol   = mol.copy()
-    pmol.build( False, False, basis='minao' )
-    S21    = gto.mole.intor_cross( 'cint1e_ovlp_sph', pmol, mol )
+    # Use GTH-SZV as IAO reference so the reference basis is a subspace of the
+    # working basis. reference_mol() also excludes ghost and ECP boundary atoms,
+    # which have no GTH AOs — MINAO would assign them core functions, making
+    # pmol.nao > mol.nao and causing negative eigenvalues in orthogonalize_iao.
+    pmol   = pyscf_iao.reference_mol(mol, minao='gth-szv-molopt-sr')
     S1     = mol.intor('cint1e_ovlp_sph')
-    S2     = pmol.intor('cint1e_ovlp_sph')
-    X      = np.linalg.solve( S2, np.dot( S21, ao2occ ) )
-    P12    = np.linalg.solve( S1, S21.T )
-    Cp     = np.dot( P12, X )
-    Cp     = orthogonalize_iao( Cp, S1 )
-    DM2    = np.dot( Cp, Cp.T )
-    A      = 2 * np.dot( DM1, np.dot( S1, np.dot( DM2, S21.T ) ) ) + P12 - np.dot( DM1 + DM2, S21.T )
-    ao2iao = orthogonalize_iao( A, S1 )
+    ao2iao = pyscf_iao.iao(mol, ao2occ, minao='gth-szv-molopt-sr')
+    ao2iao = orthogonalize_iao(ao2iao, S1)
     return ( ao2iao , S1, pmol )
 
 def localize_iao( mol, mf ):
