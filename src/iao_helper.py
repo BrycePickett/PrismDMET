@@ -18,22 +18,19 @@
 '''
 
 from pyscf.lo import iao as pyscf_iao
+from pyscf.data.elements import is_ghost_atom
 import numpy as np
 import scipy
 
 def construct_p_list( mol, pmol ):
-
-    Norbs       = mol.nao_nr()
-    p_list      = np.zeros( [ Norbs ], dtype=int )
-    counter_mol = 0
-    
-    for item in mol.spheric_labels():
-        for pitem in pmol.spheric_labels():
-            if (pitem[1] == item[1] and pitem[2] == item[2] and pitem[3] == item[3]):
-                p_list[ counter_mol ] = 1
-        counter_mol += 1
-    
-    assert( counter_mol == Norbs )
+    # Mark AOs as 1 if their atom is in pmol (i.e., not a ghost or ECP atom).
+    # spheric_labels() returns 'Cu' for ghost-Cu (strips the prefix), so
+    # label matching cannot distinguish them. Use aoslice_by_atom() instead.
+    Norbs  = mol.nao_nr()
+    p_list = np.zeros( [ Norbs ], dtype=int )
+    for ia, (_, _, ao_start, ao_stop) in enumerate( mol.aoslice_by_atom() ):
+        if not is_ghost_atom( mol._atom[ia][0] ):
+            p_list[ ao_start:ao_stop ] = 1
     assert( np.sum( p_list ) == pmol.nao_nr() )
     return p_list
 
