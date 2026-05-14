@@ -31,6 +31,16 @@ def construct_p_list( mol, pmol ):
     for ia, (_, _, ao_start, ao_stop) in enumerate( mol.aoslice_by_atom() ):
         if not is_ghost_atom( mol._atom[ia][0] ):
             p_list[ ao_start:ao_stop ] = 1
+    ghost_nao = sum(
+        ao_stop - ao_start
+        for ia, (_, _, ao_start, ao_stop) in enumerate( mol.aoslice_by_atom() )
+        if is_ghost_atom( mol._atom[ia][0] )
+    )
+    if mol.nao_nr() - pmol.nao_nr() != ghost_nao:
+        raise NotImplementedError(
+            "Working basis has functions not present in the IAO reference basis. "
+            "construct_p_list requires overlap-based matching for this case."
+        )
     assert( np.sum( p_list ) == pmol.nao_nr() )
     return p_list
 
@@ -46,7 +56,7 @@ def resort_orbitals( mol, ao2loc ):
     # Sort the orbitals according to the atom list
     Norbs  = mol.nao_nr()
     coords = np.zeros( [ Norbs, 3 ], dtype=float )
-    rvec   = mol.intor( 'cint1e_r_sph', 3 )
+    rvec   = mol.intor( 'int1e_r', comp=3 )
     for cart in range(3):
         coords[ :, cart ] = np.diag( np.dot( np.dot( ao2loc.T, rvec[cart] ) , ao2loc ) )
     atomid = np.zeros( [ Norbs ], dtype=int )
@@ -103,14 +113,24 @@ def localize_iao( mol, mf ):
     ao2iao, S1, pmol = construct_iao( mol, mf )
     num_iao = ao2iao.shape[ 1 ]
 
+    p_list = construct_p_list( mol, pmol )
+
+    # No complement needed when every AO is in the reference basis
+    if np.all( p_list == 1 ):
+        ao2loc = orthogonalize_iao( ao2iao, S1 )
+        should_be_1 = np.dot( np.dot( ao2loc.T, S1 ), ao2loc )
+        print("QC-dmet :: iao_helper :: num_orb pmol =", pmol.nao_nr())
+        print("QC-dmet :: iao_helper :: num_orb mol  =", mol.nao_nr())
+        print("QC-dmet :: iao_helper :: norm( I - C_full.T * S * C_full ) =", np.linalg.norm( should_be_1 - np.eye( should_be_1.shape[0] ) ))
+        return ao2loc
+
     # Determine the complement of the IAO space
     DM_iao     = np.dot( ao2iao, ao2iao.T )
     mx         = np.dot( S1, np.dot( DM_iao, S1 ) )
     eigs, vecs = scipy.linalg.eigh( a=mx, b=S1 ) # Small to large in scipy
     ao2com     = vecs[ :, : Norbs - num_iao ]
 
-    # Redo the IAO contruction for the complement space
-    p_list = construct_p_list( mol, pmol ) # return array of length Norbs; 1 if similar bf in pmol; 0 otherwise
+    # Redo the IAO construction for the complement space
     S31    = S1[  p_list == 0 , : ]
     S3     = S31[ : , p_list == 0 ]
     X      = np.linalg.solve( S3, np.dot( S31, ao2com ) )
