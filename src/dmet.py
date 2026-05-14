@@ -69,7 +69,8 @@ class DMET:
                   mf_real=None, qdnevpt2_kwargs=None, nevpt2_kwargs=None,
                   use_symmetry=False, symmetry_map=None,
                   parallel=False, max_workers=None, bath_tol=1e-13,
-                  xc='pbe', spin_polarized=False ):
+                  xc='pbe', spin_polarized=False,
+                  mm_coords=None, mm_charges=None ):
 
         if is_translation_invariant:
             assert the_ints.TI_OK
@@ -137,6 +138,8 @@ class DMET:
         self.bath_tol   = bath_tol
         self.xc         = xc           # XC functional for DFT solvers
         self.spin_polarized = spin_polarized  # enable independent alpha/beta mu optimization
+        self.mm_coords  = np.asarray(mm_coords,  dtype=float) if mm_coords  is not None else None
+        self.mm_charges = np.asarray(mm_charges, dtype=float) if mm_charges is not None else None
 
         # --- Efficiency: symmetry mapping ---
         self.use_symmetry = use_symmetry
@@ -461,6 +464,9 @@ class DMET:
                     'dft_mol_dumps' : self.ints.mol.dumps(),
                     'ao2loc'        : self.ints.ao2loc,
                     'loc_2_dmet'    : loc_2_dmet[:, :norb_in_imp],
+                    'mm_coords'     : self.mm_coords,
+                    'mm_charges'    : self.mm_charges,
+                    'nel_total'     : self.ints.Nelec,
                 }
 
             task = {
@@ -870,6 +876,9 @@ class DMET:
             'dft_mol_dumps' : self.ints.mol.dumps() if method_key in ('RKS', 'UKS', 'ROKS') else None,
             'ao2loc'        : self.ints.ao2loc       if method_key in ('RKS', 'UKS', 'ROKS') else None,
             'loc_2_dmet'    : loc_2_dmet[:, :norb_in_imp] if method_key in ('RKS', 'UKS', 'ROKS') else None,
+            'mm_coords'     : self.mm_coords  if method_key in ('RKS', 'UKS', 'ROKS') else None,
+            'mm_charges'    : self.mm_charges if method_key in ('RKS', 'UKS', 'ROKS') else None,
+            'nel_total'     : self.ints.Nelec if method_key in ('RKS', 'UKS', 'ROKS') else None,
             # NEVPT2 / QD-NEVPT2: live PySCF objects (not picklable; sequential only)
             'mf_real'       : self.mf_real,
             'nevpt2_kwargs' : self.nevpt2_kwargs,
