@@ -460,7 +460,7 @@ class DMET:
                 _dft_mol_info = {
                     'dft_mol_dumps' : self.ints.mol.dumps(),
                     'ao2loc'        : self.ints.ao2loc,
-                    'loc_2_dmet'    : loc_2_dmet,
+                    'loc_2_dmet'    : loc_2_dmet[:, :norb_in_imp],
                 }
 
             task = {
