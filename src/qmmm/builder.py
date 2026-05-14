@@ -357,7 +357,7 @@ class QMMMBuilder:
         coords_set = set()
         result = []
 
-        # Centre the tiling for odd dimensions (places origin at centre)
+        # Center the tiling for odd dimensions (places origin at center)
         if all(d % 2 == 1 for d in dimensions):
             ranges = [range(-(d // 2), d // 2 + 1) for d in dimensions]
         else:
@@ -385,7 +385,7 @@ class QMMMBuilder:
         return result, result[0]
 
     def _find_central_atom(self, cluster: list, atom_type=None) -> list:
-        """Port of find_central_atom() — atom closest to geometric centre."""
+        """Port of find_central_atom() — atom closest to geometric center."""
         cfg = self.config
         p   = cfg.precision
 
@@ -516,7 +516,7 @@ class QMMMBuilder:
             cfg.unitcell, [dim]*3, center=self.center_element
         )
 
-        # realign lattice centre onto the cluster centre
+        # realign lattice center onto the cluster center
         dx = [central[i+1] - lat_center[i+1] for i in range(3)]
         lattice = [
             [at[0]] + [round(at[i+1] + dx[i], p) for i in range(3)]
@@ -596,11 +596,11 @@ class QMMMBuilder:
         self, cluster: list, atom_type: Optional[str] = None
     ) -> list:
         """
-        Add missing bond-level neighbours to fully coordinate *cluster*.
+        Add missing bond-level neighbors to fully coordinate *cluster*.
 
         If *atom_type* is given, only atoms of that element are added
         (e.g. 'Cu' adds only Cu to satisfy dangling-bond coordination
-        at the cluster boundary).  If None, all bonding neighbours are added.
+        at the cluster boundary).  If None, all bonding neighbors are added.
         """
         cfg       = self.config
         bond_frac = cfg.bond_cutoff / cfg.characteristic_length

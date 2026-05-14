@@ -32,7 +32,7 @@ class MaterialConfig:
         Ideal bulk coordination number for each species,
         e.g. {'Cu': 2, 'O': 4}.  Used for coordination-scaling.
     bond_cutoff : float
-        Nearest-neighbour distance (Å) below which two atoms are
+        Nearest-neighbor distance (Å) below which two atoms are
         considered bonded.
     lattice_constant : float, optional
         Cubic lattice parameter (Å).  Auto-builds a diagonal

@@ -16,7 +16,6 @@
 '''
 
 import numpy as np
-from scipy import linalg
 
 
 def project_amo_manually(old_mo_coeff, ncas, ncore, new_fock, norb):
@@ -125,7 +124,7 @@ def fix_casscf_for_nonsinglet_env(mc, h1e_s):
     Parameters
     ----------
     mc : mcscf.CASSCF
-        A fully initialised (but not yet solved) PySCF CASSCF object.
+        A fully initialized (but not yet solved) PySCF CASSCF object.
     h1e_s : ndarray (norb, norb) or None
         The spin-dependent one-electron potential in the local embedding
         basis:  h1e_s = (h_alpha - h_beta) / 2.

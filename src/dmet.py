@@ -1242,7 +1242,6 @@ class DMET:
             self.umat = self.relaxation * umat_old + ( 1.0 - self.relaxation ) * self.umat
             print("   2-norm of difference old and new u-mat =", u_diff)
             print("   2-norm of difference old and new 1-RDM =", rdm_diff)
-            print("******************************************************")
             
             if ( self.sc_method == 'NONE' ):
                 u_diff = 0.1 * convergence_threshold # Do only 1 iteration
