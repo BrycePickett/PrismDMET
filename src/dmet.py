@@ -1353,22 +1353,25 @@ class DMET:
                         full_output=True,
                     )
                     mu_a, mu_b = sol[0]
+                    self.mu_imp = mu_a
+                    self._chempot_imp_beta = mu_b
                     print(f"  Spin-polarized mu: alpha={mu_a:.8f}, beta={mu_b:.8f}")
                 except Exception as exc:
                     print(f"Warning: spin-polarized mu optimization failed ({exc}). "
                           f"Falling back to spin-symmetric mu.")
                     self.mu_imp = float(mu_imp) if not hasattr(mu_imp, '__len__') \
                                   else float(mu_imp[0])
-                    self.doexact(self.mu_imp)
+                    self._chempot_imp_beta = self.mu_imp
             else:
                 try:
                     self.mu_imp = optimize.newton( self.numeleccostfunction, mu_imp )
                 except RuntimeError:
-                    print("Warning: Newton solver for mu_imp did not converge. Using last value.")
+                    print("Warning: Newton solver for mu_imp did not converge. Falling back to initial mu.")
+                    self.mu_imp = mu_imp
         else:
             self.mu_imp = mu_imp
-            self.doexact( self.mu_imp )
 
+        self.doexact( self.mu_imp )
         return self.energy
 
 
