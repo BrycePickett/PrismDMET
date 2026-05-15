@@ -1139,8 +1139,18 @@ class DMET:
         umatflat = umatsquare_bis[ self.mask ]
         return umatflat
         
+    # Maximum physically reasonable chemical potential (Eh). Newton steps beyond
+    # this indicate the optimizer has lost contact with the electron-count response
+    # surface — common for DFT-in-DFT where impurity orbitals are fully occupied.
+    _MU_MAX = 10.0
+
     def numeleccostfunction( self, chempot_imp ):
-        
+        if abs(chempot_imp) > self._MU_MAX:
+            raise RuntimeError(
+                f"mu optimization diverged: |mu| = {abs(chempot_imp):.2f} Eh "
+                f"exceeds threshold {self._MU_MAX} Eh. "
+                "For DFT-in-DFT DMET, optimize_mu=True is not recommended."
+            )
         Nelec_dmet   = self.doexact( chempot_imp )
         Nelec_target = self.ints.Nelec
         print("      (chemical potential , number of electrons) = (", chempot_imp, "," , Nelec_dmet ,")")
@@ -1159,6 +1169,12 @@ class DMET:
         ndarray shape (2,) — [error_alpha, error_beta].
         """
         mu_a, mu_b = float(chempot_pair[0]), float(chempot_pair[1])
+        if max(abs(mu_a), abs(mu_b)) > self._MU_MAX:
+            raise RuntimeError(
+                f"mu optimization diverged: |mu| = ({abs(mu_a):.2f}, {abs(mu_b):.2f}) Eh "
+                f"exceeds threshold {self._MU_MAX} Eh. "
+                "For DFT-in-DFT DMET, optimize_mu=True is not recommended."
+            )
         # Run doexact with alpha mu; beta mu is stored for the solvers to read.
         self._chempot_imp_beta = mu_b
         Nelec_total = self.doexact(mu_a)
