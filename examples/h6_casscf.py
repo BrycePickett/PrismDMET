@@ -1,79 +1,61 @@
 """
-CASSCF one-shot dmet on a 6-atom Hydrogen chain (H6).
+h6_casscf.py -- CASSCF one-shot DMET on a 6-atom hydrogen chain.
 
-This example demonstrates how to run the CASSCF solver in Prismdmet.
-The molecule is split into 3 fragments of 2 atoms each.
+Demonstrates multi-fragment CASSCF in PrismDMET. The H6 chain is split
+into 3 fragments of 2 atoms each.
 
-Run from this directory with the prismdmet conda environment active:
-    python 02_h6_casscf.py
+Usage::
+
+    pip install -e /path/to/PrismDMET
+    python h6_casscf.py
 """
 
-import sys
 import numpy as np
-
-import local_integrals
-from dmet import DMET, make_fragments
 from pyscf import gto, scf
+from prismdmet import LocalIntegrals, DMET, make_fragments
 
-# ---------------------------------------------------------------------------
-# 1. Molecule Setup (H6 chain)
-# ---------------------------------------------------------------------------
+# 1. Molecule (H6 chain)
 bond = 1.6
 nat  = 6
+mol = gto.M(
+    atom=[('H', (i * bond, 0.0, 0.0)) for i in range(nat)],
+    basis='sto-3g', verbose=0,
+)
 
-mol = gto.Mole()
-mol.atom = [('H', (i * bond, 0.0, 0.0)) for i in range(nat)]
-mol.basis = 'sto-3g'
-mol.verbose = 0
-mol.build()
-
-# ---------------------------------------------------------------------------
 # 2. Mean-field RHF
-# ---------------------------------------------------------------------------
 mf = scf.RHF(mol)
 mf.verbose = 0
 mf.kernel()
 print(f"RHF energy = {mf.e_tot:.10f} Ha")
 
-# ---------------------------------------------------------------------------
-# 3. Local integrals and Fragments
-# ---------------------------------------------------------------------------
-my_ints = local_integrals.LocalIntegrals(mf, list(range(mol.nao_nr())), 'meta_lowdin')
-
-# Group atoms into 3 fragments (0,1), (2,3), (4,5)
+# 3. Localize and fragment
+my_ints = LocalIntegrals(mf, list(range(mol.nao_nr())), 'meta_lowdin')
 atom_groups = [[0, 1], [2, 3], [4, 5]]
 impurity_clusters = make_fragments(mol, my_ints, atom_groups)
 
-# ---------------------------------------------------------------------------
-# 4. dmet CASSCF Setup
-# ---------------------------------------------------------------------------
-n_cas = 4     # active orbitals per fragment
-n_elecas = 4  # active electrons per fragment
-
+# 4. CASSCF DMET
+n_cas = 4
+n_elecas = 4
 my_dmet = DMET(
-    my_ints, 
-    impurity_clusters, 
+    my_ints, impurity_clusters,
     is_translation_invariant=False,
-    method='CASSCF', 
-    sc_method='NONE',  # one-shot
-    ncas=n_cas, 
-    nelecas=n_elecas
+    method='CASSCF', sc_method='NONE',
+    ncas=n_cas, nelecas=n_elecas,
 )
 
-# ---------------------------------------------------------------------------
-# 5. Run one-shot dmet
-# ---------------------------------------------------------------------------
-print("\n" + "="*60)
-print(f"  One-shot CASSCF({n_cas},{n_elecas}) dmet on H6")
-print("="*60)
+# 5. Run one-shot DMET
+print(f"\n{'='*60}")
+print(f"  One-shot CASSCF({n_cas},{n_elecas}) DMET on H6")
+print(f"{'='*60}")
 
 e_prismdmet = my_dmet.oneshot(mu_imp=0.0)
+print(f"\nPrismDMET CASSCF Total Energy = {e_prismdmet:.10f} Ha")
 
-print(f"\nPrismdmet CASSCF Total Energy = {e_prismdmet:.10f} Ha")
-
-# ---------------------------------------------------------------------------
-# 6. View Fragment Energies
-# ---------------------------------------------------------------------------
+# 6. Fragment energies
 print("\nFragment Energy Contributions:")
 for i, res in enumerate(my_dmet.cas_results):
     print(f"  Fragment {i} Energy = {res['e_imp']:.10f} Ha")
+
+# 7. Sanity check: energy should be below RHF
+assert e_prismdmet < mf.e_tot + 0.01, "CASSCF energy should be near or below RHF"
+print("\nPASSED: CASSCF energy is physically reasonable.")
