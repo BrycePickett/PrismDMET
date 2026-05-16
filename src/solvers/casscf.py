@@ -9,7 +9,7 @@ and open-shell environments via oei_s spin-potential injection.
 import numpy as np
 from pyscf import ao2mo, gto, scf, mcscf
 from pyscf import fci as pyscf_fci
-from utils import silent_stdout, nullcontext
+from ..utils import silent_stdout, nullcontext
 
 
 def solve(const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
@@ -146,7 +146,7 @@ def solve(const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
             mc = mcscf.state_average_(mc, weights=sa_weights.tolist())
 
         if oei_s is not None:
-            from solvers.qcsolver_utils import fix_casscf_for_nonsinglet_env
+            from .qcsolver_utils import fix_casscf_for_nonsinglet_env
             mc = fix_casscf_for_nonsinglet_env(mc, oei_s)
 
         _mo0 = mo_guess if mo_guess is not None else None

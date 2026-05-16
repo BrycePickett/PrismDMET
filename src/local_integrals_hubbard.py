@@ -17,7 +17,7 @@
     51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 '''
 
-import rhf
+from . import rhf
 import numpy as np
 
 class LocalIntegralsHubbard:
@@ -100,15 +100,9 @@ class LocalIntegralsHubbard:
         return dm_guess
         
     def dmet_tei( self, loc_2_dmet, numAct ):
-    
-        TEIdmet = np.zeros( [ numAct, numAct, numAct, numAct ] )
-        for orb1 in range(numAct):
-            for orb2 in range(numAct):
-                for orb3 in range(numAct):
-                    for orb4 in range(numAct):
-                        value = 0.0
-                        for orb in range( self.Norbs ):
-                            value += loc_2_dmet[ orb, orb1 ] * loc_2_dmet[ orb, orb2 ] * loc_2_dmet[ orb, orb3 ] * loc_2_dmet[ orb, orb4 ]
-                        TEIdmet[ orb1, orb2, orb3, orb4 ] = self.HubbardU * value
-        return TEIdmet
-        
+        U = loc_2_dmet[:, :numAct]
+        return self.HubbardU * np.einsum('ia,ib,ic,id->abcd', U, U, U, U)
+
+
+# Backward-compatible alias for legacy scripts
+local_integrals_hubbard = LocalIntegralsHubbard

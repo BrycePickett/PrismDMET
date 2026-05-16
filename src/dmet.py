@@ -1,19 +1,16 @@
 """
-Prismdmet core dmet driver.
-Built on QC-dmet (Wouters et al., 2015) under GPL-v2.
+PrismDMET core DMET driver.
+Built on QC-DMET (Wouters et al., 2015) under GPL-v2.
 """
 
-import prismdmet_helper
+from . import prismdmet_helper
 import numpy as np
 from scipy import optimize
 import time
 import os
 import concurrent.futures
-from solvers import SolverDispatcher
-from fragment_builder import FragmentBuilder
-
-# Methods that can be run in parallel worker processes (all inputs are plain numpy arrays)
-_PARALLEL_METHODS = frozenset({'ED', 'FCI', 'CC', 'MP2', 'EOM-CC', 'DMRG', 'flag_rhf'})
+from .solvers import SolverDispatcher
+from .fragment_builder import FragmentBuilder
 
 
 def _fragment_worker(task):
@@ -46,14 +43,7 @@ def _fragment_worker(task):
     os.environ['MKL_NUM_THREADS'] = '1'
     os.environ['OPENBLAS_NUM_THREADS'] = '1'
 
-    # Ensure the src/ directory is on sys.path so solver modules are importable
-    # inside the spawned subprocess (SolverDispatcher._ensure_src_path handles this).
-    import sys
-    src_path = task.get('src_path', '')
-    if src_path and src_path not in sys.path:
-        sys.path.insert(0, src_path)
-
-    from solvers import SolverDispatcher
+    from prismdmet.solvers import SolverDispatcher
     return SolverDispatcher.execute(task)
 
 
@@ -75,7 +65,7 @@ class DMET:
         if is_translation_invariant:
             assert the_ints.TI_OK
 
-        _valid_methods = {'ED', 'FCI', 'DMRG', 'DMRG-CheMPS2', 'CC', 'MP2', 'RHF',
+        _valid_methods = {'ED', 'FCI', 'DMRG', 'CC', 'MP2', 'RHF',
                           'EOM-CC', 'CASSCF', 'QD-NEVPT2', 'NEVPT2',
                           'UHF', 'ROHF', 'RKS', 'UKS', 'ROKS'}
         assert method in _valid_methods, \
@@ -520,7 +510,7 @@ class DMET:
             # Methods that require in-process state (e.g. do_det_NO's
             # NOrotation tracking) must remain sequential.
             # ---------------------------------------------------------------
-            from solvers import PARALLEL_ELIGIBLE
+            from .solvers import PARALLEL_ELIGIBLE
             _is_parallel_eligible = (
                 self.parallel
                 and _method_key in PARALLEL_ELIGIBLE
@@ -818,7 +808,7 @@ class DMET:
             _ncore = (nelec_in_imp - (self.nelecas if self.nelecas is not None
                                       else nelec_in_imp)) // 2
             if old_mo.shape == (norb_in_imp, norb_in_imp):
-                from solvers.qcsolver_utils import project_amo_manually
+                from .solvers.qcsolver_utils import project_amo_manually
                 _mo_guess_cas, fidelity = project_amo_manually(
                     old_mo, _ncas, _ncore, dmet_fock, norb_in_imp)
                 if np.min(fidelity) < 0.5:
@@ -1127,14 +1117,14 @@ class DMET:
             for it in range( 1, self.norb // size ):
                 umatsquare[ it*size:(it+1)*size, it*size:(it+1)*size ] = umatsquare[ 0:size, 0:size ]
 
-        if ( self.NOrotation != None ):
+        if self.NOrotation is not None:
             umatsquare = np.dot( np.dot( self.NOrotation, umatsquare ), self.NOrotation.T )
         return umatsquare
         
     def square2flat( self, umatsquare ):
     
         umatsquare_bis = np.array( umatsquare, copy=True )
-        if ( self.NOrotation != None ):
+        if self.NOrotation is not None:
             umatsquare_bis = np.dot( np.dot( self.NOrotation.T, umatsquare_bis ), self.NOrotation )
         umatflat = umatsquare_bis[ self.mask ]
         return umatflat

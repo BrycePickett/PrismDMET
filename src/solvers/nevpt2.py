@@ -15,7 +15,7 @@ NEVPT2 requires actual mol/mf/mc objects. It is oneshot-dmet only.
 
 import numpy as np
 from pyscf import gto, scf, mcscf, mrpt
-from utils import silent_stdout, nullcontext
+from ..utils import silent_stdout, nullcontext
 
 _eV = 27.21138602
 

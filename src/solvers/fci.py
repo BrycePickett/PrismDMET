@@ -1,6 +1,6 @@
 import numpy as np
 from pyscf import gto, scf, ao2mo, fci
-from utils import silent_stdout, nullcontext
+from ..utils import silent_stdout, nullcontext
 
 def solve( const, oei, fock, tei, norb, nel, nimp, chempot_imp=0.0, printoutput=False ):
 

@@ -18,7 +18,6 @@
 '''
 
 import numpy as np
-import local_integrals
 from pyscf import ao2mo, gto, scf
 
 def solve( const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf, chempot_imp=0.0 ):

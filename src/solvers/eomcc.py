@@ -23,7 +23,7 @@
 import numpy as np
 from pyscf import ao2mo, gto, scf
 from pyscf.cc import ccsd
-from utils import silent_stdout, nullcontext
+from ..utils import silent_stdout, nullcontext
 
 _VALID_EOM_TYPES = {
     'EE-Singlet', 'EE-Triplet', 'EE-SpinFlip', 'EE',

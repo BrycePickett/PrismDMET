@@ -20,7 +20,7 @@
 import numpy as np
 from pyscf import ao2mo, gto, scf
 from pyscf.cc import ccsd
-from utils import silent_stdout, nullcontext
+from ..utils import silent_stdout, nullcontext
 
 # Valid energy types:
 #   'LAMBDA'      -- CCSD with CCSD lambda 1-RDM and 2-RDM  (default, recommended)
