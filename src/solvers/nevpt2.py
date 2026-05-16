@@ -1,23 +1,21 @@
 '''
-    PySCF NEVPT2 solver for QC-DMET.
+NEVPT2 solver for QC-dmet.
 
-    Implements strongly-contracted (SC) NEVPT2 using PySCF's mrpt.NEVPT class,
-    which is the modern API replacing the deprecated mrpt.NEVPT2 function.
+Runs CASSCF followed by strongly-contracted NEVPT2 using PySCF's mrpt.NEVPT.
+Supports single-state (nstates=1) and multi-state (nstates > 1) calculations.
 
-    Supports two modes:
-        Single-state (ss)  — CASSCF(root=0) reference, single state NEVPT2.
-        Multi-state  (ms)  — SA-CASSCF orbitals + multi-root CASCI re-diagonalisation,
-                             then per-state NEVPT2. This is the correct procedure
-                             for excited states (see PySCF example mrpt/41-...).
+For multi-state runs, the correct procedure is:
+    1. SA-CASSCF to get optimized orbitals.
+    2. Multi-root CASCI with those MOs.
+    3. Per-state SC-NEVPT2 via mrpt.NEVPT(mc_casci, root=i).
 
-    Like QD-NEVPT2, this solver operates on the REAL physical molecule (mf_real)
-    because PySCF's NEVPT2 needs the actual mol/mf/mc objects. It is therefore
-    oneshot-DMET only.
+This solver operates on the real physical molecule (mf_real) because PySCF's
+NEVPT2 requires actual mol/mf/mc objects. It is oneshot-dmet only.
 '''
 
 import numpy as np
 from pyscf import gto, scf, mcscf, mrpt
-from utils import silent_stdout, nullcontext
+from ..utils import silent_stdout, nullcontext
 
 _eV = 27.21138602
 
@@ -27,6 +25,7 @@ def solve(mf_real, ncas, nelecas,
           root=0,
           casscf_kwargs=None,
           nevpt2_kwargs=None,
+          mo_guess=None,
           printoutput=True):
     '''
     Run CASSCF + NEVPT2 on the real physical molecule.
@@ -35,7 +34,7 @@ def solve(mf_real, ncas, nelecas,
     CASSCF → NEVPT2 pipeline is used.
 
     For excited states (nstates > 1), the correct multi-step procedure is:
-        1. SA-CASSCF with nstates states to get optimised MOs.
+        1. SA-CASSCF with nstates states to get optimized MOs.
         2. Multi-root CASCI with those MOs (nroots = nstates).
         3. Per-state SC-NEVPT2 via mrpt.NEVPT(mc_casci, root=i).
 
@@ -46,7 +45,7 @@ def solve(mf_real, ncas, nelecas,
     nelecas       : int  – number of active electrons
     nstates       : int  – number of states (1 = single-state; >1 = multi-state)
     sa_weights    : list of float or None  – SA weights (uniform if None)
-    root          : int  – which state to return as ImpurityEnergy (0 = GS)
+    root          : int  – which state to return as impurity_energy (0 = GS)
     casscf_kwargs : dict – extra attributes set on the CASSCF object
     nevpt2_kwargs : dict – extra attributes set on each mrpt.NEVPT object
     printoutput   : bool
@@ -65,14 +64,11 @@ def solve(mf_real, ncas, nelecas,
 
     with ctx:
         if nstates == 1:
-            # ---------------------------------------------------------
-            # Single-state: CASSCF -> NEVPT2 directly
-            # ---------------------------------------------------------
             mc = mcscf.CASSCF(mf_real, ncas, nelecas)
             mc.verbose = 5 if printoutput else 0
             for key, val in casscf_kwargs.items():
                 setattr(mc, key, val)
-            mc.kernel()
+            mc.kernel(mo_guess)
 
             print(f"\nnevpt2::solve : CASSCF energy = {mc.e_tot:.10f} Ha")
 
@@ -87,22 +83,18 @@ def solve(mf_real, ncas, nelecas,
             nevpt_objs = [nevpt_obj]
 
         else:
-            # ---------------------------------------------------------
-            # Multi-state: SA-CASSCF -> multi-root CASCI -> per-state NEVPT2
-            # (following PySCF example mrpt/41-for_state_average.py)
-            # ---------------------------------------------------------
             if sa_weights is None:
                 sa_weights = [1.0 / nstates] * nstates
             sa_weights = np.array(sa_weights, dtype=float)
             sa_weights /= sa_weights.sum()
 
-            # Step 1: SA-CASSCF for optimised orbitals
+            # Step 1: SA-CASSCF for optimized orbitals
             mc_sa = mcscf.CASSCF(mf_real, ncas, nelecas)
             mc_sa = mcscf.state_average_(mc_sa, weights=sa_weights.tolist())
             mc_sa.verbose = 5 if printoutput else 0
             for key, val in casscf_kwargs.items():
                 setattr(mc_sa, key, val)
-            mc_sa.kernel()
+            mc_sa.kernel(mo_guess)
             sa_mo = mc_sa.mo_coeff
 
             print(f"\nnevpt2::solve : SA-CASSCF ({nstates} states) done.")
@@ -141,3 +133,92 @@ def solve(mf_real, ncas, nelecas,
             print(f"  {i:>5d}  {et:>16.10f}  {ec:>14.10f}  {de_ev:>+16.4f}")
 
     return e_tot, e_corr, mc, nevpt_objs
+
+
+# ---------------------------------------------------------------------------
+# mf_real reconstruction helper (parallel-worker path)
+# ---------------------------------------------------------------------------
+
+def _reconstruct_mf_from_task(task):
+    """
+    Reconstruct a minimal PySCF RHF object from serialized task dict arrays.
+
+    Because PySCF Mole and SCF objects cannot be pickled across process
+    boundaries, dmet.doexact() serializes the physical MF state as:
+        task['mol_dumps']   : str   - from pyscf.gto.Mole.dumps()
+        task['mf_mo_coeff'] : ndarray
+        task['mf_mo_energy']: ndarray
+        task['mf_mo_occ']   : ndarray
+        task['mf_e_tot']    : float
+
+    The returned object can be passed directly into solve() as mf_real.
+    No SCF iterations are re-run.
+    """
+    import pyscf.gto
+    import pyscf.scf
+
+    mol = pyscf.gto.Mole.loads(task['mol_dumps'])
+    mol.build(verbose=0)
+
+    mf = pyscf.scf.ROHF(mol) if mol.spin != 0 else pyscf.scf.RHF(mol)
+    # Inject pre-computed MO state — no SCF cycles run.
+    mf.mo_coeff  = task['mf_mo_coeff']
+    mf.mo_energy = task['mf_mo_energy']
+    mf.mo_occ    = task['mf_mo_occ']
+    mf.e_tot     = task['mf_e_tot']
+    return mf
+
+
+# ---------------------------------------------------------------------------
+# SolverDispatcher entry point
+# ---------------------------------------------------------------------------
+
+def execute(task):
+    """
+    SolverDispatcher entry point for the NEVPT2 solver.
+
+    Supports two transport modes for the physical SCF object:
+
+    Serialized path (parallel): task carries mol_dumps, mf_mo_coeff,
+        mf_mo_energy, mf_mo_occ, mf_e_tot. A fresh mf is reconstructed.
+    Live-object path (sequential): task['mf_real'] is the live PySCF RHF
+        object. Used when called from the main process directly.
+
+    The serialized path is chosen when 'mol_dumps' is present in the task dict.
+    """
+    # ------------------------------------------------------------------
+    # Resolve mf_real via either the serialized or live-object protocol.
+    # ------------------------------------------------------------------
+    if 'mol_dumps' in task:
+        # Mode 1: reconstruct from serialized arrays (parallel-safe).
+        mf_real = _reconstruct_mf_from_task(task)
+    else:
+        # Mode 2: live object passed directly (sequential / legacy path).
+        mf_real = task['mf_real']
+
+    e_tot, e_corr, mc, nevpt_objs = solve(
+        mf_real,
+        ncas=task.get('ncas'),
+        nelecas=task.get('nelecas'),
+        nstates=task.get('sa_nstates', 1),
+        sa_weights=task.get('sa_weights'),
+        casscf_kwargs=task.get('casscf_kwargs', {}),
+        nevpt2_kwargs=task.get('nevpt2_kwargs', {}),
+        mo_guess=task.get('mo_guess'),
+    )
+
+    # Extract the 1-RDM for the dmet self-consistency loop.
+    # Use the NEVPT2 object's relaxed 1-RDM if available; fall back to CASSCF.
+    nevpt_gs = nevpt_objs[0]
+    if hasattr(nevpt_gs, 'onerdm') and nevpt_gs.onerdm is not None:
+        rdm1 = nevpt_gs.onerdm
+    else:
+        rdm1 = mc.make_rdm1()
+
+    nevpt2_res = {
+        'e_tot'      : e_tot,
+        'e_corr'     : e_corr,
+        'mc'         : mc,
+        'nevpt_objs' : nevpt_objs,
+    }
+    return e_tot[0], rdm1, nevpt2_res

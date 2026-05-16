@@ -1,5 +1,5 @@
 '''
-    QC-DMET: a python implementation of density matrix embedding theory for ab initio quantum chemistry
+    QC-dmet: a python implementation of density matrix embedding theory for ab initio quantum chemistry
     Copyright (C) 2015 Sebastian Wouters
     
     This program is free software; you can redistribute it and/or modify
@@ -18,68 +18,94 @@
 '''
 
 import numpy as np
-import ctypes
-import rhf
-import local_integrals
 from pyscf import gto, scf, ao2mo, mp
-from utils import silent_stdout, nullcontext
+from ..utils import silent_stdout, nullcontext
 
-def solve( CONST, OEI, FOCK, TEI, Norb, Nel, Nimp, DMguessRHF, chempot_imp=0.0, printoutput=True ):
+def solve( const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf, chempot_imp=0.0, printoutput=True ):
 
     ctx = silent_stdout() if not printoutput else nullcontext()
 
-    # Augment the FOCK operator with the chemical potential
-    FOCKcopy = FOCK.copy()
+    # Augment the fock operator with the chemical potential
+    fock_copy = fock.copy()
     if (chempot_imp != 0.0):
-        for orb in range(Nimp):
-            FOCKcopy[ orb, orb ] -= chempot_imp
+        for orb in range(nimp):
+            fock_copy[ orb, orb ] -= chempot_imp
+
+    if nel % 2 != 0:
+        raise NotImplementedError(
+            'MP2 solver requires an even number of electrons (RHF reference only). '
+            'Use CC or FCI for open-shell embedding problems.'
+        )
 
     with ctx:
-        # Get the RHF solution
-        assert( Nel % 2 == 0 )
         mol = gto.Mole()
         mol.build(verbose=0)
         mol.atom.append(('H', (0, 0, 0)))
-        mol.nelectron = Nel
+        mol.nelectron = nel
         mf = scf.RHF( mol )
-        mf.get_hcore = lambda *args: FOCKcopy
-        mf.get_ovlp = lambda *args: np.eye( Norb )
-        mf._eri = ao2mo.restore(8, TEI, Norb)
-        mf.scf( DMguessRHF )
+        mf.get_hcore = lambda *args: fock_copy
+        mf.get_ovlp = lambda *args: np.eye( norb )
+        mf._eri = ao2mo.restore(8, tei, norb)
+        mf.scf( dm_guess_rhf )
         DMrhf = np.dot(np.dot( mf.mo_coeff, np.diag( mf.mo_occ )), mf.mo_coeff.T )
-        Erhf  = CONST + np.einsum('ij,ij->', FOCKcopy, DMrhf)
-        Erhf += 0.5 * np.einsum('ijkl,ij,kl->', TEI, DMrhf, DMrhf) - 0.25 * np.einsum('ijkl,ik,jl->', TEI, DMrhf, DMrhf)
-        numPairs = Nel // 2
-        print("mp2::solve : RHF homo-lumo gap =", mf.mo_energy[numPairs] - mf.mo_energy[numPairs-1])
+        numPairs = nel // 2
 
         # Get the MP2 solution
         myMP2 = mp.MP2( mf )
         E_MP2, T_MP2 = myMP2.kernel()
-        OneRDM_mo = np.zeros( [Norb, Norb], dtype=float )
+        OneRDM_mo = np.zeros( [norb, norb], dtype=float )
         TwoRDM_mo = myMP2.make_rdm2() # 2-RDM is stored in chemistry notation!
 
-        # Reconstruct HF reference contributions
-        Etotal = Erhf + E_MP2
+        # Reconstruct HF reference contributions to the correlated RDMs
         for orb1 in range(numPairs):
             OneRDM_mo[orb1, orb1] += 2.0
             for orb2 in range(numPairs):
                 TwoRDM_mo[orb1,orb1,orb2,orb2] += 4.0
                 TwoRDM_mo[orb1,orb2,orb1,orb2] -= 2.0
-        OneRDM_loc = np.dot(mf.mo_coeff, np.dot( OneRDM_mo, mf.mo_coeff.T ))
+        one_rdm_loc = np.dot(mf.mo_coeff, np.dot( OneRDM_mo, mf.mo_coeff.T ))
         TwoRDM_loc = np.einsum('ai,ijkl->ajkl', mf.mo_coeff, TwoRDM_mo )
         TwoRDM_loc = np.einsum('bj,ajkl->abkl', mf.mo_coeff, TwoRDM_loc)
         TwoRDM_loc = np.einsum('ck,abkl->abcl', mf.mo_coeff, TwoRDM_loc)
         TwoRDM_loc = np.einsum('dl,abcl->abcd', mf.mo_coeff, TwoRDM_loc)
-        Etotal2 = Erhf - 0.5 * np.einsum('ijkl,ij,kl->', TEI, DMrhf, DMrhf) + 0.25 * np.einsum('ijkl,ik,jl->', TEI, DMrhf, DMrhf) + 0.5 * np.einsum('ijkl,ijkl->', TEI, TwoRDM_loc)
-        print("Etotal  =", Etotal)
-        print("Etotal2 =", Etotal2)
     
-    # To calculate the impurity energy, rescale the JK matrix with a factor 0.5 to avoid double counting: 0.5 * ( OEI + FOCK ) = OEI + 0.5 * JK
-    ImpurityEnergy = CONST
-    ImpurityEnergy += 0.5 * np.einsum( 'ij,ij->', DMrhf[:Nimp,:], OEI[:Nimp,:] + FOCK[:Nimp,:] ) # To be consistent with the energy formula above, this should be the HF RDM !!!
-    ImpurityEnergy += 0.125 * np.einsum( 'ijkl,ijkl->', TwoRDM_loc[:Nimp,:,:,:], TEI[:Nimp,:,:,:] )
-    ImpurityEnergy += 0.125 * np.einsum( 'ijkl,ijkl->', TwoRDM_loc[:,:Nimp,:,:], TEI[:,:Nimp,:,:] )
-    ImpurityEnergy += 0.125 * np.einsum( 'ijkl,ijkl->', TwoRDM_loc[:,:,:Nimp,:], TEI[:,:,:Nimp,:] )
-    ImpurityEnergy += 0.125 * np.einsum( 'ijkl,ijkl->', TwoRDM_loc[:,:,:,:Nimp], TEI[:,:,:,:Nimp] )
-    return ( ImpurityEnergy, OneRDM_loc )
+    # To calculate the impurity energy, rescale the JK matrix with a factor 0.5 to avoid double counting: 0.5 * ( oei + fock ) = oei + 0.5 * JK
+    impurity_energy = const
+    impurity_energy += 0.5 * np.einsum( 'ij,ij->', DMrhf[:nimp,:], oei[:nimp,:] + fock[:nimp,:] ) # To be consistent with the energy formula above, this should be the HF RDM !!!
+    impurity_energy += 0.125 * np.einsum( 'ijkl,ijkl->', TwoRDM_loc[:nimp,:,:,:], tei[:nimp,:,:,:] )
+    impurity_energy += 0.125 * np.einsum( 'ijkl,ijkl->', TwoRDM_loc[:,:nimp,:,:], tei[:,:nimp,:,:] )
+    impurity_energy += 0.125 * np.einsum( 'ijkl,ijkl->', TwoRDM_loc[:,:,:nimp,:], tei[:,:,:nimp,:] )
+    impurity_energy += 0.125 * np.einsum( 'ijkl,ijkl->', TwoRDM_loc[:,:,:,:nimp], tei[:,:,:,:nimp] )
+    return ( impurity_energy, one_rdm_loc )
 
+
+# ---------------------------------------------------------------------------
+# SolverDispatcher entry point
+# ---------------------------------------------------------------------------
+
+def execute(task):
+    """
+    SolverDispatcher-compatible wrapper for the MP2 solver.
+
+    Unpacks the standardised task dict and calls solve().
+
+    Parameters
+    ----------
+    task : dict
+        Must contain: const, dmet_oei, dmet_fock, dmet_tei, norb, nel, nimp,
+        dm_guess_rhf, chempot_imp.
+
+    Returns
+    -------
+    (impurity_energy, one_rdm_loc) — same as solve().
+    """
+    return solve(
+        task['const'],
+        task['dmet_oei'],
+        task['dmet_fock'],
+        task['dmet_tei'],
+        task['norb'],
+        task['nel'],
+        task['nimp'],
+        task.get('dm_guess_rhf'),
+        task.get('chempot_imp', 0.0),
+    )

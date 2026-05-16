@@ -1,12 +1,12 @@
 '''
-    Utility functions for QC-DMET active-space solvers.
+    Utility functions for QC-dmet active-space solvers.
 
     Provides orbital projection tools for warm-restarting CASSCF across
-    DMET self-consistency iterations, preventing root collapse when the
+    dmet self-consistency iterations, preventing root collapse when the
     u-matrix changes the embedding Hamiltonian.
 
     Adapted from mrh.my_dmet.pyscf_casscf (Hung Pham / Matthew Hermes)
-    for the QC-DMET framework.
+    for the QC-dmet framework.
 
     Key function
     ------------
@@ -16,10 +16,9 @@
 '''
 
 import numpy as np
-from scipy import linalg
 
 
-def project_amo_manually(old_mo_coeff, ncas, ncore, new_fock, Norb):
+def project_amo_manually(old_mo_coeff, ncas, ncore, new_fock, norb):
     '''
     Re-order and project old CASSCF MOs onto a new embedding basis so that
     the active space is preserved across u-matrix updates.
@@ -37,22 +36,22 @@ def project_amo_manually(old_mo_coeff, ncas, ncore, new_fock, Norb):
 
     Parameters
     ----------
-    old_mo_coeff : ndarray (Norb, Norb)
+    old_mo_coeff : ndarray (norb, norb)
         MO coefficients from the previous CASSCF solve, in the local
-        DMET orbital basis.
+        dmet orbital basis.
     ncas : int
         Number of active orbitals.
     ncore : int
         Number of core (doubly-occupied, frozen) orbitals.
-    new_fock : ndarray (Norb, Norb)
-        Current Fock matrix in the local DMET orbital basis (with the
+    new_fock : ndarray (norb, norb)
+        Current Fock matrix in the local dmet orbital basis (with the
         new u-matrix applied).  Used only to order inactive orbitals.
-    Norb : int
+    norb : int
         Total number of embedding orbitals (impurity + bath).
 
     Returns
     -------
-    new_mo : ndarray (Norb, Norb)
+    new_mo : ndarray (norb, norb)
         Re-ordered MO coefficients suitable as an initial guess for
         mcscf.CASSCF.kernel(new_mo).  The columns are ordered:
         [core | active | virtual].
@@ -62,18 +61,18 @@ def project_amo_manually(old_mo_coeff, ncas, ncore, new_fock, Norb):
         basis change intact; values << 1 indicate that the active space
         has shifted significantly.
     '''
-    assert old_mo_coeff.shape == (Norb, Norb), \
-        f"project_amo_manually: expected old_mo_coeff shape ({Norb},{Norb}), got {old_mo_coeff.shape}"
+    assert old_mo_coeff.shape == (norb, norb), \
+        f"project_amo_manually: expected old_mo_coeff shape ({norb},{norb}), got {old_mo_coeff.shape}"
     nocc = ncore + ncas
 
     # --- Extract old active MOs ---
-    old_amo = old_mo_coeff[:, ncore:nocc]          # (Norb, ncas)
+    old_amo = old_mo_coeff[:, ncore:nocc]          # (norb, ncas)
 
     # --- Build projector onto old active space and diagonalise ---
     # P = old_amo @ old_amo^T is the projector.
     # Diagonalise in the full space to get the ncas directions with
     # eigenvalue closest to 1.
-    proj = old_amo @ old_amo.T                     # (Norb, Norb)
+    proj = old_amo @ old_amo.T                     # (norb, norb)
     evals, evecs = np.linalg.eigh(proj)
     # eigh returns ascending; we want the *largest* eigenvalues first
     idx = evals.argsort()[::-1]
@@ -111,7 +110,7 @@ def fix_casscf_for_nonsinglet_env(mc, h1e_s):
     presence of a spin-dependent one-electron potential (open-shell
     environment).
 
-    This is the QC-DMET adaptation of mrh.my_dmet.pyscf_casscf.
+    This is the QC-dmet adaptation of mrh.my_dmet.pyscf_casscf.
     fix_my_CASSCF_for_nonsinglet_env.  It intercepts:
 
         * fcisolver.kernel  — splits h1e into [h1e+h1e_s, h1e-h1e_s]
@@ -125,8 +124,8 @@ def fix_casscf_for_nonsinglet_env(mc, h1e_s):
     Parameters
     ----------
     mc : mcscf.CASSCF
-        A fully initialised (but not yet solved) PySCF CASSCF object.
-    h1e_s : ndarray (Norb, Norb) or None
+        A fully initialized (but not yet solved) PySCF CASSCF object.
+    h1e_s : ndarray (norb, norb) or None
         The spin-dependent one-electron potential in the local embedding
         basis:  h1e_s = (h_alpha - h_beta) / 2.
         If None or all zeros, ``mc`` is returned unchanged.

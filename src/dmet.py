@@ -3,35 +3,78 @@ PrismDMET core DMET driver.
 Built on QC-DMET (Wouters et al., 2015) under GPL-v2.
 """
 
-import local_integrals
-import prismdmet_helper
+from . import prismdmet_helper
 import numpy as np
 from scipy import optimize
 import time
+import os
+import concurrent.futures
+from .solvers import SolverDispatcher
+from .fragment_builder import FragmentBuilder
 
-class dmet:
 
-    def __init__( self, theInts, impurityClusters, isTranslationInvariant, method='ED',
-                  SCmethod='LSTSQ', fitImpBath=True, use_constrained_opt=False,
-                  doDET=False, doDET_NO=False, CC_E_TYPE='LAMBDA',
+def _fragment_worker(task):
+    """
+    Module-level worker for parallel fragment solving via ProcessPoolExecutor.
+    Must be a top-level function (not a method) to be picklable.
+
+    All inputs and outputs are plain numpy arrays or Python scalars — no
+    PySCF objects are passed across process boundaries.
+
+    Delegates entirely to SolverDispatcher.execute(task), which is the single
+    authoritative dispatch point for all solver methods. The returned dict
+    from SolverDispatcher is already in the standardised format expected by
+    doexact() Phase 3.
+
+    Parameters
+    ----------
+    task : dict
+        Standardised task dict. See solvers/__init__.py for full schema.
+        At minimum: method, const, dmet_oei, dmet_fock, dmet_tei, norb, nel,
+        nimp, chempot_imp, counter, src_path.
+
+    Returns
+    -------
+    dict with keys 'counter', 'energy', 'rdm1', plus optional method-specific
+    keys ('eom_res', etc.) — as returned by SolverDispatcher.execute().
+    """
+    # Pin BLAS to 1 thread inside workers to prevent over-subscription
+    os.environ['OMP_NUM_THREADS'] = '1'
+    os.environ['MKL_NUM_THREADS'] = '1'
+    os.environ['OPENBLAS_NUM_THREADS'] = '1'
+
+    from prismdmet.solvers import SolverDispatcher
+    return SolverDispatcher.execute(task)
+
+
+class DMET:
+
+    def __init__( self, the_ints, impurity_clusters, is_translation_invariant, method='ED',
+                  sc_method='LSTSQ', fit_imp_bath=True, use_constrained_opt=False,
+                  do_det=False, do_det_NO=False, CC_E_TYPE='LAMBDA',
                   print_u=True, print_rdm=True, eom_nroots=3,
                   eom_type='EE-Singlet', eom_koopmans=False, eom_kwargs=None,
                   ncas=None, nelecas=None, sa_nstates=1, sa_weights=None,
                   casscf_kwargs=None,
-                  mf_real=None, qdnevpt2_kwargs=None, nevpt2_kwargs=None ):
+                  mf_real=None, qdnevpt2_kwargs=None, nevpt2_kwargs=None,
+                  use_symmetry=False, symmetry_map=None,
+                  parallel=False, max_workers=None, bath_tol=1e-13,
+                  xc='pbe', spin_polarized=False,
+                  mm_coords=None, mm_charges=None ):
 
-        if ( isTranslationInvariant == True ):
-            assert( theInts.TI_OK == True )
+        if is_translation_invariant:
+            assert the_ints.TI_OK
 
-        _valid_methods = {'ED', 'FCI', 'DMRG', 'DMRG-CheMPS2', 'CC', 'MP2', 'RHF',
-                          'EOM-CC', 'CASSCF', 'QD-NEVPT2', 'NEVPT2'}
+        _valid_methods = {'ED', 'FCI', 'DMRG', 'CC', 'MP2', 'RHF',
+                          'EOM-CC', 'CASSCF', 'QD-NEVPT2', 'NEVPT2',
+                          'UHF', 'ROHF', 'RKS', 'UKS', 'ROKS'}
         assert method in _valid_methods, \
-            f"dmet: unknown method='{method}'. Valid: {sorted(_valid_methods)}"
+            f"DMET: unknown method='{method}'. Valid: {sorted(_valid_methods)}"
         if method in ('QD-NEVPT2', 'NEVPT2'):
             if mf_real is None:
                 raise ValueError(
                     f"method='{method}' requires mf_real: a converged RHF object on the "
-                    f"REAL physical molecule. Pass it as mf_real=mf to dmet.__init__."
+                    f"REAL physical molecule. Pass it as mf_real=mf to DMET.__init__."
                 )
             if ncas is None or nelecas is None:
                 raise ValueError(
@@ -42,21 +85,21 @@ class dmet:
                 raise ValueError(
                     "method='QD-NEVPT2' requires sa_nstates >= 2 for state-averaging."
                 )
-        assert (( SCmethod == 'LSTSQ' ) or ( SCmethod == 'BFGS' ) or ( SCmethod == 'NONE' ))
+        assert sc_method in {'LSTSQ', 'BFGS', 'NONE'}
         _valid_cc_etypes = {'LAMBDA', 'LAMBDA_AMP', 'LAMBDA_ZERO', 'CASCI', 'CCSD(T)', 'CCSD(T)_RDM', 'EOM-CCSD'}
-        assert CC_E_TYPE in _valid_cc_etypes, f"dmet: unknown CC_E_TYPE='{CC_E_TYPE}'. Valid: {_valid_cc_etypes}"
+        assert CC_E_TYPE in _valid_cc_etypes, f"DMET: unknown CC_E_TYPE='{CC_E_TYPE}'. Valid: {_valid_cc_etypes}"
 
-        self.ints       = theInts
-        self.Norb       = self.ints.Norbs
-        self.impClust   = impurityClusters
-        self.umat       = np.zeros([ self.Norb, self.Norb ], dtype=float)
+        self.ints       = the_ints
+        self.norb       = self.ints.Norbs
+        self.impClust   = impurity_clusters
+        self.umat       = np.zeros([ self.norb, self.norb ], dtype=float)
         self.relaxation = 0.0
 
         self.NI_hack    = False
         self.method     = method
         self.doSCF      = False
-        self.TransInv   = isTranslationInvariant
-        self.SCmethod   = SCmethod
+        self.TransInv   = is_translation_invariant
+        self.sc_method   = sc_method
         self.CC_E_TYPE   = CC_E_TYPE
         self.eom_nroots  = eom_nroots
         self.eom_type    = eom_type
@@ -74,25 +117,48 @@ class dmet:
         self.qdnevpt2_results  = []  # populated by doexact() when method='QD-NEVPT2'
         self.nevpt2_kwargs     = nevpt2_kwargs or {}
         self.nevpt2_results    = []  # populated by doexact() when method='NEVPT2'
+        self.dft_results       = []  # populated by doexact() when method is DFT
         self.BATH_ORBS  = None
-        self.fitImpBath = fitImpBath
-        self.doDET      = doDET
-        self.doDET_NO   = doDET_NO
+        self.fit_imp_bath = fit_imp_bath
+        self.do_det      = do_det
+        self.do_det_NO   = do_det_NO
         self.NOrotation = None
         self.altcostfunc = use_constrained_opt
-        self.OEI_S      = None  # spin-dependent 1e potential for open-shell envs
+        self.oei_s      = None  # spin-dependent 1e potential for open-shell envs
+        self.bath_tol   = bath_tol
+        self.xc         = xc           # XC functional for DFT solvers
+        self.spin_polarized = spin_polarized  # enable independent alpha/beta mu optimization
+        self.mm_coords  = np.asarray(mm_coords,  dtype=float) if mm_coords  is not None else None
+        self.mm_charges = np.asarray(mm_charges, dtype=float) if mm_charges is not None else None
+
+        # --- Efficiency: symmetry mapping ---
+        self.use_symmetry = use_symmetry
+        self.symmetry_map = symmetry_map  # user-provided {child_idx: parent_idx} or None
+        if self.use_symmetry and self.symmetry_map is None and not is_translation_invariant:
+            self.symmetry_map = self._auto_detect_symmetry()
+
+        # --- Efficiency: parallel fragment solving ---
+        self.parallel = parallel
+        if max_workers is not None:
+            self.max_workers = max_workers
+        else:
+            # Auto-detect from environment
+            _env_threads = os.environ.get('PRISMdmet_WORKERS',
+                           os.environ.get('SLURM_CPUS_PER_TASK',
+                           os.environ.get('OMP_NUM_THREADS', '1')))
+            self.max_workers = max(1, int(_env_threads))
 
         # Fragment caches for warm-restarting CASSCF across SC iterations.
         # Each entry is None (first iteration) or a dict with 'mo_coeff' and 'ci'.
-        maxiter_frags = 1 if isTranslationInvariant else len(impurityClusters)
+        maxiter_frags = 1 if is_translation_invariant else len(impurity_clusters)
         self.frag_caches = [None] * maxiter_frags
 
         self.minFunc    = None
         if self.altcostfunc:
-            self.minFunc = 'FOCK_INIT'  # 'OEI'
-            assert (self.fitImpBath == False)
-            assert (self.doDET == False)
-            assert (self.SCmethod == 'BFGS' or self.SCmethod == 'NONE')
+            self.minFunc = 'FOCK_INIT'  # 'oei'
+            assert not self.fit_imp_bath
+            assert not self.do_det
+            assert self.sc_method in {'BFGS', 'NONE'}
 
         if (( self.method == 'CC' ) and ( self.CC_E_TYPE == 'CASCI' )):
             assert( len( self.impClust ) == 1 )
@@ -102,13 +168,13 @@ class dmet:
             from solvers.eomcc import _VALID_EOM_TYPES as _EOM_SET
             if eom_type not in _EOM_SET:
                 raise ValueError(
-                    f"dmet: unknown eom_type='{eom_type}'. Valid: {sorted(_EOM_SET)}"
+                    f"DMET: unknown eom_type='{eom_type}'. Valid: {sorted(_EOM_SET)}"
                 )
 
-        if ( self.doDET == True ):
+        if self.do_det:
             # DET only fits impurity diagonal; see Bulik, PRB 89, 035140 (2014)
-            self.fitImpBath = False
-            if ( self.doDET_NO == True ):
+            self.fit_imp_bath = False
+            if self.do_det_NO:
                 self.NOvecs = None
                 self.NOdiag = None
 
@@ -116,9 +182,9 @@ class dmet:
         self.print_rdm = print_rdm
 
         allOne = self.testclusters()
-        if ( allOne == False ):
+        if not allOne:
             # Incomplete tiling: impurity orbitals must be the first in the Hamiltonian.
-            assert( self.TransInv == False )
+            assert not self.TransInv
 
         self.energy   = 0.0
         self.imp_1RDM = []
@@ -126,7 +192,7 @@ class dmet:
         self.imp_size = self.make_imp_size()
         self.mu_imp   = 0.0
         self.mask     = self.make_mask()
-        self.helper   = prismdmet_helper.prismdmethelper( self.ints, self.makelist_H1(), self.altcostfunc, self.minFunc )
+        self.helper   = prismdmet_helper.PrismDMETHelper( self.ints, self.makelist_H1(), self.altcostfunc, self.minFunc )
 
         self.time_ed  = 0.0
         self.time_cf  = 0.0
@@ -135,42 +201,68 @@ class dmet:
 
         # Auto-detect open-shell reference from localintegrals
         if hasattr(self.ints, 'loc_spin_oei'):
-            self.OEI_S = self.ints.loc_spin_oei()   # None for RHF, ndarray for ROHF/UHF
+            self.oei_s = self.ints.loc_spin_oei()   # None for RHF, ndarray for ROHF/UHF
 
-        np.set_printoptions(precision=3, linewidth=160)
-        
     def testclusters( self ):
     
-        quicktest = np.zeros([ self.Norb ], dtype=int)
+        quicktest = np.zeros([ self.norb ], dtype=int)
         for item in self.impClust:
             quicktest += np.abs(item)
         assert( np.all( quicktest >= 0 ) )
         assert( np.all( quicktest <= 1 ) )
         allOne = np.all( quicktest == 1 )
         return allOne
+
+    def _auto_detect_symmetry( self ):
+        """
+        Auto-detect equivalent fragments by comparing their impurity orbital
+        sizes. Two fragments are equivalent if they have the same number of
+        impurity orbitals. The first fragment of each unique size is the
+        'parent'; all subsequent identical-size fragments map to it.
+
+        Returns
+        -------
+        symmetry_map : dict
+            Mapping {child_fragment_idx : parent_fragment_idx}.
+            Empty dict if all fragments are unique.
+        """
+        symmetry_map = {}
+        seen = {}  # fingerprint -> first fragment index
+        for idx, cluster in enumerate(self.impClust):
+            fingerprint = int(np.sum(np.abs(cluster)))
+            if fingerprint in seen:
+                symmetry_map[idx] = seen[fingerprint]
+            else:
+                seen[fingerprint] = idx
+        if symmetry_map:
+            n_unique = len(self.impClust) - len(symmetry_map)
+            print(f"Prismdmet :: symmetry : Auto-detected {n_unique} unique fragment(s) "
+                  f"out of {len(self.impClust)} total. "
+                  f"Skipping {len(symmetry_map)} equivalent fragment solve(s).")
+        return symmetry_map
             
     def make_imp_size( self ):
     
         thearray = []
         maxiter = len( self.impClust )
-        if ( self.TransInv == True ):
+        if self.TransInv:
             maxiter = 1
         for counter in range( maxiter ):
-            impurityOrbs = np.abs(self.impClust[ counter ])
-            numImpOrbs = np.sum( impurityOrbs )
-            thearray.append( numImpOrbs )
+            impurity_orbs = np.abs(self.impClust[ counter ])
+            num_imp_orbs = np.sum( impurity_orbs )
+            thearray.append( num_imp_orbs )
         thearray = np.array( thearray )
         return thearray
 
     def makelist_H1( self ):
     
         theH1 = []
-        if ( self.doDET == True ): # Do density embedding theory
-            if ( self.TransInv == True ): # Translational invariance assumed
+        if self.do_det: # Do density embedding theory
+            if self.TransInv: # Translational invariance assumed
                 localsize = self.imp_size[ 0 ]
                 for row in range( localsize ):
-                    H1 = np.zeros( [ self.Norb, self.Norb ], dtype=int )
-                    for jumper in range( self.Norb // localsize ):
+                    H1 = np.zeros( [ self.norb, self.norb ], dtype=int )
+                    for jumper in range( self.norb // localsize ):
                         jumpsquare = localsize * jumper
                         H1[ jumpsquare + row, jumpsquare + row ] = 1
                     theH1.append( H1 )
@@ -178,17 +270,17 @@ class dmet:
                 jumpsquare = 0
                 for localsize in self.imp_size:
                     for row in range( localsize ):
-                        H1 = np.zeros( [ self.Norb, self.Norb ], dtype=int )
+                        H1 = np.zeros( [ self.norb, self.norb ], dtype=int )
                         H1[ jumpsquare + row, jumpsquare + row ] = 1
                         theH1.append( H1 )
                     jumpsquare += localsize
         else: # Do density MATRIX embedding theory
-            if ( self.TransInv == True ): # Translational invariance assumed
+            if self.TransInv: # Translational invariance assumed
                 localsize = self.imp_size[ 0 ]
                 for row in range( localsize ):
                     for col in range( row, localsize ):
-                        H1 = np.zeros( [ self.Norb, self.Norb ], dtype=int )
-                        for jumper in range( self.Norb // localsize ):
+                        H1 = np.zeros( [ self.norb, self.norb ], dtype=int )
+                        for jumper in range( self.norb // localsize ):
                             jumpsquare = localsize * jumper
                             H1[ jumpsquare + row, jumpsquare + col ] = 1
                             H1[ jumpsquare + col, jumpsquare + row ] = 1
@@ -198,7 +290,7 @@ class dmet:
                 for localsize in self.imp_size:
                     for row in range( localsize ):
                         for col in range( row, localsize ):
-                            H1 = np.zeros( [ self.Norb, self.Norb ], dtype=int )
+                            H1 = np.zeros( [ self.norb, self.norb ], dtype=int )
                             H1[ jumpsquare + row, jumpsquare + col ] = 1
                             H1[ jumpsquare + col, jumpsquare + row ] = 1
                             theH1.append( H1 )
@@ -207,8 +299,8 @@ class dmet:
         
     def make_mask( self ):
     
-        themask = np.zeros( [ self.Norb, self.Norb ], dtype=bool )
-        if ( self.doDET == True ): # Do density embedding theory
+        themask = np.zeros( [ self.norb, self.norb ], dtype=bool )
+        if self.do_det: # Do density embedding theory
             jump = 0
             for localsize in self.imp_size: # self.imp_size has length 1 if self.TransInv
                 for row in range( localsize ):
@@ -225,202 +317,311 @@ class dmet:
         
     def doexact( self, chempot_imp=0.0 ):
     
-        OneRDM = self.helper.construct1RDM_loc( self.doSCF, self.umat )
+        one_rdm = self.helper.construct1RDM_loc( self.doSCF, self.umat )
         self.energy   = 0.0
         self.imp_1RDM = []
         self.dmetOrbs = []
-        if ( self.doDET == True ) and ( self.doDET_NO == True ):
+        self.frag_energies    = []
+        self.dft_results      = []
+        self.eom_results      = []
+        self.cas_results      = []
+        self.qdnevpt2_results = []
+        self.nevpt2_results   = []
+        if self.do_det and self.do_det_NO:
             self.NOvecs = []
             self.NOdiag = []
-        
+
         maxiter = len( self.impClust )
-        if ( self.TransInv == True ):
+        if self.TransInv:
             maxiter = 1
             
         remainingOrbs = np.ones( [ len( self.impClust[ 0 ] ) ], dtype=float )
-        
+               # ---------------------------------------------------------------
+        # Phase 1: Build all fragment tasks (bath + integrals).
+        # Always sequential — all fragments read from the same one_rdm.
+        # ---------------------------------------------------------------
+        _frag_tasks   = []   # picklable task dicts for parallel workers
+        _frag_meta    = []   # per-fragment metadata needed after solve
+        _sym_counters = set()  # counters handled by symmetry skip
+
+        _src_path = os.path.dirname(os.path.abspath(__file__))
+
+        # Instantiate fragment_builder once per doexact() call.
+        # It holds lightweight references to ints and helper; it does NOT copy
+        # the large integral tensors.
+        _builder = FragmentBuilder(
+            ints     = self.ints,
+            helper   = self.helper,
+            impClust = self.impClust,
+            method   = self.method,
+            BATH_ORBS= self.BATH_ORBS,
+            NI_hack  = self.NI_hack,
+            umat     = self.umat,
+            bath_tol = self.bath_tol,
+        )
+
         for counter in range( maxiter ):
-        
-            flag_rhf = np.sum(self.impClust[ counter ]) < 0
-            impurityOrbs = np.abs(self.impClust[ counter ])
-            numImpOrbs   = np.sum( impurityOrbs )
-            if ( self.BATH_ORBS == None ):
-                numBathOrbs = numImpOrbs
-            else:
-                numBathOrbs = self.BATH_ORBS[ counter ]
-            numBathOrbs, loc2dmet, core1RDM_dmet = self.helper.constructbath( OneRDM, impurityOrbs, numBathOrbs )
-            if ( self.BATH_ORBS == None ):
-                core_cutoff = 0.01
-            else:
-                core_cutoff = 0.5
-            for cnt in range(len(core1RDM_dmet)):
-                if ( core1RDM_dmet[ cnt ] < core_cutoff ):
-                    core1RDM_dmet[ cnt ] = 0.0
-                elif ( core1RDM_dmet[ cnt ] > 2.0 - core_cutoff ):
-                    core1RDM_dmet[ cnt ] = 2.0
-                else:
-                    print("Bad DMET bath orbital selection: trying to put a bath orbital with occupation", core1RDM_dmet[ cnt ], "into the environment :-(.")
-                    assert( 0 == 1 )
 
-            Norb_in_imp  = numImpOrbs + numBathOrbs
-            Nelec_in_imp = int(round(self.ints.Nelec - np.sum( core1RDM_dmet )))
-            core1RDM_loc = np.dot( np.dot( loc2dmet, np.diag( core1RDM_dmet ) ), loc2dmet.T )
-            
-            self.dmetOrbs.append( loc2dmet[ :, :Norb_in_imp ] )
-            assert( Norb_in_imp <= self.Norb )
-            dmetOEI  = self.ints.dmet_oei(  loc2dmet, Norb_in_imp )
-            dmetFOCK = self.ints.dmet_fock( loc2dmet, Norb_in_imp, core1RDM_loc )
-            dmetTEI  = self.ints.dmet_tei(  loc2dmet, Norb_in_imp )
-            
-            if ( self.NI_hack == True ):
-                dmetTEI[:,:,:,numImpOrbs:]=0.0
-                dmetTEI[:,:,numImpOrbs:,:]=0.0
-                dmetTEI[:,numImpOrbs:,:,:]=0.0
-                dmetTEI[numImpOrbs:,:,:,:]=0.0
-            
-                umat_rotated = np.dot(np.dot(loc2dmet.T, self.umat), loc2dmet)
-                umat_rotated[:numImpOrbs,:numImpOrbs]=0.0
-                dmetOEI += umat_rotated[:Norb_in_imp,:Norb_in_imp]
-                dmetFOCK = np.array( dmetOEI, copy=True )
-            
-            print("DMET::exact : Performing a (", Norb_in_imp, "orb,", Nelec_in_imp, "el ) DMET active space calculation.")
-            if ( flag_rhf ):
-                from solvers import rhf
-                DMguessRHF = self.ints.dmet_init_guess_rhf( loc2dmet, Norb_in_imp, Nelec_in_imp// 2, numImpOrbs, chempot_imp )
-                IMP_energy, IMP_1RDM = rhf.solve( 0.0, dmetOEI, dmetFOCK, dmetTEI, Norb_in_imp, Nelec_in_imp, numImpOrbs, DMguessRHF, chempot_imp )
-            elif ( self.method == 'ED' ) or ( self.method == 'FCI' ):
-                from solvers import fci
-                IMP_energy, IMP_1RDM = fci.solve( 0.0, dmetOEI, dmetFOCK, dmetTEI, Norb_in_imp, Nelec_in_imp, numImpOrbs, chempot_imp )
-            elif ( self.method == 'DMRG' ):
-                from solvers import block2
-                IMP_energy, IMP_1RDM = block2.solve( 0.0, dmetOEI, dmetFOCK, dmetTEI, Norb_in_imp, Nelec_in_imp, numImpOrbs, chempot_imp )
-            elif ( self.method == 'DMRG-CheMPS2' ):
-                from solvers import chemps2
-                IMP_energy, IMP_1RDM = chemps2.solve( 0.0, dmetOEI, dmetFOCK, dmetTEI, Norb_in_imp, Nelec_in_imp, numImpOrbs, chempot_imp )
-            elif ( self.method == 'CC' ):
-                from solvers import cc
-                assert( Nelec_in_imp % 2 == 0 )
-                DMguessRHF = self.ints.dmet_init_guess_rhf( loc2dmet, Norb_in_imp, Nelec_in_imp// 2, numImpOrbs, chempot_imp )
-                IMP_energy, IMP_1RDM = cc.solve( 0.0, dmetOEI, dmetFOCK, dmetTEI, Norb_in_imp, Nelec_in_imp, numImpOrbs, DMguessRHF, self.CC_E_TYPE, chempot_imp, eom_nroots=self.eom_nroots )
-            elif ( self.method == 'MP2' ):
-                from solvers import mp2
-                assert( Nelec_in_imp % 2 == 0 )
-                DMguessRHF = self.ints.dmet_init_guess_rhf( loc2dmet, Norb_in_imp, Nelec_in_imp// 2, numImpOrbs, chempot_imp )
-                IMP_energy, IMP_1RDM = mp2.solve( 0.0, dmetOEI, dmetFOCK, dmetTEI, Norb_in_imp, Nelec_in_imp, numImpOrbs, DMguessRHF, chempot_imp )
-            elif ( self.method == 'EOM-CC' ):
-                from solvers import eomcc
-                assert( Nelec_in_imp % 2 == 0 )
-                DMguessRHF = self.ints.dmet_init_guess_rhf( loc2dmet, Norb_in_imp, Nelec_in_imp// 2, numImpOrbs, chempot_imp )
-                IMP_energy, IMP_1RDM, eom_res = eomcc.solve(
-                    0.0, dmetOEI, dmetFOCK, dmetTEI, Norb_in_imp, Nelec_in_imp, numImpOrbs,
-                    DMguessRHF, chempot_imp=chempot_imp,
-                    eom_type=self.eom_type, nroots=self.eom_nroots,
-                    koopmans=self.eom_koopmans, **self.eom_kwargs
-                )
-                self.eom_results.append( eom_res )
-            elif ( self.method == 'CASSCF' ):
-                from solvers import casscf as _casscf
-                assert( Nelec_in_imp % 2 == 0 )
-                DMguessRHF = self.ints.dmet_init_guess_rhf( loc2dmet, Norb_in_imp, Nelec_in_imp// 2, numImpOrbs, chempot_imp )
+            # --- Symmetry skip (handled immediately, no solver needed) ---
+            if (self.symmetry_map is not None and counter in self.symmetry_map
+                    and not self.TransInv):
+                _sym_counters.add(counter)
+                sym_desc = _builder.build_symmetry_bath(
+                    counter, one_rdm, self.symmetry_map[counter])
+                self.dmetOrbs.append(sym_desc['loc_2_dmet'][:, :sym_desc['norb_in_imp']])
+                _frag_meta.append({
+                    'counter'     : counter,
+                    'sym_parent'  : sym_desc['sym_parent'],
+                    'impurity_orbs': sym_desc['impurity_orbs'],
+                })
+                continue
 
-                # --- Warm restart from cached state ---
-                _mo_guess = None
-                _ci_guess = None
-                if self.frag_caches[counter] is not None:
-                    cached = self.frag_caches[counter]
-                    old_mo = cached['mo_coeff']
-                    _ci_guess = cached.get('ci', None)
-                    # Project old active MOs onto current embedding basis
-                    _ncas  = self.ncas  if self.ncas  is not None else Norb_in_imp
-                    _ncore = (Nelec_in_imp - (self.nelecas if self.nelecas is not None else Nelec_in_imp)) // 2
-                    if old_mo.shape == (Norb_in_imp, Norb_in_imp):
-                        from solvers.qcsolver_utils import project_amo_manually
-                        _mo_guess, fidelity = project_amo_manually(
-                            old_mo, _ncas, _ncore, dmetFOCK, Norb_in_imp
-                        )
-                        # If projection fidelity is too low, discard the CI guess
-                        if np.min(fidelity) < 0.5:
-                            print("DMET::CASSCF : Low projection fidelity, discarding CI guess.")
-                            _ci_guess = None
-                    else:
-                        print("DMET::CASSCF : MO shape mismatch, starting fresh.")
+            # --- Build embedding Hamiltonian via fragment_builder -----------
+            frag = _builder.build(counter, one_rdm, chempot_imp)
 
-                # --- Per-fragment embedding spin potential for open-shell ---
-                _dmet_oei_s = self.ints.dmet_oei_s(loc2dmet, Norb_in_imp) if hasattr(self.ints, 'dmet_oei_s') else self.OEI_S
+            # Unpack frequently-used local names (improves readability below)
+            flag_rhf     = frag['flag_rhf']
+            impurity_orbs = frag['impurity_orbs']
+            num_imp_orbs   = frag['num_imp_orbs']
+            norb_in_imp  = frag['norb_in_imp']
+            nelec_in_imp = frag['nelec_in_imp']
+            loc_2_dmet     = frag['loc_2_dmet']
+            core_1rdm_loc = frag['core_1rdm_loc']
+            core_1rdm_dmet= frag['core_1rdm_dmet']
+            dmet_oei      = frag['dmet_oei']
+            dmet_fock     = frag['dmet_fock']
+            dmet_tei      = frag['dmet_tei']
+            dm_guess_rhf   = frag['dm_guess_rhf']
+            _method_key  = frag['method_key']
 
-                IMP_energy, IMP_1RDM, cas_res = _casscf.solve(
-                    0.0, dmetOEI, dmetFOCK, dmetTEI, Norb_in_imp, Nelec_in_imp, numImpOrbs,
-                    DMguessRHF,
-                    ncas=self.ncas, nelecas=self.nelecas,
-                    chempot_imp=chempot_imp,
-                    sa_nstates=self.sa_nstates, sa_weights=self.sa_weights,
-                    mo_guess=_mo_guess, ci_guess=_ci_guess,
-                    OEI_S=_dmet_oei_s,
-                    **self.casscf_kwargs
-                )
-                # Cache converged state for next iteration
-                self.frag_caches[counter] = {
-                    'mo_coeff': cas_res['mo_coeff'],
-                    'ci':       cas_res['ci'],
+            # Populate dmetOrbs for bath-dump and cost-function use
+            self.dmetOrbs.append(loc_2_dmet[:, :norb_in_imp])
+
+            print("DMET::exact : Performing a (", norb_in_imp, "orb,",
+                  nelec_in_imp, "el ) dmet active space calculation.")
+
+            _frag_meta.append({
+                'counter'     : counter,
+                'sym_parent'  : None,
+                'impurity_orbs': impurity_orbs,
+                'num_imp_orbs'  : num_imp_orbs,
+                'norb_in_imp' : norb_in_imp,
+                'nelec_in_imp': nelec_in_imp,
+                'core_1rdm_loc': core_1rdm_loc,
+                'method_key'  : _method_key,
+                'loc_2_dmet'    : loc_2_dmet,
+                'dmet_oei'     : dmet_oei,
+                'dmet_fock'    : dmet_fock,
+            })
+
+            # ---------------------------------------------------------------
+            # Build the full task dict for SolverDispatcher / parallel worker.
+            #
+            # All keys are plain numpy arrays or Python scalars so the task
+            # dict is always picklable regardless of method.  PySCF's mf_real
+            # object is represented as serialized arrays + mol JSON dump; the
+            # solver's execute() wrapper reconstructs a dummy mf inside the
+            # worker process.  See solvers/nevpt2._reconstruct_mf_from_task.
+            # ---------------------------------------------------------------
+
+            # For NEVPT2 methods: build full-molecule MO guess anchored to
+            # the dmet embedding orbitals (must happen in the main process
+            # where mf_real is available).
+            _mo_guess = None
+            if _method_key in ('QD-NEVPT2', 'NEVPT2') and self.mf_real is not None:
+                _mo_guess, _, _ = self._build_full_mo_guess(
+                    loc_2_dmet, norb_in_imp, core_1rdm_dmet)
+
+            # Serialize mf_real if available. The solver modules' execute()
+            # wrappers detect 'mol_dumps' in the task and reconstruct a
+            # minimal RHF object without re-running any SCF iterations.
+            _mf_serial = {}
+            if self.mf_real is not None:
+                _mf_serial = {
+                    'mol_dumps'    : self.mf_real.mol.dumps(),
+                    'mf_mo_coeff'  : self.mf_real.mo_coeff,
+                    'mf_mo_energy' : self.mf_real.mo_energy,
+                    'mf_mo_occ'    : self.mf_real.mo_occ,
+                    'mf_e_tot'     : self.mf_real.e_tot,
                 }
-                self.cas_results.append( cas_res )
-            elif ( self.method == 'QD-NEVPT2' ):
-                from solvers import qdnevpt2 as _qdnevpt2
-                # QD-NEVPT2 runs on real molecular integrals via Prism; DMET selects the active space.
-                e_tot_states, e_corr_states, osc, mc_real, nevpt_obj = _qdnevpt2.solve(
-                    self.mf_real,
-                    ncas=self.ncas, nelecas=self.nelecas,
-                    sa_nstates=self.sa_nstates, sa_weights=self.sa_weights,
-                    casscf_kwargs=self.casscf_kwargs,
-                    **self.qdnevpt2_kwargs
+
+            # DFT solvers need the real molecule (for XC grid) and the
+            # AO-to-localized-orbital transformation to back-transform the
+            # embedding density to AO space for correct XC evaluation.
+            _dft_mol_info = {}
+            if _method_key in ('RKS', 'UKS', 'ROKS'):
+                _dft_mol_info = {
+                    'dft_mol_dumps' : self.ints.mol.dumps(),
+                    'ao2loc'        : self.ints.ao2loc,
+                    'loc_2_dmet'    : loc_2_dmet[:, :norb_in_imp],
+                    'mm_coords'     : self.mm_coords,
+                    'mm_charges'    : self.mm_charges,
+                    'nel_total'     : self.ints.Nelec,
+                }
+
+            task = {
+                # --- Core identity ------------------------------------------
+                'counter'       : counter,
+                'method'        : _method_key,
+                'src_path'      : _src_path,
+                # --- Embedding integrals (always picklable) -----------------
+                'const'         : 0.0,
+                'dmet_oei'       : dmet_oei,
+                'dmet_fock'      : dmet_fock,
+                'dmet_tei'       : dmet_tei,
+                'norb'          : norb_in_imp,
+                'nel'           : nelec_in_imp,
+                'nimp'          : num_imp_orbs,
+                'chempot_imp'   : chempot_imp,
+                'dm_guess_rhf'    : dm_guess_rhf,
+                # --- CC / EOM-CC options ------------------------------------
+                'CC_E_TYPE'     : self.CC_E_TYPE,
+                'eom_nroots'    : self.eom_nroots,
+                'eom_type'      : self.eom_type,
+                'eom_koopmans'  : self.eom_koopmans,
+                'eom_kwargs'    : self.eom_kwargs,
+                # --- CASSCF / NEVPT2 active-space options -------------------
+                'ncas'          : self.ncas,
+                'nelecas'       : self.nelecas,
+                'sa_nstates'    : self.sa_nstates,
+                'sa_weights'    : self.sa_weights,
+                'casscf_kwargs' : self.casscf_kwargs,
+                'mo_guess'      : _mo_guess,
+                'nevpt2_kwargs' : self.nevpt2_kwargs,
+                'qdnevpt2_kwargs': self.qdnevpt2_kwargs,
+                # --- DFT / open-shell options --------------------------------
+                'xc'            : self.xc,
+                'spin'          : nelec_in_imp % 2,
+                'spin_polarized': self.spin_polarized,
+                # --- DFT mol and localization info --------------------------
+                **_dft_mol_info,
+                # --- Serialized physical molecule (NEVPT2 / QD-NEVPT2) -----
+                # Keys present only when self.mf_real is not None.
+                # Solver wrappers detect 'mol_dumps' to choose the
+                # parallel-safe reconstruction path.
+                **_mf_serial,
+            }
+
+            # ---------------------------------------------------------------
+            # Route the task: parallel or sequential.
+            #
+            # All methods in PARALLEL_ELIGIBLE can now run in a worker
+            # process because the task dict is fully picklable.
+            # Methods that require in-process state (e.g. do_det_NO's
+            # NOrotation tracking) must remain sequential.
+            # ---------------------------------------------------------------
+            from .solvers import PARALLEL_ELIGIBLE
+            _is_parallel_eligible = (
+                self.parallel
+                and _method_key in PARALLEL_ELIGIBLE
+                and not self.do_det_NO  # NO rotation requires in-process state
+            )
+
+            if _is_parallel_eligible:
+                _frag_tasks.append(task)
+            else:
+                # Sequential path: run immediately in the main process.
+                # _run_fragment_sequential builds its own task dict (with
+                # the live mf_real for CASSCF cache handling), so we pass
+                # the CASSCF warm-restart keys explicitly rather than the
+                # full serialized task dict.  This preserves frag_caches
+                # side effects that are only needed in-process.
+                _frag_meta[-1]['sequential_result'] = self._run_fragment_sequential(
+                    counter, _method_key, flag_rhf, dmet_oei, dmet_fock, dmet_tei,
+                    norb_in_imp, nelec_in_imp, num_imp_orbs, chempot_imp,
+                    dm_guess_rhf, loc_2_dmet, mo_guess=_mo_guess)
+
+        # ---------------------------------------------------------------
+        # Phase 2: Run parallel tasks via ProcessPoolExecutor.
+        # ---------------------------------------------------------------
+        _parallel_results = {}   # counter -> result dict
+        if _frag_tasks:
+            _nw = min(self.max_workers, len(_frag_tasks))
+            print(f"Prismdmet :: parallel : Submitting {len(_frag_tasks)} fragment(s) "
+                  f"to {_nw} worker process(es).")
+            ctx = concurrent.futures.get_context('spawn') if hasattr(concurrent.futures, 'get_context') else None
+            _Executor = concurrent.futures.ProcessPoolExecutor
+            with _Executor(max_workers=_nw) as pool:
+                futures = {pool.submit(_fragment_worker, t): t['counter'] for t in _frag_tasks}
+                for fut in concurrent.futures.as_completed(futures):
+                    res = fut.result()
+                    _parallel_results[res['counter']] = res
+
+        # ---------------------------------------------------------------
+        # Phase 3: Collect results in order and update state.
+        # ---------------------------------------------------------------
+        for meta in _frag_meta:
+            counter = meta['counter']
+            impurity_orbs = meta['impurity_orbs']
+
+            if meta.get('sym_parent') is not None:
+                # Symmetry-copied fragment — parent must already be in frag_energies/imp_1RDM
+                parent = meta['sym_parent']
+                print(f"Prismdmet :: symmetry : Fragment {counter} <- fragment {parent} (copied).")
+                parent_energy = self.frag_energies[parent]
+                parent_rdm    = self.imp_1RDM[parent]
+                self.energy += parent_energy
+                self.frag_energies.append(parent_energy)
+                self.imp_1RDM.append(parent_rdm.copy())
+                remainingOrbs -= impurity_orbs
+                continue
+
+            num_imp_orbs = meta['num_imp_orbs']
+
+            # Retrieve result from whichever path handled this fragment.
+            if counter in _parallel_results:
+                res = _parallel_results[counter]
+            else:
+                res = meta['sequential_result']
+
+            IMP_energy = res['energy']
+            IMP_1RDM   = res['rdm1']
+
+            # Log OOM fallback if one occurred.
+            if res.get('fallback_from'):
+                print(
+                    f"Prismdmet :: WARNING : Fragment {counter} — "
+                    f"'{res['fallback_from']}' failed (OOM); "
+                    f"result computed with '{res.get('method', meta['method_key'])}'. "
+                    f"Energy may be less accurate."
                 )
-                IMP_energy = e_tot_states[0]
-                IMP_1RDM   = mc_real.make_rdm1()
-                self.qdnevpt2_results.append({
-                    'e_tot'   : e_tot_states,
-                    'e_corr'  : e_corr_states,
-                    'osc'     : osc,
-                    'mc'      : mc_real,
-                    'nevpt'   : nevpt_obj,
-                })
-            elif ( self.method == 'NEVPT2' ):
-                from solvers import nevpt2 as _nevpt2
-                e_tot_states, e_corr_states, mc_nevpt, nevpt_objs = _nevpt2.solve(
-                    self.mf_real,
-                    ncas=self.ncas, nelecas=self.nelecas,
-                    nstates=self.sa_nstates,
-                    sa_weights=self.sa_weights,
-                    casscf_kwargs=self.casscf_kwargs,
-                    **self.nevpt2_kwargs
-                )
-                IMP_energy = e_tot_states[0]
-                if hasattr(nevpt_objs[0], 'onerdm') and nevpt_objs[0].onerdm is not None:
-                    IMP_1RDM = nevpt_objs[0].onerdm
-                else:
-                    IMP_1RDM = mc_nevpt.make_rdm1()
-                self.nevpt2_results.append({
-                    'e_tot'     : e_tot_states,
-                    'e_corr'    : e_corr_states,
-                    'mc'        : mc_nevpt,
-                    'nevpt_objs': nevpt_objs,
-                })
+
+            # Unpack method-specific result artefacts.
+            if 'eom_res' in res:
+                self.eom_results.append(res['eom_res'])
+            if 'cas_res' in res:
+                # CASSCF warm-restart cache: store mo_coeff + ci for next
+                # dmet iteration.  This is still meaningful even if parallel
+                # because the workers return the numpy arrays, not the live mc.
+                self.frag_caches[counter] = {
+                    'mo_coeff': res['cas_res']['mo_coeff'],
+                    'ci'      : res['cas_res']['ci'],
+                }
+                self.cas_results.append(res['cas_res'])
+            if 'qdnevpt2_res' in res:
+                self.qdnevpt2_results.append(res['qdnevpt2_res'])
+            if 'nevpt2_res' in res:
+                self.nevpt2_results.append(res['nevpt2_res'])
+            if 'dft_res' in res:
+                self.dft_results.append(res['dft_res'])
 
             self.energy += IMP_energy
+            self.frag_energies.append(IMP_energy)
             self.imp_1RDM.append( IMP_1RDM )
-            if ( self.doDET == True ) and ( self.doDET_NO == True ):
-                RDMeigenvals, RDMeigenvecs = np.linalg.eigh( IMP_1RDM[ :numImpOrbs, :numImpOrbs ] )
+            if self.do_det and self.do_det_NO:
+                RDMeigenvals, RDMeigenvecs = np.linalg.eigh( IMP_1RDM[ :num_imp_orbs, :num_imp_orbs ] )
                 self.NOvecs.append( RDMeigenvecs )
                 self.NOdiag.append( RDMeigenvals )
-                
-            remainingOrbs -= impurityOrbs
+
+            remainingOrbs -= impurity_orbs
         
-        if ( self.doDET == True ) and ( self.doDET_NO == True ):
+        if self.do_det and self.do_det_NO:
             self.NOrotation = self.constructNOrotation()
         
         Nelectrons = 0.0
         for counter in range( maxiter ):
             Nelectrons += np.trace( self.imp_1RDM[counter][ :self.imp_size[counter], :self.imp_size[counter] ] )
-        if ( self.TransInv == True ):
+        if self.TransInv:
             Nelectrons = Nelectrons * len( self.impClust )
             self.energy = self.energy * len( self.impClust )
             remainingOrbs[:] = 0
@@ -429,25 +630,25 @@ class dmet:
         if ( np.sum( remainingOrbs ) != 0 ):
 
             if ( self.CC_E_TYPE == 'CASCI' ):
-                # CASCI energy omits the frozen-core constant; add 0.5 * Tr[core1RDM (OEI+FOCK)]
+                # CASCI energy omits the frozen-core constant; add 0.5 * Tr[core1RDM (oei+fock)]
                 assert( maxiter == 1 )
-                transfo = np.eye( self.Norb, dtype=float )
-                totalOEI  = self.ints.dmet_oei(  transfo, self.Norb )
-                totalFOCK = self.ints.dmet_fock( transfo, self.Norb, core1RDM_loc )
-                self.energy += 0.5 * np.einsum( 'ij,ij->', core1RDM_loc, totalOEI + totalFOCK )
-                Nelectrons = np.trace( self.imp_1RDM[ 0 ] ) + np.trace( core1RDM_loc ) # Because full active space is used to compute the energy
+                transfo = np.eye( self.norb, dtype=float )
+                totalOEI  = self.ints.dmet_oei(  transfo, self.norb )
+                totalFOCK = self.ints.dmet_fock( transfo, self.norb, core_1rdm_loc )
+                self.energy += 0.5 * np.einsum( 'ij,ij->', core_1rdm_loc, totalOEI + totalFOCK )
+                Nelectrons = np.trace( self.imp_1RDM[ 0 ] ) + np.trace( core_1rdm_loc ) # Because full active space is used to compute the energy
             else:
                 assert (np.array_equal(self.ints.active, np.ones([self.ints.mol.nao_nr()], dtype=int)))
 
                 from pyscf import scf
                 from types import MethodType
                 mol_ = self.ints.mol
-                mf_  = scf.RHF(mol_)
+                mf_  = scf.ROHF(mol_) if mol_.spin != 0 else scf.RHF(mol_)
 
                 impOrbs = remainingOrbs==1
                 xorb = np.dot(mf_.get_ovlp(), self.ints.ao2loc)
                 hc  = -chempot_imp * np.dot(xorb[:,impOrbs], xorb[:,impOrbs].T)
-                dm0 = np.dot(self.ints.ao2loc, np.dot(OneRDM, self.ints.ao2loc.T))
+                dm0 = np.dot(self.ints.ao2loc, np.dot(one_rdm, self.ints.ao2loc.T))
 
                 def mf_hcore (self, mol=None):
                     if mol is None: mol = self.mol
@@ -477,19 +678,235 @@ class dmet:
             
         self.energy += self.ints.const()
         return Nelectrons
-        
+
+    def _build_full_mo_guess(self, loc_2_dmet, norb_in_imp, core_1rdm_dmet):
+        """
+        Construct a full-molecule MO coefficient matrix (nAO x nMO) with the
+        dmet embedding orbitals placed exactly in the CASSCF active window.
+
+        Layout (columns left to right):
+            [frozen_core | env_core | dmet_active | env_virt | frozen_virt]
+
+        Parameters
+        ----------
+        loc_2_dmet : ndarray (Norbs_active, Norbs_active)
+            The unitary from localintegrals LMO basis → dmet embedding basis.
+            Columns 0..norb_in_imp-1  : embedding (imp + bath)
+            Columns norb_in_imp..end  : environment (core + virtual)
+        norb_in_imp : int
+            Number of embedding orbitals (impurity + bath).
+        core_1rdm_dmet : ndarray (Norbs_active - norb_in_imp,)
+            Diagonal of the environment 1-RDM in the dmet basis.
+            Entries ≈ 2 are environment core; entries ≈ 0 are environment virtual.
+
+        Returns
+        -------
+        mo_guess : ndarray (nAO, nMO_real)
+            Column-ordered MO matrix suitable for PySCF mc.kernel(mo_guess).
+        ncas_check : int
+            Number of active orbitals (==norb_in_imp, for a sanity check).
+        ncore_check : int
+            Number of doubly-occupied (core) orbitals before the active window.
+        """
+        mf  = self.mf_real
+        ao2loc = self.ints.ao2loc      # shape: (nAO, Norbs_active)
+        active_mask = self.ints.active # 1 for LMO-active orbs, 0 for frozen
+
+        nAO  = ao2loc.shape[0]
+        nMO  = mf.mo_coeff.shape[1]
+
+        # ── Frozen orbitals (outside localintegrals active space) ──────────────
+        # active_mask is over canonical MO indices (same as nAO for full-valence
+        # calculations, or a subset for frozen-core). Frozen MO indices are those
+        # where active_mask == 0.
+        frozen_idx  = np.where(active_mask == 0)[0]
+        active_idx  = np.where(active_mask == 1)[0]
+        frozen_occ  = frozen_idx[mf.mo_occ[frozen_idx] > 0]
+        frozen_virt = frozen_idx[mf.mo_occ[frozen_idx] == 0]
+        mo_frozen_core = mf.mo_coeff[:, frozen_occ]   # (nAO, N_frozen_core)
+        mo_frozen_virt = mf.mo_coeff[:, frozen_virt]  # (nAO, N_frozen_virt)
+
+        # ── Environment orbitals (inside localintegrals active space, outside dmet) ──
+        # loc_2_dmet[:, norb_in_imp:] are the environment LMOs. Their occupations
+        # come from core_1rdm_dmet[norb_in_imp:]: ~2 → core, ~0 → virtual.
+        env_lmos = loc_2_dmet[:, norb_in_imp:]              # (Norbs_active, Nenv)
+        env_occ_diag  = core_1rdm_dmet[norb_in_imp:]      # environment occupations only
+        env_occ_mask  = env_occ_diag > 1.0               # approximately 2
+        env_virt_mask = env_occ_diag < 1.0               # approximately 0
+
+        # Transform environment LMOs from LMO basis back to AO basis
+        mo_env_core = ao2loc @ env_lmos[:, env_occ_mask]   # (nAO, Nenv_core)
+        mo_env_virt = ao2loc @ env_lmos[:, env_virt_mask]  # (nAO, Nenv_virt)
+
+        # ── Active (dmet embedding) orbitals ──────────────────────────────────
+        # loc_2_dmet[:, :norb_in_imp] are the imp+bath LMOs.
+        dmet_lmos    = loc_2_dmet[:, :norb_in_imp]       # (Norbs_active, norb_in_imp)
+        mo_active    = ao2loc @ dmet_lmos              # (nAO, norb_in_imp)
+
+        # ── Stack into [frozen_core | env_core | active | env_virt | frozen_virt] ──
+        mo_guess = np.hstack([
+            mo_frozen_core,
+            mo_env_core,
+            mo_active,
+            mo_env_virt,
+            mo_frozen_virt,
+        ])
+
+        ncore_check = mo_frozen_core.shape[1] + mo_env_core.shape[1]
+        ncas_check  = norb_in_imp
+
+        if mo_guess.shape[1] != nMO:
+            raise RuntimeError(
+                f"_build_full_mo_guess: column count mismatch. "
+                f"Built {mo_guess.shape[1]} MOs but mf_real has {nMO}. "
+                f"Frozen-core={mo_frozen_core.shape[1]}, env_core={mo_env_core.shape[1]}, "
+                f"active={ncas_check}, env_virt={mo_env_virt.shape[1]}, "
+                f"frozen_virt={mo_frozen_virt.shape[1]}"
+            )
+
+        print(f"Prismdmet :: mo_guess : Built full MO guess for NEVPT2 solver.")
+        print(f"  Layout: {mo_frozen_core.shape[1]} frozen_core | {mo_env_core.shape[1]} env_core "
+              f"| {ncas_check} active | {mo_env_virt.shape[1]} env_virt "
+              f"| {mo_frozen_virt.shape[1]} frozen_virt")
+        return mo_guess, ncas_check, ncore_check
+
+    def _run_fragment_sequential(self, counter, method_key, flag_rhf,
+                                   dmet_oei, dmet_fock, dmet_tei,
+                                   norb_in_imp, nelec_in_imp, num_imp_orbs,
+                                   chempot_imp, dm_guess_rhf, loc_2_dmet,
+                                   mo_guess=None):
+        """
+        Run a single fragment solver sequentially and return a standardised
+        result dict via SolverDispatcher.execute(task).
+
+        All solver-specific argument marshalling is done here by building
+        the task dict, then delegating to SolverDispatcher. This means the
+        sequential path and the parallel worker path share exactly the same
+        dispatch logic — there is no duplication.
+
+        Special handling for CASSCF warm-restart (MO/CI guess injection
+        from frag_caches) is performed before the task dict is built, since
+        this requires access to self.frag_caches and project_amo_manually.
+
+        Returns
+        -------
+        dict with keys: 'energy', 'rdm1', and optionally 'cas_res',
+        'eom_res', 'qdnevpt2_res', 'nevpt2_res' — as returned by
+        SolverDispatcher.execute().
+        """
+        # ------------------------------------------------------------------
+        # CASSCF-specific pre-processing: warm-restart cache injection
+        # Must happen before task dict is built because it requires
+        # self.frag_caches, project_amo_manually, and the local dmet_fock.
+        # ------------------------------------------------------------------
+        _mo_guess_cas, _ci_guess_cas = mo_guess, None
+        if method_key == 'CASSCF' and self.frag_caches[counter] is not None:
+            cached = self.frag_caches[counter]
+            old_mo    = cached['mo_coeff']
+            _ci_guess_cas = cached.get('ci', None)
+            _ncas  = self.ncas    if self.ncas    is not None else norb_in_imp
+            _ncore = (nelec_in_imp - (self.nelecas if self.nelecas is not None
+                                      else nelec_in_imp)) // 2
+            if old_mo.shape == (norb_in_imp, norb_in_imp):
+                from .solvers.qcsolver_utils import project_amo_manually
+                _mo_guess_cas, fidelity = project_amo_manually(
+                    old_mo, _ncas, _ncore, dmet_fock, norb_in_imp)
+                if np.min(fidelity) < 0.5:
+                    print("DMET::CASSCF : Low projection fidelity, discarding CI guess.")
+                    _ci_guess_cas = None
+            else:
+                print("DMET::CASSCF : MO shape mismatch, starting fresh.")
+                _mo_guess_cas = None
+
+        # Spin oei for open-shell environments (CASSCF only)
+        _dmet_oei_s = None
+        if method_key == 'CASSCF':
+            _dmet_oei_s = (self.ints.dmet_oei_s(loc_2_dmet, norb_in_imp)
+                           if hasattr(self.ints, 'dmet_oei_s') else self.oei_s)
+
+        # ------------------------------------------------------------------
+        # Build the standardised task dict understood by SolverDispatcher.
+        # All solver-specific optional keys use .get() with safe defaults
+        # so that SolverDispatcher can remain decoupled from dmet.py internals.
+        # ------------------------------------------------------------------
+        task = {
+            # Core identity
+            'counter'       : counter,
+            'method'        : method_key if not flag_rhf else 'flag_rhf',
+            # Embedding integrals (numpy arrays only — picklable)
+            'const'         : 0.0,
+            'dmet_oei'       : dmet_oei,
+            'dmet_fock'      : dmet_fock,
+            'dmet_tei'       : dmet_tei,
+            'norb'          : norb_in_imp,
+            'nel'           : nelec_in_imp,
+            'nimp'          : num_imp_orbs,
+            'chempot_imp'   : chempot_imp,
+            'dm_guess_rhf'    : dm_guess_rhf,
+            # CC / EOM-CC options
+            'CC_E_TYPE'     : self.CC_E_TYPE,
+            'eom_nroots'    : self.eom_nroots,
+            'eom_type'      : self.eom_type,
+            'eom_koopmans'  : self.eom_koopmans,
+            'eom_kwargs'    : self.eom_kwargs,
+            # CASSCF options (including warm-restart artefacts computed above)
+            'ncas'          : self.ncas,
+            'nelecas'       : self.nelecas,
+            'sa_nstates'    : self.sa_nstates,
+            'sa_weights'    : self.sa_weights,
+            'casscf_kwargs' : self.casscf_kwargs,
+            'mo_guess'      : _mo_guess_cas,
+            'ci_guess'      : _ci_guess_cas,
+            'oei_s'         : _dmet_oei_s,
+            # DFT / open-shell options
+            'xc'            : self.xc,
+            'spin'          : nelec_in_imp % 2,
+            'spin_polarized': self.spin_polarized,
+            # DFT mol and localization info (sequential path has live objects)
+            'dft_mol_dumps' : self.ints.mol.dumps() if method_key in ('RKS', 'UKS', 'ROKS') else None,
+            'ao2loc'        : self.ints.ao2loc       if method_key in ('RKS', 'UKS', 'ROKS') else None,
+            'loc_2_dmet'    : loc_2_dmet[:, :norb_in_imp] if method_key in ('RKS', 'UKS', 'ROKS') else None,
+            'mm_coords'     : self.mm_coords  if method_key in ('RKS', 'UKS', 'ROKS') else None,
+            'mm_charges'    : self.mm_charges if method_key in ('RKS', 'UKS', 'ROKS') else None,
+            'nel_total'     : self.ints.Nelec if method_key in ('RKS', 'UKS', 'ROKS') else None,
+            # NEVPT2 / QD-NEVPT2: live PySCF objects (not picklable; sequential only)
+            'mf_real'       : self.mf_real,
+            'nevpt2_kwargs' : self.nevpt2_kwargs,
+            'qdnevpt2_kwargs': self.qdnevpt2_kwargs,
+        }
+
+        # ------------------------------------------------------------------
+        # Delegate to SolverDispatcher — single authoritative dispatch.
+        # ------------------------------------------------------------------
+        result = SolverDispatcher.execute(task)
+
+        # ------------------------------------------------------------------
+        # Post-process: extract CASSCF warm-restart artefacts and store them
+        # back into frag_caches. SolverDispatcher returns 'cas_res' when
+        # method='CASSCF'; we unpack it here because frag_caches is owned
+        # by dmet, not by the solver.
+        # ------------------------------------------------------------------
+        if 'cas_res' in result:
+            cas_res = result['cas_res']
+            self.frag_caches[counter] = {
+                'mo_coeff': cas_res['mo_coeff'],
+                'ci'      : cas_res['ci'],
+            }
+
+        return result
+
     def constructNOrotation( self ):
     
-        myNOrotation = np.zeros( [ self.Norb, self.Norb ], dtype=float )
+        myNOrotation = np.zeros( [ self.norb, self.norb ], dtype=float )
         jumpsquare = 0
         for count in range( len( self.imp_size ) ): # self.imp_size has length 1 if self.TransInv
             myNOrotation[ jumpsquare : jumpsquare + self.imp_size[ count ], jumpsquare : jumpsquare + self.imp_size[ count ] ] = self.NOvecs[ count ]
             jumpsquare += self.imp_size[ count ]
-        for count in range( jumpsquare, self.Norb ):
+        for count in range( jumpsquare, self.norb ):
             myNOrotation[ count, count ] = 1.0
-        if ( self.TransInv == True ):
+        if self.TransInv:
             size = self.imp_size[ 0 ]
-            for it in range( 1, self.Norb // size ):
+            for it in range( 1, self.norb // size ):
                 myNOrotation[ it*size:(it+1)*size, it*size:(it+1)*size ] = myNOrotation[ 0:size, 0:size ]
         return myNOrotation
         
@@ -500,15 +917,15 @@ class dmet:
     def alt_costfunction( self, newumatflat ):
 
         newumatsquare_loc = self.flat2square( newumatflat )
-        OneRDM_loc = self.helper.construct1RDM_loc( self.doSCF, newumatsquare_loc )
+        one_rdm_loc = self.helper.construct1RDM_loc( self.doSCF, newumatsquare_loc )
 
         errors    = self.rdm_differences_bis( newumatflat )
         errors_sq = self.flat2square (errors)
 
-        if self.minFunc == 'OEI' :
-            e_fun = np.trace( np.dot(self.ints.loc_oei(), OneRDM_loc) )
+        if self.minFunc == 'oei' :
+            e_fun = np.trace( np.dot(self.ints.loc_oei(), one_rdm_loc) )
         elif self.minFunc == 'FOCK_INIT' :
-            e_fun = np.trace( np.dot(self.ints.loc_fock(), OneRDM_loc) )
+            e_fun = np.trace( np.dot(self.ints.loc_fock(), one_rdm_loc) )
         # e_cstr = np.sum( newumatflat * errors )    # not correct, but gives correct verify_gradient results
         e_cstr = np.sum( newumatsquare_loc * errors_sq )
         return -e_fun-e_cstr
@@ -532,15 +949,15 @@ class dmet:
         start_func = time.time()
     
         newumatsquare_loc = self.flat2square( newumatflat )
-        OneRDM_loc = self.helper.construct1RDM_loc( self.doSCF, newumatsquare_loc )
+        one_rdm_loc = self.helper.construct1RDM_loc( self.doSCF, newumatsquare_loc )
         
         thesize = 0
         for count in range(len(self.imp_size)):
-            if ( self.doDET == True ): # Do density embedding theory: fit only impurity
+            if self.do_det: # Do density embedding theory: fit only impurity
                 thesize += self.imp_size[ count ]
-                assert ( self.fitImpBath == False )
+                assert not self.fit_imp_bath
             else: # Do density MATRIX embedding theory
-                if ( self.fitImpBath == True ):
+                if self.fit_imp_bath:
                     thesize += self.dmetOrbs[count].shape[1] * self.dmetOrbs[count].shape[1]
                 else:
                     thesize += self.imp_size[ count ] * self.imp_size[ count ]
@@ -548,14 +965,14 @@ class dmet:
         
         jump = 0
         for count in range( len( self.imp_size ) ): # self.imp_size has length 1 if self.TransInv
-            if ( self.fitImpBath == True ):
-                mf_1RDM = np.dot( np.dot( self.dmetOrbs[ count ].T, OneRDM_loc ), self.dmetOrbs[ count ] )
+            if self.fit_imp_bath:
+                mf_1RDM = np.dot( np.dot( self.dmetOrbs[ count ].T, one_rdm_loc ), self.dmetOrbs[ count ] )
                 ed_1RDM = self.imp_1RDM[count]
             else:
-                mf_1RDM = (OneRDM_loc[:,np.flatnonzero(self.impClust[count])])[np.flatnonzero(self.impClust[count]),:]
+                mf_1RDM = (one_rdm_loc[:,np.flatnonzero(self.impClust[count])])[np.flatnonzero(self.impClust[count]),:]
                 ed_1RDM = self.imp_1RDM[count][:self.imp_size[count],:self.imp_size[count]]
-            if ( self.doDET == True ): # Do density embedding theory
-                if ( self.doDET_NO == True ): # Work in the NO basis
+            if self.do_det: # Do density embedding theory
+                if self.do_det_NO: # Work in the NO basis
                     theerror = np.diag( np.dot( np.dot( self.NOvecs[ count ].T, mf_1RDM ), self.NOvecs[ count ] ) ) - self.NOdiag[ count ]
                 else: # Work in the lattice basis
                     theerror = np.diag( mf_1RDM - ed_1RDM )
@@ -578,7 +995,7 @@ class dmet:
         start_func = time.time()
     
         newumatsquare_loc = self.flat2square( newumatflat )
-        OneRDM_loc = self.helper.construct1RDM_loc( self.doSCF, newumatsquare_loc )
+        one_rdm_loc = self.helper.construct1RDM_loc( self.doSCF, newumatsquare_loc )
 
         thesize = 0
         jump = 0
@@ -592,7 +1009,7 @@ class dmet:
         jump = 0
         jumpc = 0
         for count in range( len( self.imp_size ) ): # self.imp_size has length 1 if self.TransInv
-            mf_1RDM = (OneRDM_loc[:,np.flatnonzero(self.impClust[count])])[np.flatnonzero(self.impClust[count]),:]
+            mf_1RDM = (one_rdm_loc[:,np.flatnonzero(self.impClust[count])])[np.flatnonzero(self.impClust[count]),:]
             ed_1RDM = self.imp_1RDM[count][:self.imp_size[count],:self.imp_size[count]]
             theerror = mf_1RDM - ed_1RDM
             # squaresize = theerror.shape[0] * theerror.shape[1]
@@ -618,11 +1035,11 @@ class dmet:
         
         thesize = 0
         for count in range(len(self.imp_size)):
-            if ( self.doDET == True ): # Do density embedding theory: fit only impurity
+            if self.do_det: # Do density embedding theory: fit only impurity
                 thesize += self.imp_size[ count ]
-                assert ( self.fitImpBath == False )
+                assert not self.fit_imp_bath
             else: # Do density MATRIX embedding theory
-                if ( self.fitImpBath == True ):
+                if self.fit_imp_bath:
                     thesize += self.dmetOrbs[count].shape[1] * self.dmetOrbs[count].shape[1]
                 else:
                     thesize += self.imp_size[ count ] * self.imp_size[ count ]
@@ -633,16 +1050,16 @@ class dmet:
             jump = 0
             jumpsquare = 0
             for count in range( len( self.imp_size ) ): # self.imp_size has length 1 if self.TransInv
-                if ( self.fitImpBath == True ):
+                if self.fit_imp_bath:
                     local_derivative = np.dot( np.dot( self.dmetOrbs[ count ].T, RDMderivs_rot[ countgr, :, : ] ), self.dmetOrbs[ count ] )
                 else:
-                    if ( self.doDET == True ) and ( self.doDET_NO == True ):
+                    if self.do_det and self.do_det_NO:
                         local_derivative = RDMderivs_rot[ countgr, jumpsquare : jumpsquare + self.imp_size[ count ],\
                                                                    jumpsquare : jumpsquare + self.imp_size[ count ] ]
                         jumpsquare += self.imp_size[ count ]
                     else:
                         local_derivative = ((RDMderivs_rot[ countgr, :, : ])[:,np.flatnonzero(self.impClust[count])])[np.flatnonzero(self.impClust[count]),:]
-                if ( self.doDET == True ): # Do density embedding theory
+                if self.do_det: # Do density embedding theory
                     local_derivative = np.diag( local_derivative )
                     error_deriv[ jump : jump + len( local_derivative ) ] = local_derivative
                     jump += len( local_derivative )
@@ -679,9 +1096,9 @@ class dmet:
         gradient_reference = self.costfunction_derivative( umatflat )
         hessian = np.zeros( [ len( umatflat ), len( umatflat ) ], dtype=float )
         for cnt in range( len( umatflat ) ):
-            gradient = umatflat.copy()
-            gradient[ cnt ] += stepsize
-            gradient = self.costfunction_derivative( gradient )
+            umat_perturbed = umatflat.copy()
+            umat_perturbed[ cnt ] += stepsize
+            gradient = self.costfunction_derivative( umat_perturbed )
             hessian[ :, cnt ] = ( gradient - gradient_reference ) / stepsize
         hessian = 0.5 * ( hessian + hessian.T )
         eigvals, eigvecs = np.linalg.eigh( hessian )
@@ -691,33 +1108,79 @@ class dmet:
         
     def flat2square( self, umatflat ):
     
-        umatsquare = np.zeros( [ self.Norb, self.Norb ], dtype=float )
+        umatsquare = np.zeros( [ self.norb, self.norb ], dtype=float )
         umatsquare[ self.mask ] = umatflat
         umatsquare = umatsquare.T
         umatsquare[ self.mask ] = umatflat
-        if ( self.TransInv == True ):
+        if self.TransInv:
             size = self.imp_size[ 0 ]
-            for it in range( 1, self.Norb // size ):
+            for it in range( 1, self.norb // size ):
                 umatsquare[ it*size:(it+1)*size, it*size:(it+1)*size ] = umatsquare[ 0:size, 0:size ]
 
-        if ( self.NOrotation != None ):
+        if self.NOrotation is not None:
             umatsquare = np.dot( np.dot( self.NOrotation, umatsquare ), self.NOrotation.T )
         return umatsquare
         
     def square2flat( self, umatsquare ):
     
         umatsquare_bis = np.array( umatsquare, copy=True )
-        if ( self.NOrotation != None ):
+        if self.NOrotation is not None:
             umatsquare_bis = np.dot( np.dot( self.NOrotation.T, umatsquare_bis ), self.NOrotation )
         umatflat = umatsquare_bis[ self.mask ]
         return umatflat
         
+    # Maximum physically reasonable chemical potential (Eh). Newton steps beyond
+    # this indicate the optimizer has lost contact with the electron-count response
+    # surface — common for DFT-in-DFT where impurity orbitals are fully occupied.
+    _MU_MAX = 10.0
+
     def numeleccostfunction( self, chempot_imp ):
-        
+        if abs(chempot_imp) > self._MU_MAX:
+            raise RuntimeError(
+                f"mu optimization diverged: |mu| = {abs(chempot_imp):.2f} Eh "
+                f"exceeds threshold {self._MU_MAX} Eh. "
+                "For DFT-in-DFT DMET, optimize_mu=True is not recommended."
+            )
         Nelec_dmet   = self.doexact( chempot_imp )
         Nelec_target = self.ints.Nelec
         print("      (chemical potential , number of electrons) = (", chempot_imp, "," , Nelec_dmet ,")")
         return Nelec_dmet - Nelec_target
+
+    def numeleccostfunction_spinpol( self, chempot_pair ):
+        """Cost function for spin-polarized DMET (independent alpha/beta mu).
+
+        Parameters
+        ----------
+        chempot_pair : array-like, shape (2,)
+            [mu_alpha, mu_beta].
+
+        Returns
+        -------
+        ndarray shape (2,) — [error_alpha, error_beta].
+        """
+        mu_a, mu_b = float(chempot_pair[0]), float(chempot_pair[1])
+        if max(abs(mu_a), abs(mu_b)) > self._MU_MAX:
+            raise RuntimeError(
+                f"mu optimization diverged: |mu| = ({abs(mu_a):.2f}, {abs(mu_b):.2f}) Eh "
+                f"exceeds threshold {self._MU_MAX} Eh. "
+                "For DFT-in-DFT DMET, optimize_mu=True is not recommended."
+            )
+        # Run doexact with alpha mu; beta mu is stored for the solvers to read.
+        self._chempot_imp_beta = mu_b
+        Nelec_total = self.doexact(mu_a)
+        # Collect alpha and beta electron counts from stored spin-polarized RDMs
+        Nelec_a = sum(
+            np.trace(rdm.get('rdm1_alpha', rdm.get('rdm1', np.zeros((1,1))))[:s, :s])
+            for rdm, s in zip(self._spinpol_rdms, self.imp_size)
+        ) if hasattr(self, '_spinpol_rdms') else Nelec_total / 2.0
+        Nelec_b = Nelec_total - Nelec_a
+        target_a = self.ints.Nelec_alpha if hasattr(self.ints, 'Nelec_alpha') \
+                   else self.ints.Nelec / 2.0
+        target_b = self.ints.Nelec_beta if hasattr(self.ints, 'Nelec_beta') \
+                   else self.ints.Nelec / 2.0
+        print(f"      (mu_a, mu_b, N_a, N_b) = ({mu_a:.6f}, {mu_b:.6f}, "
+              f"{Nelec_a:.4f}, {Nelec_b:.4f})")
+        return np.array([Nelec_a - target_a, Nelec_b - target_b])
 
     def selfconsistent( self ):
 
@@ -731,8 +1194,8 @@ class dmet:
             }
             label, reason = _labels[self.method]
             raise RuntimeError(
-                f"method='{self.method}' is only compatible with one-shot DMET (oneshot()). "
-                f"Self-consistent DMET with {label} is not supported: {reason}."
+                f"method='{self.method}' is only compatible with one-shot dmet (oneshot()). "
+                f"Self-consistent dmet with {label} is not supported: {reason}."
             )
 
         iteration = 0
@@ -743,7 +1206,7 @@ class dmet:
         while ( u_diff > convergence_threshold ):
         
             iteration += 1
-            print("DMET iteration", iteration)
+            print("dmet iteration", iteration)
             umat_old = np.array( self.umat, copy=True )
             rdm_old = self.transform_ed_1rdm() # At the very first iteration, this matrix will be zero
             
@@ -761,18 +1224,18 @@ class dmet:
             stop_ed = time.time()
             self.time_ed += ( stop_ed - start_ed )
             print("   Energy =", self.energy)
-            if ( self.SCmethod != 'NONE' and not(self.altcostfunc) ):
+            if ( self.sc_method != 'NONE' and not(self.altcostfunc) ):
                 self.hessian_eigenvalues( self.square2flat( self.umat ) )
 
             # Optimize the u-matrix
             start_cf = time.time()
-            if ( self.altcostfunc and self.SCmethod == 'BFGS' ):
+            if ( self.altcostfunc and self.sc_method == 'BFGS' ):
                 result = optimize.minimize( self.alt_costfunction, self.square2flat( self.umat ), jac=self.alt_costfunction_derivative, options={'disp': False} )
                 self.umat = self.flat2square( result.x )
-            elif ( self.SCmethod == 'LSTSQ' ):
+            elif ( self.sc_method == 'LSTSQ' ):
                 result = optimize.leastsq( self.rdm_differences, self.square2flat( self.umat ), Dfun=self.rdm_differences_derivative, factor=0.1 )
                 self.umat = self.flat2square( result[ 0 ] )
-            elif ( self.SCmethod == 'BFGS' ):
+            elif ( self.sc_method == 'BFGS' ):
                 result = optimize.minimize( self.costfunction, self.square2flat( self.umat ), jac=self.costfunction_derivative, options={'disp': False} )
                 self.umat = self.flat2square( result.x )
             self.umat = self.umat - np.eye( self.umat.shape[ 0 ] ) * np.average( np.diag( self.umat ) )  # Remove arbitrary global shift
@@ -794,9 +1257,8 @@ class dmet:
             self.umat = self.relaxation * umat_old + ( 1.0 - self.relaxation ) * self.umat
             print("   2-norm of difference old and new u-mat =", u_diff)
             print("   2-norm of difference old and new 1-RDM =", rdm_diff)
-            print("******************************************************")
             
-            if ( self.SCmethod == 'NONE' ):
+            if ( self.sc_method == 'NONE' ):
                 u_diff = 0.1 * convergence_threshold # Do only 1 iteration
         
         print("Time cf func =", self.time_func)
@@ -848,15 +1310,20 @@ class dmet:
 
     def oneshot( self, mu_imp=0.0, optimize_mu=False ):
         """
-        Perform a single DMET active space calculation.
+        Perform a single dmet active space calculation.
 
         Parameters
         ----------
-        mu_imp : float
-            Chemical potential applied to the impurity orbitals. Default 0.0.
+        mu_imp : float or array-like of length 2
+            Chemical potential applied to the impurity orbitals.
+            * float     — single spin-symmetric mu (default 0.0).
+            * [mu_a, mu_b] — only used when optimize_mu=True and
+              spin_polarized=True; seeds the 2D root search.
         optimize_mu : bool
             If True, optimize the chemical potential to match the target
             number of electrons. If False, use the fixed mu_imp.
+            When spin_polarized=True, runs a 2D root search for
+            (mu_alpha, mu_beta).
 
         Returns
         -------
@@ -865,14 +1332,36 @@ class dmet:
         """
         if optimize_mu:
             from scipy import optimize
-            try:
-                self.mu_imp = optimize.newton( self.numeleccostfunction, mu_imp )
-            except RuntimeError:
-                print("Warning: Newton solver for mu_imp did not converge. Using last value.")
+            if self.spin_polarized:
+                # 2D root search: find [mu_alpha, mu_beta] independently.
+                mu0 = np.array(mu_imp) if hasattr(mu_imp, '__len__') \
+                      else np.array([float(mu_imp), float(mu_imp)])
+                try:
+                    sol = optimize.fsolve(
+                        self.numeleccostfunction_spinpol,
+                        mu0,
+                        full_output=True,
+                    )
+                    mu_a, mu_b = sol[0]
+                    self.mu_imp = mu_a
+                    self._chempot_imp_beta = mu_b
+                    print(f"  Spin-polarized mu: alpha={mu_a:.8f}, beta={mu_b:.8f}")
+                except Exception as exc:
+                    print(f"Warning: spin-polarized mu optimization failed ({exc}). "
+                          f"Falling back to spin-symmetric mu.")
+                    self.mu_imp = float(mu_imp) if not hasattr(mu_imp, '__len__') \
+                                  else float(mu_imp[0])
+                    self._chempot_imp_beta = self.mu_imp
+            else:
+                try:
+                    self.mu_imp = optimize.newton( self.numeleccostfunction, mu_imp )
+                except RuntimeError:
+                    print("Warning: Newton solver for mu_imp did not converge. Falling back to initial mu.")
+                    self.mu_imp = mu_imp
         else:
             self.mu_imp = mu_imp
-            self.doexact( self.mu_imp )
 
+        self.doexact( self.mu_imp )
         return self.energy
 
 
@@ -882,7 +1371,7 @@ class dmet:
 
 def make_fragments( mol, myInts, atom_groups ):
     '''
-    Build the impurityClusters list required by dmet.__init__ by specifying
+    Build the impurity_clusters list required by DMET.__init__ by specifying
     groups of atom indices rather than raw orbital indices.
 
     Parameters
@@ -906,7 +1395,7 @@ def make_fragments( mol, myInts, atom_groups ):
 
     Returns
     -------
-    impurityClusters : list of np.ndarray
+    impurity_clusters : list of np.ndarray
         List of integer arrays of length Norbs, with 1 where the orbital
         belongs to the impurity and 0 elsewhere.
 
@@ -917,7 +1406,7 @@ def make_fragments( mol, myInts, atom_groups ):
     '''
     ao_slices = mol.aoslice_by_atom()  # shape (natm, 4): (shl0, shl1, ao0, ao1)
     Norbs = myInts.Norbs
-    impurityClusters = []
+    impurity_clusters = []
     covered = np.zeros(Norbs, dtype=int)
 
     for group in atom_groups:
@@ -926,10 +1415,10 @@ def make_fragments( mol, myInts, atom_groups ):
             ao_start = ao_slices[atom_idx, 2]
             ao_stop  = ao_slices[atom_idx, 3]
             mask[ao_start:ao_stop] = 1
-        impurityClusters.append(mask)
+        impurity_clusters.append(mask)
         covered += mask
 
-    if not np.all(covered >= 0):
+    if np.any(covered > 1):
         raise ValueError("make_fragments: overlapping atom groups detected.")
 
-    return impurityClusters
+    return impurity_clusters

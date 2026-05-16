@@ -1,29 +1,29 @@
 '''
-    QD-NEVPT2 solver for QC-DMET using Prism (https://github.com/sokolov-group/prism).
+    QD-NEVPT2 solver for QC-dmet using Prism (https://github.com/sokolov-group/prism).
 
     IMPORTANT: Unlike the other solvers (FCI, CCSD, CASSCF), this solver operates
-    in the PHYSICAL molecular basis, not in the DMET embedding orbital basis. This
+    in the PHYSICAL molecular basis, not in the dmet embedding orbital basis. This
     is a fundamental requirement of Prism's interface, which needs the real PySCF
     mol / mf / mc objects (it calls mol.energy_nuc(), mol.intor_symmetric(), etc.).
 
     Workflow
     --------
-    1. The user builds their DMET system as normal (local_integrals, fragments).
+    1. The user builds their dmet system as normal (local_integrals, fragments).
     2. Instead of calling dmet.dmet(..., method='CASSCF'), they use
        dmet.dmet(..., method='QD-NEVPT2') and supply the real mf object.
     3. Inside doexact, a full SA-CASSCF is run on the real molecule using the
-       DMET-defined active space (ncas, nelecas). The active orbital space
+       dmet-defined active space (ncas, nelecas). The active orbital space
        corresponds to the selected impurity fragment.
     4. Prism QD-NEVPT2 is run on the resulting mc object.
-    5. The SA-weighted CASSCF 1-RDM (in the DMET embedding basis) is used for
+    5. The SA-weighted CASSCF 1-RDM (in the dmet embedding basis) is used for
        the u-matrix fitting loop; QD-NEVPT2 provides the correlated energies.
 
     Limitations
     -----------
-    - Only compatible with one-shot DMET. Calling selfconsistent() with
+    - Only compatible with one-shot dmet. Calling selfconsistent() with
       method='QD-NEVPT2' raises a RuntimeError because the Prism interface
       requires the real molecular integrals and cannot be embedded in the
-      standard DMET u-matrix loop.
+      standard dmet u-matrix loop.
     - The active space (ncas, nelecas) must be specified explicitly.
     - Requires Prism to be installed and importable.
 '''
@@ -32,7 +32,7 @@ import sys
 import numpy as np
 from pyscf import ao2mo, gto, scf, mcscf
 from pyscf import fci as pyscf_fci
-from utils import silent_stdout, nullcontext
+from ..utils import silent_stdout, nullcontext
 
 
 def _check_prism():
@@ -58,11 +58,12 @@ def solve(mf_real, ncas, nelecas,
           select_reference=None,
           casscf_kwargs=None,
           nevpt_kwargs=None,
+          mo_guess=None,
           printoutput=True):
     '''
     Run SA-CASSCF + QD-NEVPT2 via Prism on a real PySCF mf object.
 
-    This function is not called directly by the DMET loop — it is invoked
+    This function is not called directly by the dmet loop — it is invoked
     through dmet.doexact() when method='QD-NEVPT2'. It can also be used as
     a standalone function for testing.
 
@@ -138,7 +139,7 @@ def solve(mf_real, ncas, nelecas,
             setattr(mc, key, val)
 
         mc.verbose = 5 if printoutput else 0
-        mc.kernel()
+        mc.kernel(mo_guess)
 
         print(f"\nqdnevpt::solve : SA-CASSCF ({sa_nstates} states, ncas={ncas}, nelecas={nelecas})")
         for i, e in enumerate(mc.e_states):
@@ -176,3 +177,78 @@ def solve(mf_real, ncas, nelecas,
                 print(f"    {line}")
 
     return e_tot, e_corr, osc, mc, nevpt_obj
+
+
+
+# ---------------------------------------------------------------------------
+# SolverDispatcher entry point
+# ---------------------------------------------------------------------------
+
+def execute(task):
+    """
+    SolverDispatcher-compatible wrapper for the QD-NEVPT2 solver.
+
+    Supports two transport modes for the physical SCF object (mirroring the
+    pattern in ``solvers/nevpt2.py``):
+
+    1. **Serialized (parallel-worker) path** (preferred for ProcessPoolExecutor):
+       The task dict carries picklable numpy arrays + a JSON Mole dump:
+         task['mol_dumps'], task['mf_mo_coeff'], task['mf_mo_energy'],
+         task['mf_mo_occ'], task['mf_e_tot'].
+       A dummy PySCF RHF object is reconstructed from these inside the worker
+       process before calling solve().
+
+    2. **Live-object (legacy/sequential) path**:
+       task['mf_real'] is the live PySCF RHF object from the main process.
+       Used when called directly from ``_run_fragment_sequential()`` without
+       the parallel-task serialization step.
+
+    Mode 1 is chosen when 'mol_dumps' is present in the task dict.
+    Mode 2 is the fallback if 'mol_dumps' is absent.
+
+    Parameters
+    ----------
+    task : dict
+        Mode 1 keys: mol_dumps, mf_mo_coeff, mf_mo_energy, mf_mo_occ,
+                     mf_e_tot, ncas, nelecas.
+        Mode 2 keys: mf_real, ncas, nelecas.
+        Optional (both modes): sa_nstates, sa_weights, casscf_kwargs,
+                               qdnevpt2_kwargs, mo_guess.
+
+    Returns
+    -------
+    (energy, rdm1, qdnevpt2_res) where qdnevpt2_res is a dict with keys
+    'e_tot', 'e_corr', 'osc', 'mc', 'nevpt'.
+    """
+    # ------------------------------------------------------------------
+    # Resolve mf_real via either the serialized or live-object protocol.
+    # Reuse the helper from nevpt2 — same serialization scheme.
+    # ------------------------------------------------------------------
+    if 'mol_dumps' in task:
+        # Mode 1: reconstruct from serialized arrays (parallel-safe).
+        from solvers.nevpt2 import _reconstruct_mf_from_task
+        mf_real = _reconstruct_mf_from_task(task)
+    else:
+        # Mode 2: live object passed directly (sequential / legacy path).
+        mf_real = task['mf_real']
+
+    e_tot, e_corr, osc, mc, nevpt_obj = solve(
+        mf_real,
+        ncas=task.get('ncas'),
+        nelecas=task.get('nelecas'),
+        sa_nstates=task.get('sa_nstates', 3),
+        sa_weights=task.get('sa_weights'),
+        casscf_kwargs=task.get('casscf_kwargs', {}),
+        nevpt_kwargs=task.get('qdnevpt2_kwargs', {}),
+        mo_guess=task.get('mo_guess'),
+    )
+
+    rdm1 = mc.make_rdm1()
+    qdnevpt2_res = {
+        'e_tot' : e_tot,
+        'e_corr': e_corr,
+        'osc'   : osc,
+        'mc'    : mc,
+        'nevpt' : nevpt_obj,
+    }
+    return e_tot[0], rdm1, qdnevpt2_res

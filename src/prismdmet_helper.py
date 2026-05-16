@@ -3,8 +3,7 @@ PrismDMET helper: C-extension interface and core DMET linear-algebra routines.
 Wraps libprismdmet.so (C) for the RHF response (1-RDM derivative w.r.t. u-matrix).
 """
 
-import local_integrals
-import rhf
+from . import rhf
 import numpy as np
 import ctypes
 import os
@@ -14,32 +13,38 @@ _so_path     = os.path.join(_base_dir, '..', 'lib', 'libprismdmet.so')
 lib_prismdmet = ctypes.CDLL(os.path.abspath(_so_path))
 
 
-class prismdmethelper:
+class PrismDMETHelper:
     """
-    Provides the bath construction and 1-RDM routines needed by the DMET loop.
+    Provides the bath construction and 1-RDM routines needed by the dmet loop.
 
     Parameters
     ----------
-    locints : local_integrals.localintegrals
+    locints : local_integrals.LocalIntegrals
         The localized integral object for the full system.
     list_H1 : list of ndarray
         The H1 basis matrices that parametrize the correlation potential (u-matrix).
     use_constrained_opt : bool
         If True, use the constrained cost function (OEI or FOCK_INIT minimization).
     minFunc : str or None
-        Which quantity to minimize: 'OEI', 'FOCK_INIT', or None (standard DMET).
+        Which quantity to minimize: 'OEI', 'FOCK_INIT', or None (standard dmet).
     """
 
     def __init__(self, locints, list_H1, use_constrained_opt, minFunc):
         self.locints  = locints
-        assert self.locints.Nelec % 2 == 0, "Nelec must be even (closed-shell reference)"
+        self._is_open_shell = (self.locints.Nelec % 2 != 0)
         self.numPairs = self.locints.Nelec // 2
+        
+        # For open-shell (odd Nelec), track alpha/beta counts for 1-RDM construction
+        self.num_alpha = (self.locints.Nelec + self.locints.mol.spin) // 2
+        self.num_beta  = (self.locints.Nelec - self.locints.mol.spin) // 2
         self.altcf    = use_constrained_opt
         self.minFunc  = None
 
         if self.altcf:
-            assert minFunc in ('OEI', 'FOCK_INIT')
-            self.minFunc = minFunc
+            _mf = minFunc.upper() if minFunc else minFunc
+            assert _mf in ('OEI', 'FOCK_INIT'), \
+                f"PrismDMETHelper: minFunc must be 'OEI' or 'FOCK_INIT', got '{minFunc}'"
+            self.minFunc = _mf
 
         # Sparse representation of the H1 basis for the C-level gradient
         self.list_H1 = list_H1
@@ -71,35 +76,39 @@ class prismdmethelper:
         umat_loc : ndarray (Norbs, Norbs)
             The correlation potential in the LMO basis.
         """
+        if self._is_open_shell and doSCF:
+            raise NotImplementedError("Open-shell DMET iterative SCF loops are not yet supported.")
         if self.altcf and self.minFunc == 'OEI':
-            OEI = self.locints.loc_oei() + umat_loc
+            oei = self.locints.loc_oei() + umat_loc
         else:
-            OEI = self.locints.loc_fock() + umat_loc
-        DMloc = self._build_1rdm(OEI, self.numPairs)
+            oei = self.locints.loc_fock() + umat_loc
+        dm_loc = self._build_1rdm(oei, self.numPairs)
         if doSCF:
             if self.locints.ERIinMEM:
-                DMloc = rhf.solve_ERI(self.locints.loc_oei() + umat_loc, self.locints.loc_tei(), DMloc, self.numPairs)
+                dm_loc = rhf.solve_ERI(self.locints.loc_oei() + umat_loc, self.locints.loc_tei(), dm_loc, self.numPairs)
             else:
-                DMloc = rhf.solve_JK(self.locints.loc_oei() + umat_loc, self.locints.mol, self.locints.ao2loc, DMloc, self.numPairs)
-        return DMloc
+                dm_loc = rhf.solve_JK(self.locints.loc_oei() + umat_loc, self.locints.mol, self.locints.ao2loc, dm_loc, self.numPairs)
+        return dm_loc
 
     def construct1RDM_response(self, doSCF, umat_loc, NOrotation):
         """
         Compute the 1-RDM derivative dγ/du via the C-level RHF response function.
         Used to build the analytical gradient of the cost function.
         """
-        OEI = self.locints.loc_fock() + umat_loc
+        if self._is_open_shell:
+            raise NotImplementedError("DMET chemical-potential optimization requires an even electron count.")
+        oei = self.locints.loc_fock() + umat_loc
         if doSCF:
-            DMloc = self._build_1rdm(OEI, self.numPairs)
+            dm_loc = self._build_1rdm(oei, self.numPairs)
             if self.locints.ERIinMEM:
-                DMloc = rhf.solve_ERI(self.locints.loc_oei() + umat_loc, self.locints.loc_tei(), DMloc, self.numPairs)
+                dm_loc = rhf.solve_ERI(self.locints.loc_oei() + umat_loc, self.locints.loc_tei(), dm_loc, self.numPairs)
             else:
-                DMloc = rhf.solve_JK(self.locints.loc_oei() + umat_loc, self.locints.mol, self.locints.ao2loc, DMloc, self.numPairs)
-            OEI = self.locints.loc_fock(DMloc) + umat_loc
+                dm_loc = rhf.solve_JK(self.locints.loc_oei() + umat_loc, self.locints.mol, self.locints.ao2loc, dm_loc, self.numPairs)
+            oei = self.locints.loc_fock(dm_loc) + umat_loc
 
         if NOrotation is not None:
-            OEI = np.dot(np.dot(NOrotation.T, OEI), NOrotation)
-        OEI_flat = np.array(OEI.reshape(self.locints.Norbs ** 2), dtype=ctypes.c_double)
+            oei = np.dot(np.dot(NOrotation.T, oei), NOrotation)
+        oei_flat = np.array(oei.reshape(self.locints.Norbs ** 2), dtype=ctypes.c_double)
 
         rdm_deriv = np.ones([self.locints.Norbs * self.locints.Norbs * self.Nterms], dtype=ctypes.c_double)
         lib_prismdmet.rhf_response(
@@ -109,47 +118,55 @@ class prismdmethelper:
             self.H1start.ctypes.data_as(ctypes.c_void_p),
             self.H1row.ctypes.data_as(ctypes.c_void_p),
             self.H1col.ctypes.data_as(ctypes.c_void_p),
-            OEI_flat.ctypes.data_as(ctypes.c_void_p),
+            oei_flat.ctypes.data_as(ctypes.c_void_p),
             rdm_deriv.ctypes.data_as(ctypes.c_void_p)
         )
         return rdm_deriv.reshape((self.Nterms, self.locints.Norbs, self.locints.Norbs), order='C')
 
-    def _build_1rdm(self, OEI, numPairs):
-        """Build the idempotent 1-RDM by occupying the lowest numPairs eigenstates of OEI."""
-        eigenvals, eigenvecs = np.linalg.eigh(OEI)
+    def _build_1rdm(self, oei, numPairs):
+        """Build the 1-RDM by occupying the lowest eigenstates of oei."""
+        eigenvals, eigenvecs = np.linalg.eigh(oei)
         idx = eigenvals.argsort()
-        return 2 * np.dot(eigenvecs[:, idx[:numPairs]], eigenvecs[:, idx[:numPairs]].T)
+        
+        if self._is_open_shell:
+            # Build separate alpha and beta densities for open-shell
+            # (assumes oei is spin-independent trial Hamiltonian)
+            dm_a = np.dot(eigenvecs[:, idx[:self.num_alpha]], eigenvecs[:, idx[:self.num_alpha]].T)
+            dm_b = np.dot(eigenvecs[:, idx[:self.num_beta]],  eigenvecs[:, idx[:self.num_beta]].T)
+            return dm_a + dm_b
+        else:
+            return 2 * np.dot(eigenvecs[:, idx[:numPairs]], eigenvecs[:, idx[:numPairs]].T)
 
-    def constructbath(self, OneDM, impurityOrbs, numBathOrbs, threshold=1e-13):
+    def constructbath(self, OneDM, impurity_orbs, numBathOrbs, threshold=1e-13):
         """
-        Perform the Schmidt decomposition to find the DMET bath orbitals.
+        Perform the Schmidt decomposition to find the dmet bath orbitals.
 
         Returns
         -------
         numBathOrbs : int
             Number of bath orbitals retained (after threshold truncation).
-        loc2dmet : ndarray (Norbs, Norbs)
-            Rotation from LMO to DMET basis. Columns ordered as:
+        loc_2_dmet : ndarray (Norbs, Norbs)
+            Rotation from LMO to dmet basis. Columns ordered as:
             [impurity | bath | environment].
         coreOccupations : ndarray
             Occupation numbers of the environment (core) orbitals.
         """
-        embeddingOrbs  = np.matrix(1 - impurityOrbs)
-        if embeddingOrbs.shape[0] > 1:
-            embeddingOrbs = embeddingOrbs.T
-        isEmbedding    = np.dot(embeddingOrbs.T, embeddingOrbs) == 1
+        embeddingOrbs  = np.array(1 - impurity_orbs, dtype=float)
+        if embeddingOrbs.ndim == 1:
+            embeddingOrbs = embeddingOrbs[:, np.newaxis]  # (Norbs, 1)
+        isEmbedding    = np.dot(embeddingOrbs, embeddingOrbs.T) == 1
         numEmbedOrbs   = int(np.sum(embeddingOrbs))
         embedding1RDM  = np.reshape(OneDM[isEmbedding], (numEmbedOrbs, numEmbedOrbs))
 
-        numImpOrbs   = int(np.sum(impurityOrbs))
-        numTotalOrbs = len(impurityOrbs)
+        num_imp_orbs   = int(np.sum(impurity_orbs))
+        numTotalOrbs = len(impurity_orbs)
 
         eigenvals, eigenvecs = np.linalg.eigh(embedding1RDM)
         # Sort by entanglement: occupations closest to 1 first
         idx    = np.maximum(-eigenvals, eigenvals - 2.0).argsort()
         tokeep = np.sum(-np.maximum(-eigenvals, eigenvals - 2.0)[idx] > threshold)
         if tokeep < numBathOrbs:
-            print(f"DMET::constructbath : Throwing out {numBathOrbs - tokeep} orbitals "
+            print(f"dmet::constructbath : Throwing out {numBathOrbs - tokeep} orbitals "
                   f"within {threshold} of 0 or 2.")
         numBathOrbs = min(int(tokeep), numBathOrbs)
 
@@ -162,18 +179,18 @@ class prismdmethelper:
         env_idx = pureEnvVals.argsort()
         eigenvecs[:, numBathOrbs:] = pureEnvVecs[:, env_idx]
         pureEnvVals = -pureEnvVals[env_idx]
-        coreOccupations = np.hstack((np.zeros([numImpOrbs + numBathOrbs]), pureEnvVals))
+        coreOccupations = np.hstack((np.zeros([num_imp_orbs + numBathOrbs]), pureEnvVals))
 
         # Insert impurity identity columns/rows
-        for counter in range(numImpOrbs):
+        for counter in range(num_imp_orbs):
             eigenvecs = np.insert(eigenvecs, counter, 0.0, axis=1)
         counter = 0
         for counter2 in range(numTotalOrbs):
-            if impurityOrbs[counter2]:
+            if impurity_orbs[counter2]:
                 eigenvecs = np.insert(eigenvecs, counter2, 0.0, axis=0)
                 eigenvecs[counter2, counter] = 1.0
                 counter += 1
-        assert counter == numImpOrbs
+        assert counter == num_imp_orbs
 
         assert np.linalg.norm(np.dot(eigenvecs.T, eigenvecs) - np.identity(numTotalOrbs)) < 1e-12
         return numBathOrbs, eigenvecs, coreOccupations

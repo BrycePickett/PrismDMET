@@ -1,16 +1,16 @@
-from setuptools import setup, find_namespace_packages
+from setuptools import setup
 
 setup(
     name="prismdmet",
-    version="1.3.0",
-    description="PrismDMET: Advanced Density Matrix Embedding Theory for Materials",
-    author="PrismDMET Team",
-    package_dir={"": "src"},
-    packages=find_namespace_packages(where="src"),
-    python_requires=">=3.8",
+    version="1.4.0",
+    description="PrismDMET: Density Matrix Embedding Theory for ab initio quantum chemistry",
+    author="Bryce Pickett",
+    package_dir={"prismdmet": "src"},
+    packages=["prismdmet", "prismdmet.solvers", "prismdmet.qmmm"],
+    python_requires=">=3.10",
     install_requires=[
         "numpy",
         "scipy",
-        "pyscf"
+        "pyscf",
     ],
 )
