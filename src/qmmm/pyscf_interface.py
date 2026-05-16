@@ -7,7 +7,7 @@ Atom labeling:
   Ghost atoms: 'ghost-Cu'        - PySCF ghost prefix.
 
 Usage:
->>> from qmmm.pyscf_interface import build_meanfield
+>>> from prismdmet.qmmm import build_meanfield
 >>> mf, mol = build_meanfield(cluster, qm_basis='def2-svp', xc='b3lyp')
 >>> mf.kernel()
 """
@@ -137,9 +137,9 @@ def build_meanfield(
 
     # Choose RKS or UKS based on spin
     if cluster.qm_spin == 0:
-        scf_obj = pyscf.scf.RKS(mol)
+        scf_obj = pyscf.dft.RKS(mol)
     else:
-        scf_obj = pyscf.scf.UKS(mol)
+        scf_obj = pyscf.dft.UKS(mol)
 
     scf_obj.xc        = xc
     scf_obj.conv_tol  = conv_tol

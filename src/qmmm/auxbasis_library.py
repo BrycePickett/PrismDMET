@@ -154,4 +154,10 @@ def _get_parsed():
 
 def cu2o_jkfit(element: str):
     """Return the parsed def2-universal-jkfit (valence) auxbasis for Cu or O."""
-    return _get_parsed()[element]
+    parsed = _get_parsed()
+    if element not in parsed:
+        raise KeyError(
+            f"No cu2o_jkfit auxbasis for element '{element}'. "
+            f"Available: {list(parsed.keys())}"
+        )
+    return parsed[element]

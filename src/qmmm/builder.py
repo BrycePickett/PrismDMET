@@ -37,8 +37,8 @@ class QMMMBuilder:
 
     Quick-start — Cu2O, 19-Cu SKZCAM (identical to Michael's output)
     -----------------------------------------------------------------
-    >>> from qmmm import QMMMBuilder
-    >>> from qmmm.material_config import cu2o_matproj_config
+    >>> from prismdmet.qmmm import QMMMBuilder
+    >>> from prismdmet.qmmm import cu2o_matproj_config
     >>> builder = QMMMBuilder(
     ...     config         = cu2o_matproj_config,
     ...     qm_method      = 'SKZCAM',

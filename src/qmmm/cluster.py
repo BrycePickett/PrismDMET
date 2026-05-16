@@ -32,7 +32,7 @@ REGION_ECP   = 1   # Pauli repulsion boundary (nelec 0 ECP)
 REGION_MM    = 2   # classical point charges only
 REGION_GHOST = 3   # basis functions, no nuclear charge (vacancy site)
 
-# Visualisation labels for each region
+# Visualization labels for each region
 _VIS_LABELS = {
     REGION_QM:    '',          # keep the real element symbol
     REGION_ECP:   'Th',        # heavy/rare-earth placeholder for ECP zone
@@ -194,7 +194,7 @@ class QMMMCluster:
 
         Example
         -------
-        >>> from qmmm.ecp_library import ECP_LIBRARY
+        >>> from prismdmet.qmmm import ECP_LIBRARY
         >>> mol.ecp = cluster.ecp_dict(ECP_LIBRARY)
         """
         import pyscf.gto as gto
