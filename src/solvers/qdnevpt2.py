@@ -32,7 +32,7 @@ import sys
 import numpy as np
 from pyscf import ao2mo, gto, scf, mcscf
 from pyscf import fci as pyscf_fci
-from utils import silent_stdout, nullcontext
+from ..utils import silent_stdout, nullcontext
 
 
 def _check_prism():

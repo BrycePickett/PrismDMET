@@ -19,7 +19,7 @@
 
 import numpy as np
 from pyscf import gto, scf, ao2mo, mp
-from utils import silent_stdout, nullcontext
+from ..utils import silent_stdout, nullcontext
 
 def solve( const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf, chempot_imp=0.0, printoutput=True ):
 

@@ -6,8 +6,8 @@ Built on the QC-dmet framework (Wouters et al., 2015) under GPL-v2.
 from pyscf import gto, scf, ao2mo, lo
 from pyscf.lo import nao, orth
 from pyscf.tools import molden
-import rhf
-import iao_helper
+from . import rhf
+from . import iao_helper
 import numpy as np
 
 

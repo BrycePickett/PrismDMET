@@ -1,9 +1,9 @@
 """
-Prismdmet helper: C-extension interface and core dmet linear-algebra routines.
+PrismDMET helper: C-extension interface and core DMET linear-algebra routines.
 Wraps libprismdmet.so (C) for the RHF response (1-RDM derivative w.r.t. u-matrix).
 """
 
-import rhf
+from . import rhf
 import numpy as np
 import ctypes
 import os
@@ -41,8 +41,10 @@ class PrismDMETHelper:
         self.minFunc  = None
 
         if self.altcf:
-            assert minFunc in ('oei', 'fock_init')
-            self.minFunc = minFunc
+            _mf = minFunc.upper() if minFunc else minFunc
+            assert _mf in ('OEI', 'FOCK_INIT'), \
+                f"PrismDMETHelper: minFunc must be 'OEI' or 'FOCK_INIT', got '{minFunc}'"
+            self.minFunc = _mf
 
         # Sparse representation of the H1 basis for the C-level gradient
         self.list_H1 = list_H1
@@ -76,7 +78,7 @@ class PrismDMETHelper:
         """
         if self._is_open_shell and doSCF:
             raise NotImplementedError("Open-shell DMET iterative SCF loops are not yet supported.")
-        if self.altcf and self.minFunc == 'oei':
+        if self.altcf and self.minFunc == 'OEI':
             oei = self.locints.loc_oei() + umat_loc
         else:
             oei = self.locints.loc_fock() + umat_loc

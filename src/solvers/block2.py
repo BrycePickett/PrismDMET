@@ -1,6 +1,6 @@
 import numpy as np
 import os
-from utils import silent_stdout, nullcontext
+from ..utils import silent_stdout, nullcontext
 
 def solve( const, oei, fock, tei, norb, nel, nimp, chempot_imp=0.0, printoutput=False ):
     """

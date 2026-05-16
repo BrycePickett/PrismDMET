@@ -109,11 +109,6 @@ def _is_oom_like(exc):
     return False
 
 
-def _ensure_src_path(task):
-    src_path = task.get('src_path', '')
-    if src_path and src_path not in sys.path:
-        sys.path.insert(0, src_path)
-
 
 class SolverDispatcher:
     """
@@ -148,7 +143,6 @@ class SolverDispatcher:
         MemoryError / RuntimeError
             If an OOM error occurs and no fallback is defined for the method.
         """
-        _ensure_src_path(task)
         method = task['method']
 
         dispatch = {
@@ -157,7 +151,6 @@ class SolverDispatcher:
             'ED'          : SolverDispatcher._run_fci,
             'FCI'         : SolverDispatcher._run_fci,
             'DMRG'        : SolverDispatcher._run_dmrg,
-            'DMRG-CheMPS2': SolverDispatcher._run_chemps2,
             'CC'          : SolverDispatcher._run_cc,
             'MP2'         : SolverDispatcher._run_mp2,
             'EOM-CC'      : SolverDispatcher._run_eomcc,
@@ -215,80 +208,74 @@ class SolverDispatcher:
 
     @staticmethod
     def _run_rhf(task):
-        from solvers import rhf
+        from . import rhf
         energy, rdm1 = rhf.execute(task)
         return {'counter': task['counter'], 'energy': energy, 'rdm1': rdm1}
 
     @staticmethod
     def _run_fci(task):
-        from solvers import fci
+        from . import fci
         energy, rdm1 = fci.execute(task)
         return {'counter': task['counter'], 'energy': energy, 'rdm1': rdm1}
 
     @staticmethod
     def _run_dmrg(task):
-        from solvers import block2
+        from . import block2
         energy, rdm1 = block2.execute(task)
         return {'counter': task['counter'], 'energy': energy, 'rdm1': rdm1}
 
     @staticmethod
-    def _run_chemps2(task):
-        from solvers import chemps2
-        energy, rdm1 = chemps2.execute(task)
-        return {'counter': task['counter'], 'energy': energy, 'rdm1': rdm1}
-
-    @staticmethod
     def _run_cc(task):
-        from solvers import cc
+        from . import cc
         energy, rdm1 = cc.execute(task)
         return {'counter': task['counter'], 'energy': energy, 'rdm1': rdm1}
 
     @staticmethod
     def _run_mp2(task):
-        from solvers import mp2
+        from . import mp2
         energy, rdm1 = mp2.execute(task)
         return {'counter': task['counter'], 'energy': energy, 'rdm1': rdm1}
 
     @staticmethod
     def _run_eomcc(task):
-        from solvers import eomcc
+        from . import eomcc
         energy, rdm1, eom_res = eomcc.execute(task)
         return {'counter': task['counter'], 'energy': energy,
                 'rdm1': rdm1, 'eom_res': eom_res}
 
     @staticmethod
     def _run_casscf(task):
-        from solvers import casscf
+        from . import casscf
         energy, rdm1, cas_res = casscf.execute(task)
         return {'counter': task['counter'], 'energy': energy,
                 'rdm1': rdm1, 'cas_res': cas_res}
 
     @staticmethod
     def _run_qdnevpt2(task):
-        from solvers import qdnevpt2
+        from . import qdnevpt2
         energy, rdm1, qdnevpt2_res = qdnevpt2.execute(task)
         return {'counter': task['counter'], 'energy': energy,
                 'rdm1': rdm1, 'qdnevpt2_res': qdnevpt2_res}
 
     @staticmethod
     def _run_nevpt2(task):
-        from solvers import nevpt2
+        from . import nevpt2
         energy, rdm1, nevpt2_res = nevpt2.execute(task)
         return {'counter': task['counter'], 'energy': energy,
                 'rdm1': rdm1, 'nevpt2_res': nevpt2_res}
 
     @staticmethod
     def _run_uhf(task):
-        from solvers import uhf
+        from . import uhf
         return uhf.execute(task)
 
     @staticmethod
     def _run_rohf(task):
-        from solvers import uhf
+        from . import uhf
         return uhf.execute(task)
 
     @staticmethod
     def _run_dft(task):
-        from solvers import dft
+        from . import dft
         return dft.execute(task)
 
