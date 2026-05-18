@@ -136,7 +136,9 @@ def _oei_correction(rdm1_emb, oei, fock, ao2loc, loc_2_dmet, nimp):
 def solve_rks(const, oei, fock, tei, norb, nel, nimp, dm_guess,
               xc='pbe', chempot_imp=0.0,
               mol=None, ao2loc=None, loc_2_dmet=None,
-              mm_coords=None, mm_charges=None, nel_total=None):
+              mm_coords=None, mm_charges=None, nel_total=None,
+              global_spin=0, level_shift=0.0,
+              use_density_fit=False, df_auxbasis=None):
     """Solve the embedding Hamiltonian at the RKS level.
 
     Parameters
@@ -187,6 +189,8 @@ def solve_rks(const, oei, fock, tei, norb, nel, nimp, dm_guess,
 
     mf = pyscf_dft.RKS(mol)
     mf.xc        = xc
+    if use_density_fit:
+        mf = mf.density_fit(auxbasis=df_auxbasis)
     mf.get_hcore = lambda *args: h_ao
     mf.scf(dm_guess)
     if not mf.converged:
@@ -217,7 +221,9 @@ def solve_uks(const, oei, fock, tei, norb, nel, nimp, dm_guess,
               xc='pbe', chempot_imp=0.0,
               spin_polarized=False, chempot_imp_beta=None,
               mol=None, ao2loc=None, loc_2_dmet=None,
-              mm_coords=None, mm_charges=None, nel_total=None):
+              mm_coords=None, mm_charges=None, nel_total=None,
+              global_spin=0, level_shift=0.0,
+              use_density_fit=False, df_auxbasis=None):
     """Solve the embedding Hamiltonian at the UKS level.
 
     Parameters
@@ -235,7 +241,7 @@ def solve_uks(const, oei, fock, tei, norb, nel, nimp, dm_guess,
     rdm1 or (rdm1_alpha, rdm1_beta) : ndarray
     dft_res : dict -- keys: 'mo_energy', 'mo_occ', 'mo_coeff'
     """
-    spin = nel % 2
+    spin = global_spin if (nel % 2 == global_spin % 2) else max(0, global_spin - 1)
 
     h_emb_a = fock.copy()
     if chempot_imp != 0.0:
@@ -262,6 +268,10 @@ def solve_uks(const, oei, fock, tei, norb, nel, nimp, dm_guess,
 
     mf = pyscf_dft.UKS(mol_spin)
     mf.xc = xc
+    if level_shift != 0.0:
+        mf.level_shift = level_shift
+    if use_density_fit:
+        mf = mf.density_fit(auxbasis=df_auxbasis)
     # For UKS, get_hcore must return a spin-averaged (2D) hcore for energy_elec.
     # Spin-dependent shifts are applied via get_fock override.
     mf.get_hcore = lambda *args: h_ao_a
@@ -308,7 +318,9 @@ def solve_uks(const, oei, fock, tei, norb, nel, nimp, dm_guess,
 def solve_roks(const, oei, fock, tei, norb, nel, nimp, dm_guess,
                xc='pbe', chempot_imp=0.0,
                mol=None, ao2loc=None, loc_2_dmet=None,
-               mm_coords=None, mm_charges=None, nel_total=None):
+               mm_coords=None, mm_charges=None, nel_total=None,
+               global_spin=0, level_shift=0.0,
+               use_density_fit=False, df_auxbasis=None):
     """Solve the embedding Hamiltonian at the ROKS level.
 
     Returns
@@ -317,7 +329,7 @@ def solve_roks(const, oei, fock, tei, norb, nel, nimp, dm_guess,
     rdm1 : ndarray, shape (norb, norb)  -- spin-summed density matrix in embedding basis
     dft_res : dict -- keys: 'mo_energy', 'mo_occ', 'mo_coeff'
     """
-    spin = nel % 2
+    spin = global_spin if (nel % 2 == global_spin % 2) else max(0, global_spin - 1)
 
     h_emb = fock.copy()
     if chempot_imp != 0.0:
@@ -334,6 +346,10 @@ def solve_roks(const, oei, fock, tei, norb, nel, nimp, dm_guess,
 
     mf = pyscf_dft.ROKS(mol_spin)
     mf.xc        = xc
+    if level_shift != 0.0:
+        mf.level_shift = level_shift
+    if use_density_fit:
+        mf = mf.density_fit(auxbasis=df_auxbasis)
     mf.get_hcore = lambda *args: h_ao
     mf.scf(dm_guess)
     if not mf.converged:
@@ -388,22 +404,26 @@ def execute(task):
     mol = _reconstruct_mol(task['dft_mol_dumps'])
 
     common = dict(
-        const       = task['const'],
-        oei         = task['dmet_oei'],
-        fock        = task['dmet_fock'],
-        tei         = task['dmet_tei'],
-        norb        = task['norb'],
-        nel         = task['nel'],
-        nimp        = task['nimp'],
-        dm_guess    = task.get('dm_guess_rhf'),
-        xc          = xc,
-        chempot_imp = task.get('chempot_imp', 0.0),
-        mol         = mol,
-        ao2loc      = task['ao2loc'],
-        loc_2_dmet  = task['loc_2_dmet'],
-        mm_coords   = task.get('mm_coords'),
-        mm_charges  = task.get('mm_charges'),
-        nel_total   = task.get('nel_total'),
+        const           = task['const'],
+        oei             = task['dmet_oei'],
+        fock            = task['dmet_fock'],
+        tei             = task['dmet_tei'],
+        norb            = task['norb'],
+        nel             = task['nel'],
+        nimp            = task['nimp'],
+        dm_guess        = task.get('dm_guess_rhf'),
+        xc              = xc,
+        chempot_imp     = task.get('chempot_imp', 0.0),
+        mol             = mol,
+        ao2loc          = task['ao2loc'],
+        loc_2_dmet      = task['loc_2_dmet'],
+        mm_coords       = task.get('mm_coords'),
+        mm_charges      = task.get('mm_charges'),
+        nel_total       = task.get('nel_total'),
+        global_spin     = task.get('spin', 0),
+        level_shift     = task.get('level_shift', 0.0),
+        use_density_fit = task.get('use_density_fit', False),
+        df_auxbasis     = task.get('df_auxbasis', None),
     )
 
     if method == 'RKS':
@@ -411,6 +431,10 @@ def execute(task):
         return {'counter': task['counter'], 'energy': energy, 'rdm1': rdm1, 'dft_res': dft_res}
 
     elif method == 'UKS':
+        _dm_a = task.get('dm_canonical_alpha')
+        _dm_b = task.get('dm_canonical_beta')
+        if _dm_a is not None and _dm_b is not None:
+            common['dm_guess'] = np.array([_dm_a, _dm_b])
         if spin_polarized:
             energy, rdm_a, rdm_b, dft_res = solve_uks(
                 **common,

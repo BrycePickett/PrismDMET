@@ -45,14 +45,23 @@ class LocalIntegrals:
         self.fullEhf = the_mf.e_tot
         _dm = the_mf.make_rdm1()
         if _dm.ndim == 3:  # UHF: (2, nao, nao)
-            self.fullDMao = _dm[0] + _dm[1]
+            self.fullDMao       = _dm[0] + _dm[1]
+            self.fullDMao_alpha = _dm[0]
+            self.fullDMao_beta  = _dm[1]
             _v = the_mf.get_veff(self.mol, _dm)        # 3D input → correct per-spin exchange
             self.fullJKao = 0.5 * (_v[0] + _v[1])     # spin-averaged Veff
         else:
-            self.fullDMao = _dm
+            self.fullDMao       = _dm
+            self.fullDMao_alpha = _dm / 2.0
+            self.fullDMao_beta  = _dm / 2.0
             _v = the_mf.get_veff(self.mol, self.fullDMao)
             self.fullJKao = _v[0] if _v.ndim == 3 else _v
         self.fullFOCKao = the_mf.get_hcore() + self.fullJKao
+
+        # Density fitting settings from canonical mf (propagated to fragment solvers)
+        _with_df = getattr(the_mf, 'with_df', None)
+        self.use_density_fit = _with_df is not None
+        self.df_auxbasis     = getattr(_with_df, 'auxbasis', None)
 
         # Spin potential computed after ao2loc is built (see below)
         self.activeVSPIN = None

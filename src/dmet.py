@@ -59,7 +59,7 @@ class DMET:
                   mf_real=None, qdnevpt2_kwargs=None, nevpt2_kwargs=None,
                   use_symmetry=False, symmetry_map=None,
                   parallel=False, max_workers=None, bath_tol=1e-13,
-                  xc='pbe', spin_polarized=False,
+                  xc='pbe', level_shift=0.0, spin_polarized=False,
                   mm_coords=None, mm_charges=None ):
 
         if is_translation_invariant:
@@ -126,7 +126,8 @@ class DMET:
         self.altcostfunc = use_constrained_opt
         self.oei_s      = None  # spin-dependent 1e potential for open-shell envs
         self.bath_tol   = bath_tol
-        self.xc         = xc           # XC functional for DFT solvers
+        self.xc          = xc             # XC functional for DFT solvers
+        self.level_shift = level_shift    # static level shift propagated to fragment solvers
         self.spin_polarized = spin_polarized  # enable independent alpha/beta mu optimization
         self.mm_coords  = np.asarray(mm_coords,  dtype=float) if mm_coords  is not None else None
         self.mm_charges = np.asarray(mm_charges, dtype=float) if mm_charges is not None else None
@@ -451,12 +452,17 @@ class DMET:
             _dft_mol_info = {}
             if _method_key in ('RKS', 'UKS', 'ROKS'):
                 _dft_mol_info = {
-                    'dft_mol_dumps' : self.ints.mol.dumps(),
-                    'ao2loc'        : self.ints.ao2loc,
-                    'loc_2_dmet'    : loc_2_dmet[:, :norb_in_imp],
-                    'mm_coords'     : self.mm_coords,
-                    'mm_charges'    : self.mm_charges,
-                    'nel_total'     : self.ints.Nelec,
+                    'dft_mol_dumps'      : self.ints.mol.dumps(),
+                    'ao2loc'             : self.ints.ao2loc,
+                    'loc_2_dmet'         : loc_2_dmet[:, :norb_in_imp],
+                    'mm_coords'          : self.mm_coords,
+                    'mm_charges'         : self.mm_charges,
+                    'nel_total'          : self.ints.Nelec,
+                    'dm_canonical_alpha' : self.ints.fullDMao_alpha,
+                    'dm_canonical_beta'  : self.ints.fullDMao_beta,
+                    'level_shift'        : self.level_shift,
+                    'use_density_fit'    : self.ints.use_density_fit,
+                    'df_auxbasis'        : self.ints.df_auxbasis,
                 }
 
             task = {
@@ -491,7 +497,7 @@ class DMET:
                 'qdnevpt2_kwargs': self.qdnevpt2_kwargs,
                 # --- DFT / open-shell options --------------------------------
                 'xc'            : self.xc,
-                'spin'          : nelec_in_imp % 2,
+                'spin'          : self.ints.mol.spin,
                 'spin_polarized': self.spin_polarized,
                 # --- DFT mol and localization info --------------------------
                 **_dft_mol_info,
@@ -860,15 +866,20 @@ class DMET:
             'oei_s'         : _dmet_oei_s,
             # DFT / open-shell options
             'xc'            : self.xc,
-            'spin'          : nelec_in_imp % 2,
+            'spin'          : self.ints.mol.spin,
             'spin_polarized': self.spin_polarized,
             # DFT mol and localization info (sequential path has live objects)
-            'dft_mol_dumps' : self.ints.mol.dumps() if method_key in ('RKS', 'UKS', 'ROKS') else None,
-            'ao2loc'        : self.ints.ao2loc       if method_key in ('RKS', 'UKS', 'ROKS') else None,
-            'loc_2_dmet'    : loc_2_dmet[:, :norb_in_imp] if method_key in ('RKS', 'UKS', 'ROKS') else None,
-            'mm_coords'     : self.mm_coords  if method_key in ('RKS', 'UKS', 'ROKS') else None,
-            'mm_charges'    : self.mm_charges if method_key in ('RKS', 'UKS', 'ROKS') else None,
-            'nel_total'     : self.ints.Nelec if method_key in ('RKS', 'UKS', 'ROKS') else None,
+            'dft_mol_dumps'      : self.ints.mol.dumps() if method_key in ('RKS', 'UKS', 'ROKS') else None,
+            'ao2loc'             : self.ints.ao2loc       if method_key in ('RKS', 'UKS', 'ROKS') else None,
+            'loc_2_dmet'         : loc_2_dmet[:, :norb_in_imp] if method_key in ('RKS', 'UKS', 'ROKS') else None,
+            'mm_coords'          : self.mm_coords  if method_key in ('RKS', 'UKS', 'ROKS') else None,
+            'mm_charges'         : self.mm_charges if method_key in ('RKS', 'UKS', 'ROKS') else None,
+            'nel_total'          : self.ints.Nelec if method_key in ('RKS', 'UKS', 'ROKS') else None,
+            'dm_canonical_alpha' : self.ints.fullDMao_alpha if method_key in ('RKS', 'UKS', 'ROKS') else None,
+            'dm_canonical_beta'  : self.ints.fullDMao_beta  if method_key in ('RKS', 'UKS', 'ROKS') else None,
+            'level_shift'        : self.level_shift          if method_key in ('RKS', 'UKS', 'ROKS') else 0.0,
+            'use_density_fit'    : self.ints.use_density_fit if method_key in ('RKS', 'UKS', 'ROKS') else False,
+            'df_auxbasis'        : self.ints.df_auxbasis      if method_key in ('RKS', 'UKS', 'ROKS') else None,
             # NEVPT2 / QD-NEVPT2: live PySCF objects (not picklable; sequential only)
             'mf_real'       : self.mf_real,
             'nevpt2_kwargs' : self.nevpt2_kwargs,
