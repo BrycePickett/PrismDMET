@@ -268,8 +268,14 @@ def solve_uks(const, oei, fock, tei, norb, nel, nimp, dm_guess,
 
     mf = pyscf_dft.UKS(mol_spin)
     mf.xc = xc
-    if level_shift != 0.0:
-        mf.level_shift = level_shift
+    # When a canonical DM warm-start is available, apply at least a 0.2 Eh level
+    # shift. The DMET embedding Hamiltonian modifies orbital energies enough to
+    # flip HOMO/LUMO occupations in early SCF cycles; the shift pins the canonical
+    # occupation pattern long enough for convergence to the correct basin.
+    _has_canonical_guess = isinstance(dm_guess, np.ndarray) and dm_guess.ndim == 3
+    _effective_shift = max(level_shift, 0.2) if _has_canonical_guess else level_shift
+    if _effective_shift != 0.0:
+        mf.level_shift = _effective_shift
     if use_density_fit:
         mf = mf.density_fit(auxbasis=df_auxbasis)
     # For UKS, get_hcore must return a spin-averaged (2D) hcore for energy_elec.
