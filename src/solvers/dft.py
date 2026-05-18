@@ -109,6 +109,28 @@ def _impurity_weight(rdm1_emb, ao2loc, loc_2_dmet, mol, nimp, nel_total):
     return float(np.trace(rdm1[:nimp, :nimp])) / nel_total
 
 
+def _fragment_local_mos(fock_canonical_ao, C_emb, nocc, mo_occ_value):
+    """Diagonalize the canonical Fock projected into the embedding subspace.
+
+    The embedded SCF runs on the real molecule with a modified hcore and its
+    eigenvalues do not represent fragment-local orbital energies. To recover
+    the local frontier orbitals (e.g. the defect trap state), project the
+    canonical Fock into the impurity+bath subspace and diagonalize.
+
+    Returns ``(mo_energy, mo_coeff_ao, mo_occ)`` with shapes ``(norb_emb,)``,
+    ``(nao, norb_emb)``, and ``(norb_emb,)`` respectively. The first ``nocc``
+    eigenvalues are marked occupied with ``mo_occ_value`` (2.0 for RKS,
+    1.0 for one spin channel of UKS/ROKS).
+    """
+    fock_emb = C_emb.T @ fock_canonical_ao @ C_emb
+    fock_emb = 0.5 * (fock_emb + fock_emb.T)
+    mo_energy, eigvecs = np.linalg.eigh(fock_emb)
+    mo_coeff_ao = C_emb @ eigvecs
+    mo_occ = np.zeros(mo_energy.shape[0])
+    mo_occ[:nocc] = mo_occ_value
+    return mo_energy, mo_coeff_ao, mo_occ
+
+
 def _oei_correction(rdm1_emb, oei, fock, ao2loc, loc_2_dmet, nimp):
     """Half-projector correction for the fock-vs-oei substitution.
 
@@ -138,7 +160,8 @@ def solve_rks(const, oei, fock, tei, norb, nel, nimp, dm_guess,
               mol=None, ao2loc=None, loc_2_dmet=None,
               mm_coords=None, mm_charges=None, nel_total=None,
               global_spin=0, level_shift=0.0,
-              use_density_fit=False, df_auxbasis=None):
+              use_density_fit=False, df_auxbasis=None,
+              fock_canonical_alpha=None, fock_canonical_beta=None):
     """Solve the embedding Hamiltonian at the RKS level.
 
     Parameters
@@ -209,7 +232,12 @@ def solve_rks(const, oei, fock, tei, norb, nel, nimp, dm_guess,
     energy = const + w_imp * e_elec + _oei_correction(rdm1, oei, fock,
                                                        ao2loc, loc_2_dmet, nimp)
 
-    dft_res = {'mo_energy': mf.mo_energy, 'mo_occ': mf.mo_occ, 'mo_coeff': mf.mo_coeff}
+    if fock_canonical_alpha is not None:
+        mo_energy, mo_coeff_ao, mo_occ = _fragment_local_mos(
+            fock_canonical_alpha, C_emb, nel // 2, 2.0)
+        dft_res = {'mo_energy': mo_energy, 'mo_occ': mo_occ, 'mo_coeff': mo_coeff_ao}
+    else:
+        dft_res = {'mo_energy': mf.mo_energy, 'mo_occ': mf.mo_occ, 'mo_coeff': mf.mo_coeff}
     return energy, rdm1, dft_res
 
 
@@ -223,7 +251,8 @@ def solve_uks(const, oei, fock, tei, norb, nel, nimp, dm_guess,
               mol=None, ao2loc=None, loc_2_dmet=None,
               mm_coords=None, mm_charges=None, nel_total=None,
               global_spin=0, level_shift=0.0,
-              use_density_fit=False, df_auxbasis=None):
+              use_density_fit=False, df_auxbasis=None,
+              fock_canonical_alpha=None, fock_canonical_beta=None):
     """Solve the embedding Hamiltonian at the UKS level.
 
     Parameters
@@ -310,7 +339,20 @@ def solve_uks(const, oei, fock, tei, norb, nel, nimp, dm_guess,
     energy = const + w_imp * e_elec + _oei_correction(rdm1, oei, fock,
                                                        ao2loc, loc_2_dmet, nimp)
 
-    dft_res = {'mo_energy': mf.mo_energy, 'mo_occ': mf.mo_occ, 'mo_coeff': mf.mo_coeff}
+    if fock_canonical_alpha is not None and fock_canonical_beta is not None:
+        nalpha = (nel + spin) // 2
+        nbeta  = (nel - spin) // 2
+        mo_e_a, mo_c_a, mo_o_a = _fragment_local_mos(
+            fock_canonical_alpha, C_emb, nalpha, 1.0)
+        mo_e_b, mo_c_b, mo_o_b = _fragment_local_mos(
+            fock_canonical_beta, C_emb, nbeta, 1.0)
+        dft_res = {
+            'mo_energy': np.array([mo_e_a, mo_e_b]),
+            'mo_occ'   : np.array([mo_o_a, mo_o_b]),
+            'mo_coeff' : np.array([mo_c_a, mo_c_b]),
+        }
+    else:
+        dft_res = {'mo_energy': mf.mo_energy, 'mo_occ': mf.mo_occ, 'mo_coeff': mf.mo_coeff}
 
     if spin_polarized:
         return energy, rdm1_a, rdm1_b, dft_res
@@ -326,7 +368,8 @@ def solve_roks(const, oei, fock, tei, norb, nel, nimp, dm_guess,
                mol=None, ao2loc=None, loc_2_dmet=None,
                mm_coords=None, mm_charges=None, nel_total=None,
                global_spin=0, level_shift=0.0,
-               use_density_fit=False, df_auxbasis=None):
+               use_density_fit=False, df_auxbasis=None,
+               fock_canonical_alpha=None, fock_canonical_beta=None):
     """Solve the embedding Hamiltonian at the ROKS level.
 
     Returns
@@ -377,7 +420,18 @@ def solve_roks(const, oei, fock, tei, norb, nel, nimp, dm_guess,
     energy = const + w_imp * e_elec + _oei_correction(rdm1, oei, fock,
                                                        ao2loc, loc_2_dmet, nimp)
 
-    dft_res = {'mo_energy': mf.mo_energy, 'mo_occ': mf.mo_occ, 'mo_coeff': mf.mo_coeff}
+    if fock_canonical_alpha is not None:
+        nalpha = (nel + spin) // 2
+        nbeta  = (nel - spin) // 2
+        fock_use = fock_canonical_alpha if fock_canonical_beta is None else \
+                   0.5 * (fock_canonical_alpha + fock_canonical_beta)
+        mo_energy, mo_coeff_ao, _ = _fragment_local_mos(fock_use, C_emb, nalpha, 1.0)
+        mo_occ = np.zeros_like(mo_energy)
+        mo_occ[:nbeta]         = 2.0
+        mo_occ[nbeta:nalpha]   = 1.0
+        dft_res = {'mo_energy': mo_energy, 'mo_occ': mo_occ, 'mo_coeff': mo_coeff_ao}
+    else:
+        dft_res = {'mo_energy': mf.mo_energy, 'mo_occ': mf.mo_occ, 'mo_coeff': mf.mo_coeff}
     return energy, rdm1, dft_res
 
 
@@ -430,6 +484,8 @@ def execute(task):
         level_shift     = task.get('level_shift', 0.0),
         use_density_fit = task.get('use_density_fit', False),
         df_auxbasis     = task.get('df_auxbasis', None),
+        fock_canonical_alpha = task.get('fock_canonical_alpha'),
+        fock_canonical_beta  = task.get('fock_canonical_beta'),
     )
 
     if method == 'RKS':
