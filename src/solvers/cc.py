@@ -38,7 +38,8 @@ _VALID_ETYPES = {'LAMBDA', 'LAMBDA_AMP', 'LAMBDA_ZERO', 'CASCI',
 
 def solve( const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
            energytype='LAMBDA', chempot_imp=0.0, printoutput=True,
-           eom_nroots=3 ):
+           eom_nroots=3,
+           use_density_fit=False, df_auxbasis=None ):
     '''
     Solve a dmet impurity problem using coupled-cluster methods.
 
@@ -87,6 +88,8 @@ def solve( const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
         mol.spin      = nel % 2
         mol.incore_anyway = True
         mf = scf.ROHF(mol) if mol.spin != 0 else scf.RHF(mol)
+        if use_density_fit:
+            mf = mf.density_fit(auxbasis=df_auxbasis)
         mf.get_hcore = lambda *args: fock_copy
         mf.get_ovlp  = lambda *args: np.eye(norb)
         mf._eri      = ao2mo.restore(8, tei, norb)
@@ -299,4 +302,7 @@ def execute(task):
         energytype=task.get('CC_E_TYPE', 'LAMBDA'),
         chempot_imp=task.get('chempot_imp', 0.0),
         eom_nroots=task.get('eom_nroots', 3),
+        use_density_fit=task.get('use_density_fit', False),
+        df_auxbasis=task.get('df_auxbasis', None),
     )
+
