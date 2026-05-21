@@ -1,42 +1,9 @@
-"""
-Per-fragment embedding Hamiltonian builder for Prismdmet.
-
-Given a fragment index and the current mean-field 1-RDM, fragment_builder.build()
-performs the Schmidt decomposition, environment occupation clamping, integral
-projection into the dmet basis, and density matrix initial guess construction.
-
-It does not call any solver and does not know about parallelism. The result
-dict it returns is plain Python and numpy, suitable for SolverDispatcher or a
-parallel worker.
-"""
+"""Per-fragment embedding Hamiltonian builder."""
 
 import numpy as np
 
 
 class FragmentBuilder:
-    """
-    Builds the per-fragment embedding Hamiltonian from the mean-field 1-RDM.
-
-    Parameters
-    ----------
-    ints : local_integrals.LocalIntegrals
-        Localized integral object for the full system.
-    helper : prismdmet_helper.PrismDMETHelper
-        Helper providing constructbath and construct1RDM_loc.
-    impClust : list of ndarray
-        Impurity cluster masks, one per fragment. Negative values signal
-        the flag_rhf sentinel.
-    method : str
-        Active solver method name (e.g. 'CASSCF', 'CC', 'ED').
-    BATH_ORBS : list of int or None
-        Per-fragment bath size overrides. If None, bath size equals impurity size.
-    NI_hack : bool
-        If True, zero out tei bath-bath and bath-impurity blocks.
-    umat : ndarray (norb, norb)
-        Current correlation potential in the LMO basis.
-    bath_tol : float
-        Threshold for discarding unentangled bath orbitals.
-    """
 
     _NEEDS_DM_METHODS = frozenset({'CC', 'MP2', 'EOM-CC', 'CASSCF'})
 
@@ -51,30 +18,6 @@ class FragmentBuilder:
         self._bath_tol  = bath_tol
 
     def build(self, counter, one_rdm, chempot_imp):
-        """
-        Construct the full embedding Hamiltonian for fragment counter.
-
-        Parameters
-        ----------
-        counter : int
-            Zero-based fragment index into impClust.
-        one_rdm : ndarray (norb, norb)
-            Mean-field 1-RDM in the LMO basis.
-        chempot_imp : float
-            Chemical potential applied to the impurity block.
-
-        Returns
-        -------
-        dict
-            Keys: counter, flag_rhf, impurity_orbs, num_imp_orbs, norb_in_imp,
-            nelec_in_imp, loc_2_dmet, core_1rdm_loc, core_1rdm_dmet, dmet_oei,
-            dmet_fock, dmet_tei, dm_guess_rhf, method_key.
-
-        Raises
-        ------
-        RuntimeError
-            If environment occupation clamping fails.
-        """
         flag_rhf     = np.sum(self._impClust[counter]) < 0
         impurity_orbs = np.abs(self._impClust[counter])
         num_imp_orbs   = int(np.sum(impurity_orbs))
@@ -146,25 +89,6 @@ class FragmentBuilder:
         }
 
     def build_symmetry_bath(self, counter, one_rdm, sym_parent):
-        """
-        Build bath orbitals and loc_2_dmet for a symmetry-copied fragment.
-
-        Runs constructbath to populate dmetOrbs, but does not project any
-        integrals. The result and energy are copied from the parent fragment.
-
-        Parameters
-        ----------
-        counter : int
-            Fragment index of the copy.
-        one_rdm : ndarray (norb, norb)
-            Current mean-field 1-RDM in the LMO basis.
-        sym_parent : int
-            Fragment index of the parent whose result will be reused.
-
-        Returns
-        -------
-        dict with keys: counter, sym_parent, impurity_orbs, norb_in_imp, loc_2_dmet.
-        """
         impurity_orbs = np.abs(self._impClust[counter])
         num_imp_orbs   = int(np.sum(impurity_orbs))
         bath_request = num_imp_orbs if self._BATH_ORBS is None else self._BATH_ORBS[counter]

@@ -147,6 +147,12 @@ def solve(const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
 
         if oei_s is not None:
             from .qcsolver_utils import fix_casscf_for_nonsinglet_env
+            if _use_rohf and not np.all(np.abs(oei_s) < 1e-8):
+                # direct_spin1.FCI cannot accept [h1e_a, h1e_b] list that
+                # fix_casscf_for_nonsinglet_env injects; direct_uhf.FCI handles it
+                _uhf_fci = pyscf_fci.direct_uhf.FCI()
+                _uhf_fci.verbose = mc.fcisolver.verbose
+                mc.fcisolver = _uhf_fci
             mc = fix_casscf_for_nonsinglet_env(mc, oei_s)
 
         _mo0 = mo_guess if mo_guess is not None else None
@@ -156,7 +162,9 @@ def solve(const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
         ncore = mc.ncore
         if _use_rohf:
             _nelecas_fci = ((nelecas + 1) // 2, nelecas // 2)
-            ci_solver_base = pyscf_fci.direct_spin1.FCI()
+            _used_uhf_fci = oei_s is not None and not np.all(np.abs(oei_s) < 1e-8)
+            ci_solver_base = (pyscf_fci.direct_uhf.FCI() if _used_uhf_fci
+                              else pyscf_fci.direct_spin1.FCI())
         else:
             _nelecas_fci = nelecas
             ci_solver_base = pyscf_fci.direct_spin0.FCI()

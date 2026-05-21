@@ -17,31 +17,17 @@
     51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 '''
 
-from pyscf.lo import iao as pyscf_iao
-from pyscf.data.elements import is_ghost_atom
 import numpy as np
 import scipy
+import scipy.linalg
 
-def construct_p_list( mol, pmol ):
-    # Mark AOs as 1 if their atom is in pmol (i.e., not a ghost or ECP atom).
-    # spheric_labels() returns 'Cu' for ghost-Cu (strips the prefix), so
-    # label matching cannot distinguish them. Use aoslice_by_atom() instead.
+def construct_p_list(mol, pmol):
     Norbs  = mol.nao_nr()
-    p_list = np.zeros( [ Norbs ], dtype=int )
-    for ia, (_, _, ao_start, ao_stop) in enumerate( mol.aoslice_by_atom() ):
-        if not is_ghost_atom( mol._atom[ia][0] ):
-            p_list[ ao_start:ao_stop ] = 1
-    ghost_nao = sum(
-        ao_stop - ao_start
-        for ia, (_, _, ao_start, ao_stop) in enumerate( mol.aoslice_by_atom() )
-        if is_ghost_atom( mol._atom[ia][0] )
-    )
-    if mol.nao_nr() - pmol.nao_nr() != ghost_nao:
-        raise NotImplementedError(
-            "Working basis has functions not present in the IAO reference basis. "
-            "construct_p_list requires overlap-based matching for this case."
-        )
-    assert( np.sum( p_list ) == pmol.nao_nr() )
+    p_list = np.zeros([Norbs], dtype=int)
+    for ia, (_, _, ao_start, ao_stop) in enumerate(mol.aoslice_by_atom()):
+        if ao_stop > ao_start:
+            p_list[ao_start:ao_stop] = 1
+    assert np.sum(p_list) == pmol.nao_nr()
     return p_list
 
 def orthogonalize_iao( coeff, ovlp ):
@@ -51,6 +37,46 @@ def orthogonalize_iao( coeff, ovlp ):
     coeff      = np.dot( coeff, np.dot( np.dot( vecs, np.diag( np.power( eigs, -0.5 ) ) ), vecs.T ) )
     return coeff
     
+def _build_pmol_with_ghosts(mol, minao='gth-szv-molopt-sr'):
+    """Like reference_mol() but keeps ghost vacancy atoms (nonzero AO width)."""
+    import pyscf.gto
+    aoslice = mol.aoslice_by_atom()
+    pmol = pyscf.gto.Mole()
+    pmol.unit    = 'Bohr'
+    pmol.atom    = [mol._atom[ia] for ia, (_, _, s, e) in enumerate(aoslice) if e > s]
+    pmol.pseudo  = getattr(mol, 'pseudo', None)
+    pmol.ecp     = {}
+    pmol.spin    = 0
+    pmol.charge  = 0
+    pmol.verbose = 0
+    pmol.build(dump_input=False, parse_arg=False, basis=minao)
+    return pmol
+
+def _iao_with_pmol(mol, ao2occ, pmol):
+    """IAO construction (Knizia JCTC 2013) with caller-supplied reference mol."""
+    from pyscf import gto, scf
+    from pyscf.lo.orth import vec_lowdin
+
+    s1  = mol.intor_symmetric('int1e_ovlp')
+    s2  = pmol.intor_symmetric('int1e_ovlp')
+    s12 = gto.mole.intor_cross('int1e_ovlp', mol, pmol)
+
+    s2cd  = scipy.linalg.cho_factor(s2)
+    ctild = scipy.linalg.cho_solve(s2cd, s12.T @ ao2occ)
+    try:
+        s1cd  = scipy.linalg.cho_factor(s1)
+        p12   = scipy.linalg.cho_solve(s1cd, s12)
+        ctild = scipy.linalg.cho_solve(s1cd, s12 @ ctild)
+    except np.linalg.LinAlgError:
+        x     = scf.addons.canonical_orth_(s1, 1e-8)
+        p12   = x @ x.T @ s12
+        ctild = p12 @ ctild
+
+    ctild = vec_lowdin(ctild, s1)
+    ccs1  = ao2occ @ ao2occ.T @ s1
+    ccs2  = ctild @ ctild.T @ s1
+    return p12 + 2*(ccs1 @ ccs2 @ p12) - ccs1 @ p12 - ccs2 @ p12
+
 def resort_orbitals( mol, ao2loc ):
 
     # Sort the orbitals according to the atom list
@@ -78,7 +104,7 @@ def resort_orbitals( mol, ao2loc ):
     ao2loc = ao2loc[ :, resort ]
     return ao2loc
     
-def construct_iao( mol, mf ):
+def construct_iao(mol, mf):
 
     Norbs = mol.nao_nr()
 
@@ -94,18 +120,14 @@ def construct_iao( mol, mf ):
         eigs, vecs = np.linalg.eigh(DM1)
         ao2occ = vecs[:, eigs > 0.5]
     else:
-        ao2occ = mf.mo_coeff[ :, mf.mo_occ > 0.5 ]
-        DM1    = np.dot( ao2occ, ao2occ.T )
+        ao2occ = mf.mo_coeff[:, mf.mo_occ > 0.5]
+        DM1    = np.dot(ao2occ, ao2occ.T)
 
-    # Use GTH-SZV as IAO reference so the reference basis is a subspace of the
-    # working basis. reference_mol() also excludes ghost and ECP boundary atoms,
-    # which have no GTH AOs — MINAO would assign them core functions, making
-    # pmol.nao > mol.nao and causing negative eigenvalues in orthogonalize_iao.
-    pmol   = pyscf_iao.reference_mol(mol, minao='gth-szv-molopt-sr')
+    pmol   = _build_pmol_with_ghosts(mol)
     S1     = mol.intor('cint1e_ovlp_sph')
-    ao2iao = pyscf_iao.iao(mol, ao2occ, minao='gth-szv-molopt-sr')
+    ao2iao = _iao_with_pmol(mol, ao2occ, pmol)
     ao2iao = orthogonalize_iao(ao2iao, S1)
-    return ( ao2iao , S1, pmol )
+    return (ao2iao, S1, pmol)
 
 def localize_iao( mol, mf ):
 

@@ -1,7 +1,4 @@
-"""
-PrismDMET core DMET driver.
-Built on QC-DMET (Wouters et al., 2015) under GPL-v2.
-"""
+"""PrismDMET core DMET driver."""
 
 from . import prismdmet_helper
 import numpy as np
@@ -14,31 +11,6 @@ from .fragment_builder import FragmentBuilder
 
 
 def _fragment_worker(task):
-    """
-    Module-level worker for parallel fragment solving via ProcessPoolExecutor.
-    Must be a top-level function (not a method) to be picklable.
-
-    All inputs and outputs are plain numpy arrays or Python scalars — no
-    PySCF objects are passed across process boundaries.
-
-    Delegates entirely to SolverDispatcher.execute(task), which is the single
-    authoritative dispatch point for all solver methods. The returned dict
-    from SolverDispatcher is already in the standardised format expected by
-    doexact() Phase 3.
-
-    Parameters
-    ----------
-    task : dict
-        Standardised task dict. See solvers/__init__.py for full schema.
-        At minimum: method, const, dmet_oei, dmet_fock, dmet_tei, norb, nel,
-        nimp, chempot_imp, counter, src_path.
-
-    Returns
-    -------
-    dict with keys 'counter', 'energy', 'rdm1', plus optional method-specific
-    keys ('eom_res', etc.) — as returned by SolverDispatcher.execute().
-    """
-    # Pin BLAS to 1 thread inside workers to prevent over-subscription
     os.environ['OMP_NUM_THREADS'] = '1'
     os.environ['MKL_NUM_THREADS'] = '1'
     os.environ['OPENBLAS_NUM_THREADS'] = '1'
@@ -132,25 +104,20 @@ class DMET:
         self.mm_coords  = np.asarray(mm_coords,  dtype=float) if mm_coords  is not None else None
         self.mm_charges = np.asarray(mm_charges, dtype=float) if mm_charges is not None else None
 
-        # --- Efficiency: symmetry mapping ---
         self.use_symmetry = use_symmetry
         self.symmetry_map = symmetry_map  # user-provided {child_idx: parent_idx} or None
         if self.use_symmetry and self.symmetry_map is None and not is_translation_invariant:
             self.symmetry_map = self._auto_detect_symmetry()
 
-        # --- Efficiency: parallel fragment solving ---
         self.parallel = parallel
         if max_workers is not None:
             self.max_workers = max_workers
         else:
-            # Auto-detect from environment
             _env_threads = os.environ.get('PRISMdmet_WORKERS',
                            os.environ.get('SLURM_CPUS_PER_TASK',
                            os.environ.get('OMP_NUM_THREADS', '1')))
             self.max_workers = max(1, int(_env_threads))
 
-        # Fragment caches for warm-restarting CASSCF across SC iterations.
-        # Each entry is None (first iteration) or a dict with 'mo_coeff' and 'ci'.
         maxiter_frags = 1 if is_translation_invariant else len(impurity_clusters)
         self.frag_caches = [None] * maxiter_frags
 
@@ -173,7 +140,6 @@ class DMET:
                 )
 
         if self.do_det:
-            # DET only fits impurity diagonal; see Bulik, PRB 89, 035140 (2014)
             self.fit_imp_bath = False
             if self.do_det_NO:
                 self.NOvecs = None
@@ -215,18 +181,6 @@ class DMET:
         return allOne
 
     def _auto_detect_symmetry( self ):
-        """
-        Auto-detect equivalent fragments by comparing their impurity orbital
-        sizes. Two fragments are equivalent if they have the same number of
-        impurity orbitals. The first fragment of each unique size is the
-        'parent'; all subsequent identical-size fragments map to it.
-
-        Returns
-        -------
-        symmetry_map : dict
-            Mapping {child_fragment_idx : parent_fragment_idx}.
-            Empty dict if all fragments are unique.
-        """
         symmetry_map = {}
         seen = {}  # fingerprint -> first fragment index
         for idx, cluster in enumerate(self.impClust):
@@ -337,19 +291,12 @@ class DMET:
             maxiter = 1
             
         remainingOrbs = np.ones( [ len( self.impClust[ 0 ] ) ], dtype=float )
-               # ---------------------------------------------------------------
-        # Phase 1: Build all fragment tasks (bath + integrals).
-        # Always sequential — all fragments read from the same one_rdm.
-        # ---------------------------------------------------------------
-        _frag_tasks   = []   # picklable task dicts for parallel workers
-        _frag_meta    = []   # per-fragment metadata needed after solve
-        _sym_counters = set()  # counters handled by symmetry skip
+
+        _frag_tasks   = []
+        _frag_meta    = []
+        _sym_counters = set()
 
         _src_path = os.path.dirname(os.path.abspath(__file__))
-
-        # Instantiate fragment_builder once per doexact() call.
-        # It holds lightweight references to ints and helper; it does NOT copy
-        # the large integral tensors.
         _builder = FragmentBuilder(
             ints     = self.ints,
             helper   = self.helper,
@@ -415,27 +362,11 @@ class DMET:
                 'dmet_fock'    : dmet_fock,
             })
 
-            # ---------------------------------------------------------------
-            # Build the full task dict for SolverDispatcher / parallel worker.
-            #
-            # All keys are plain numpy arrays or Python scalars so the task
-            # dict is always picklable regardless of method.  PySCF's mf_real
-            # object is represented as serialized arrays + mol JSON dump; the
-            # solver's execute() wrapper reconstructs a dummy mf inside the
-            # worker process.  See solvers/nevpt2._reconstruct_mf_from_task.
-            # ---------------------------------------------------------------
-
-            # For NEVPT2 methods: build full-molecule MO guess anchored to
-            # the dmet embedding orbitals (must happen in the main process
-            # where mf_real is available).
             _mo_guess = None
             if _method_key in ('QD-NEVPT2', 'NEVPT2') and self.mf_real is not None:
                 _mo_guess, _, _ = self._build_full_mo_guess(
                     loc_2_dmet, norb_in_imp, core_1rdm_dmet)
 
-            # Serialize mf_real if available. The solver modules' execute()
-            # wrappers detect 'mol_dumps' in the task and reconstruct a
-            # minimal RHF object without re-running any SCF iterations.
             _mf_serial = {}
             if self.mf_real is not None:
                 _mf_serial = {
@@ -510,14 +441,6 @@ class DMET:
                 **_mf_serial,
             }
 
-            # ---------------------------------------------------------------
-            # Route the task: parallel or sequential.
-            #
-            # All methods in PARALLEL_ELIGIBLE can now run in a worker
-            # process because the task dict is fully picklable.
-            # Methods that require in-process state (e.g. do_det_NO's
-            # NOrotation tracking) must remain sequential.
-            # ---------------------------------------------------------------
             from .solvers import PARALLEL_ELIGIBLE
             _is_parallel_eligible = (
                 self.parallel
@@ -528,20 +451,11 @@ class DMET:
             if _is_parallel_eligible:
                 _frag_tasks.append(task)
             else:
-                # Sequential path: run immediately in the main process.
-                # _run_fragment_sequential builds its own task dict (with
-                # the live mf_real for CASSCF cache handling), so we pass
-                # the CASSCF warm-restart keys explicitly rather than the
-                # full serialized task dict.  This preserves frag_caches
-                # side effects that are only needed in-process.
                 _frag_meta[-1]['sequential_result'] = self._run_fragment_sequential(
                     counter, _method_key, flag_rhf, dmet_oei, dmet_fock, dmet_tei,
                     norb_in_imp, nelec_in_imp, num_imp_orbs, chempot_imp,
                     dm_guess_rhf, loc_2_dmet, mo_guess=_mo_guess)
 
-        # ---------------------------------------------------------------
-        # Phase 2: Run parallel tasks via ProcessPoolExecutor.
-        # ---------------------------------------------------------------
         _parallel_results = {}   # counter -> result dict
         if _frag_tasks:
             _nw = min(self.max_workers, len(_frag_tasks))
@@ -555,15 +469,11 @@ class DMET:
                     res = fut.result()
                     _parallel_results[res['counter']] = res
 
-        # ---------------------------------------------------------------
-        # Phase 3: Collect results in order and update state.
-        # ---------------------------------------------------------------
         for meta in _frag_meta:
             counter = meta['counter']
             impurity_orbs = meta['impurity_orbs']
 
             if meta.get('sym_parent') is not None:
-                # Symmetry-copied fragment — parent must already be in frag_energies/imp_1RDM
                 parent = meta['sym_parent']
                 print(f"Prismdmet :: symmetry : Fragment {counter} <- fragment {parent} (copied).")
                 parent_energy = self.frag_energies[parent]
@@ -576,7 +486,6 @@ class DMET:
 
             num_imp_orbs = meta['num_imp_orbs']
 
-            # Retrieve result from whichever path handled this fragment.
             if counter in _parallel_results:
                 res = _parallel_results[counter]
             else:
@@ -585,7 +494,6 @@ class DMET:
             IMP_energy = res['energy']
             IMP_1RDM   = res['rdm1']
 
-            # Log OOM fallback if one occurred.
             if res.get('fallback_from'):
                 print(
                     f"Prismdmet :: WARNING : Fragment {counter} — "
@@ -594,13 +502,9 @@ class DMET:
                     f"Energy may be less accurate."
                 )
 
-            # Unpack method-specific result artefacts.
             if 'eom_res' in res:
                 self.eom_results.append(res['eom_res'])
             if 'cas_res' in res:
-                # CASSCF warm-restart cache: store mo_coeff + ci for next
-                # dmet iteration.  This is still meaningful even if parallel
-                # because the workers return the numpy arrays, not the live mc.
                 self.frag_caches[counter] = {
                     'mo_coeff': res['cas_res']['mo_coeff'],
                     'ci'      : res['cas_res']['ci'],
@@ -688,34 +592,6 @@ class DMET:
         return Nelectrons
 
     def _build_full_mo_guess(self, loc_2_dmet, norb_in_imp, core_1rdm_dmet):
-        """
-        Construct a full-molecule MO coefficient matrix (nAO x nMO) with the
-        dmet embedding orbitals placed exactly in the CASSCF active window.
-
-        Layout (columns left to right):
-            [frozen_core | env_core | dmet_active | env_virt | frozen_virt]
-
-        Parameters
-        ----------
-        loc_2_dmet : ndarray (Norbs_active, Norbs_active)
-            The unitary from localintegrals LMO basis → dmet embedding basis.
-            Columns 0..norb_in_imp-1  : embedding (imp + bath)
-            Columns norb_in_imp..end  : environment (core + virtual)
-        norb_in_imp : int
-            Number of embedding orbitals (impurity + bath).
-        core_1rdm_dmet : ndarray (Norbs_active - norb_in_imp,)
-            Diagonal of the environment 1-RDM in the dmet basis.
-            Entries ≈ 2 are environment core; entries ≈ 0 are environment virtual.
-
-        Returns
-        -------
-        mo_guess : ndarray (nAO, nMO_real)
-            Column-ordered MO matrix suitable for PySCF mc.kernel(mo_guess).
-        ncas_check : int
-            Number of active orbitals (==norb_in_imp, for a sanity check).
-        ncore_check : int
-            Number of doubly-occupied (core) orbitals before the active window.
-        """
         mf  = self.mf_real
         ao2loc = self.ints.ao2loc      # shape: (nAO, Norbs_active)
         active_mask = self.ints.active # 1 for LMO-active orbs, 0 for frozen
@@ -723,10 +599,6 @@ class DMET:
         nAO  = ao2loc.shape[0]
         nMO  = mf.mo_coeff.shape[1]
 
-        # ── Frozen orbitals (outside localintegrals active space) ──────────────
-        # active_mask is over canonical MO indices (same as nAO for full-valence
-        # calculations, or a subset for frozen-core). Frozen MO indices are those
-        # where active_mask == 0.
         frozen_idx  = np.where(active_mask == 0)[0]
         active_idx  = np.where(active_mask == 1)[0]
         frozen_occ  = frozen_idx[mf.mo_occ[frozen_idx] > 0]
@@ -734,24 +606,17 @@ class DMET:
         mo_frozen_core = mf.mo_coeff[:, frozen_occ]   # (nAO, N_frozen_core)
         mo_frozen_virt = mf.mo_coeff[:, frozen_virt]  # (nAO, N_frozen_virt)
 
-        # ── Environment orbitals (inside localintegrals active space, outside dmet) ──
-        # loc_2_dmet[:, norb_in_imp:] are the environment LMOs. Their occupations
-        # come from core_1rdm_dmet[norb_in_imp:]: ~2 → core, ~0 → virtual.
         env_lmos = loc_2_dmet[:, norb_in_imp:]              # (Norbs_active, Nenv)
         env_occ_diag  = core_1rdm_dmet[norb_in_imp:]      # environment occupations only
         env_occ_mask  = env_occ_diag > 1.0               # approximately 2
         env_virt_mask = env_occ_diag < 1.0               # approximately 0
 
-        # Transform environment LMOs from LMO basis back to AO basis
         mo_env_core = ao2loc @ env_lmos[:, env_occ_mask]   # (nAO, Nenv_core)
         mo_env_virt = ao2loc @ env_lmos[:, env_virt_mask]  # (nAO, Nenv_virt)
 
-        # ── Active (dmet embedding) orbitals ──────────────────────────────────
-        # loc_2_dmet[:, :norb_in_imp] are the imp+bath LMOs.
         dmet_lmos    = loc_2_dmet[:, :norb_in_imp]       # (Norbs_active, norb_in_imp)
         mo_active    = ao2loc @ dmet_lmos              # (nAO, norb_in_imp)
 
-        # ── Stack into [frozen_core | env_core | active | env_virt | frozen_virt] ──
         mo_guess = np.hstack([
             mo_frozen_core,
             mo_env_core,
@@ -783,30 +648,6 @@ class DMET:
                                    norb_in_imp, nelec_in_imp, num_imp_orbs,
                                    chempot_imp, dm_guess_rhf, loc_2_dmet,
                                    mo_guess=None):
-        """
-        Run a single fragment solver sequentially and return a standardised
-        result dict via SolverDispatcher.execute(task).
-
-        All solver-specific argument marshalling is done here by building
-        the task dict, then delegating to SolverDispatcher. This means the
-        sequential path and the parallel worker path share exactly the same
-        dispatch logic — there is no duplication.
-
-        Special handling for CASSCF warm-restart (MO/CI guess injection
-        from frag_caches) is performed before the task dict is built, since
-        this requires access to self.frag_caches and project_amo_manually.
-
-        Returns
-        -------
-        dict with keys: 'energy', 'rdm1', and optionally 'cas_res',
-        'eom_res', 'qdnevpt2_res', 'nevpt2_res' — as returned by
-        SolverDispatcher.execute().
-        """
-        # ------------------------------------------------------------------
-        # CASSCF-specific pre-processing: warm-restart cache injection
-        # Must happen before task dict is built because it requires
-        # self.frag_caches, project_amo_manually, and the local dmet_fock.
-        # ------------------------------------------------------------------
         _mo_guess_cas, _ci_guess_cas = mo_guess, None
         if method_key == 'CASSCF' and self.frag_caches[counter] is not None:
             cached = self.frag_caches[counter]
@@ -832,16 +673,9 @@ class DMET:
             _dmet_oei_s = (self.ints.dmet_oei_s(loc_2_dmet, norb_in_imp)
                            if hasattr(self.ints, 'dmet_oei_s') else self.oei_s)
 
-        # ------------------------------------------------------------------
-        # Build the standardised task dict understood by SolverDispatcher.
-        # All solver-specific optional keys use .get() with safe defaults
-        # so that SolverDispatcher can remain decoupled from dmet.py internals.
-        # ------------------------------------------------------------------
         task = {
-            # Core identity
             'counter'       : counter,
             'method'        : method_key if not flag_rhf else 'flag_rhf',
-            # Embedding integrals (numpy arrays only — picklable)
             'const'         : 0.0,
             'dmet_oei'       : dmet_oei,
             'dmet_fock'      : dmet_fock,
@@ -851,13 +685,11 @@ class DMET:
             'nimp'          : num_imp_orbs,
             'chempot_imp'   : chempot_imp,
             'dm_guess_rhf'    : dm_guess_rhf,
-            # CC / EOM-CC options
             'CC_E_TYPE'     : self.CC_E_TYPE,
             'eom_nroots'    : self.eom_nroots,
             'eom_type'      : self.eom_type,
             'eom_koopmans'  : self.eom_koopmans,
             'eom_kwargs'    : self.eom_kwargs,
-            # CASSCF options (including warm-restart artefacts computed above)
             'ncas'          : self.ncas,
             'nelecas'       : self.nelecas,
             'sa_nstates'    : self.sa_nstates,
@@ -866,11 +698,9 @@ class DMET:
             'mo_guess'      : _mo_guess_cas,
             'ci_guess'      : _ci_guess_cas,
             'oei_s'         : _dmet_oei_s,
-            # DFT / open-shell options
             'xc'            : self.xc,
             'spin'          : self.ints.mol.spin,
             'spin_polarized': self.spin_polarized,
-            # DFT mol and localization info (sequential path has live objects)
             'dft_mol_dumps'      : self.ints.mol.dumps() if method_key in ('RKS', 'UKS', 'ROKS') else None,
             'ao2loc'             : self.ints.ao2loc       if method_key in ('RKS', 'UKS', 'ROKS') else None,
             'loc_2_dmet'         : loc_2_dmet[:, :norb_in_imp] if method_key in ('RKS', 'UKS', 'ROKS') else None,
@@ -884,23 +714,12 @@ class DMET:
             'level_shift'          : self.level_shift           if method_key in ('RKS', 'UKS', 'ROKS') else 0.0,
             'use_density_fit'      : self.ints.use_density_fit  if method_key in ('RKS', 'UKS', 'ROKS') else False,
             'df_auxbasis'          : self.ints.df_auxbasis      if method_key in ('RKS', 'UKS', 'ROKS') else None,
-            # NEVPT2 / QD-NEVPT2: live PySCF objects (not picklable; sequential only)
             'mf_real'       : self.mf_real,
             'nevpt2_kwargs' : self.nevpt2_kwargs,
             'qdnevpt2_kwargs': self.qdnevpt2_kwargs,
         }
 
-        # ------------------------------------------------------------------
-        # Delegate to SolverDispatcher — single authoritative dispatch.
-        # ------------------------------------------------------------------
         result = SolverDispatcher.execute(task)
-
-        # ------------------------------------------------------------------
-        # Post-process: extract CASSCF warm-restart artefacts and store them
-        # back into frag_caches. SolverDispatcher returns 'cas_res' when
-        # method='CASSCF'; we unpack it here because frag_caches is owned
-        # by dmet, not by the solver.
-        # ------------------------------------------------------------------
         if 'cas_res' in result:
             cas_res = result['cas_res']
             self.frag_caches[counter] = {
@@ -1162,17 +981,6 @@ class DMET:
         return Nelec_dmet - Nelec_target
 
     def numeleccostfunction_spinpol( self, chempot_pair ):
-        """Cost function for spin-polarized DMET (independent alpha/beta mu).
-
-        Parameters
-        ----------
-        chempot_pair : array-like, shape (2,)
-            [mu_alpha, mu_beta].
-
-        Returns
-        -------
-        ndarray shape (2,) — [error_alpha, error_beta].
-        """
         mu_a, mu_b = float(chempot_pair[0]), float(chempot_pair[1])
         if max(abs(mu_a), abs(mu_b)) > self._MU_MAX:
             raise RuntimeError(
@@ -1180,10 +988,8 @@ class DMET:
                 f"exceeds threshold {self._MU_MAX} Eh. "
                 "For DFT-in-DFT DMET, optimize_mu=True is not recommended."
             )
-        # Run doexact with alpha mu; beta mu is stored for the solvers to read.
         self._chempot_imp_beta = mu_b
         Nelec_total = self.doexact(mu_a)
-        # Collect alpha and beta electron counts from stored spin-polarized RDMs
         Nelec_a = sum(
             np.trace(rdm.get('rdm1_alpha', rdm.get('rdm1', np.zeros((1,1))))[:s, :s])
             for rdm, s in zip(self._spinpol_rdms, self.imp_size)
@@ -1284,7 +1090,6 @@ class DMET:
         return self.energy
 
     def doselfconsistent(self):
-        """Deprecated alias for selfconsistent()"""
         from warnings import warn
         warn("'doselfconsistent()' is deprecated; use 'selfconsistent()'", DeprecationWarning, stacklevel=2)
         return self.selfconsistent()
@@ -1324,31 +1129,9 @@ class DMET:
         return self.helper.construct1RDM_loc( self.doSCF, self.umat )
 
     def oneshot( self, mu_imp=0.0, optimize_mu=False ):
-        """
-        Perform a single dmet active space calculation.
-
-        Parameters
-        ----------
-        mu_imp : float or array-like of length 2
-            Chemical potential applied to the impurity orbitals.
-            * float     — single spin-symmetric mu (default 0.0).
-            * [mu_a, mu_b] — only used when optimize_mu=True and
-              spin_polarized=True; seeds the 2D root search.
-        optimize_mu : bool
-            If True, optimize the chemical potential to match the target
-            number of electrons. If False, use the fixed mu_imp.
-            When spin_polarized=True, runs a 2D root search for
-            (mu_alpha, mu_beta).
-
-        Returns
-        -------
-        energy : float
-            The correlated energy from the active space solvers.
-        """
         if optimize_mu:
             from scipy import optimize
             if self.spin_polarized:
-                # 2D root search: find [mu_alpha, mu_beta] independently.
                 mu0 = np.array(mu_imp) if hasattr(mu_imp, '__len__') \
                       else np.array([float(mu_imp), float(mu_imp)])
                 try:
@@ -1380,45 +1163,7 @@ class DMET:
         return self.energy
 
 
-# ---------------------------------------------------------------------------
-# Standalone helper: fragment construction by atom groups
-# ---------------------------------------------------------------------------
-
 def make_fragments( mol, myInts, atom_groups ):
-    '''
-    Build the impurity_clusters list required by DMET.__init__ by specifying
-    groups of atom indices rather than raw orbital indices.
-
-    Parameters
-    ----------
-    mol : pyscf.gto.Mole
-        The PySCF Mole object used for the mean-field calculation.
-    myInts : local_integrals.localintegrals
-        The localintegrals object for the system.
-    atom_groups : list of lists
-        Each sub-list contains the integer indices (0-based) of the atoms
-        that form one impurity fragment. Every atom must appear in exactly
-        one group; all atoms must be covered.
-
-        Examples
-        --------
-        # 10-atom H ring, 2 atoms per impurity:
-        atom_groups = [[0,1],[2,3],[4,5],[6,7],[8,9]]
-
-        # Single large impurity containing atoms 0, 2, and 4:
-        atom_groups = [[0,2,4]]
-
-    Returns
-    -------
-    impurity_clusters : list of np.ndarray
-        List of integer arrays of length Norbs, with 1 where the orbital
-        belongs to the impurity and 0 elsewhere.
-
-    Notes
-    -----
-    Uses pyscf.gto.Mole.aoslice_by_atom() to map atom indices to AO ranges,
-    making the mapping robust across all basis sets.
-    '''
     ao_slices = mol.aoslice_by_atom()  # shape (natm, 4): (shl0, shl1, ao0, ao1)
     Norbs = myInts.Norbs
     impurity_clusters = []

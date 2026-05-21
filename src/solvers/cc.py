@@ -22,16 +22,6 @@ from pyscf import ao2mo, gto, scf
 from pyscf.cc import ccsd
 from ..utils import silent_stdout, nullcontext
 
-# Valid energy types:
-#   'LAMBDA'      -- CCSD with CCSD lambda 1-RDM and 2-RDM  (default, recommended)
-#   'LAMBDA_AMP'  -- CCSD with approximate RDM (lambda ≈ amplitudes)
-#   'LAMBDA_ZERO' -- CCSD with RDM at zero lambda
-#   'CASCI'       -- CCSD total energy, no projected impurity energy decomposition
-#   'CCSD(T)'     -- CCSD + perturbative (T) energy on top; self-consistency uses CCSD Lambda-RDM
-#   'CCSD(T)_RDM' -- CCSD(T) with rigorous relaxed 1-RDM and 2-RDM (expensive; solves T-lambda eqs)
-#   'EOM-CCSD'    -- Runs ground-state CCSD for self-consistency; reports EOM-CCSD singlet excitation
-#                    energies as additional output. eom_nroots controls how many states are computed.
-
 _VALID_ETYPES = {'LAMBDA', 'LAMBDA_AMP', 'LAMBDA_ZERO', 'CASCI',
                  'CCSD(T)', 'CCSD(T)_RDM', 'EOM-CCSD'}
 
@@ -40,47 +30,17 @@ def solve( const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
            energytype='LAMBDA', chempot_imp=0.0, printoutput=True,
            eom_nroots=3,
            use_density_fit=False, df_auxbasis=None ):
-    '''
-    Solve a dmet impurity problem using coupled-cluster methods.
-
-    Parameters
-    ----------
-    const        : float  – constant energy shift from core/frozen orbitals.
-    oei          : ndarray (norb,norb) – one-electron integrals.
-    fock         : ndarray (norb,norb) – Fock matrix (used for energy decomposition).
-    tei          : ndarray (norb,norb,norb,norb) – two-electron integrals.
-    norb         : int    – number of orbitals in the cluster.
-    nel          : int    – number of electrons (must be even for RHF).
-    nimp         : int    – number of impurity orbitals (first nimp of norb).
-    dm_guess_rhf   : ndarray – initial density-matrix guess for RHF.
-    energytype   : str    – CC variant (see module docstring above).
-    chempot_imp  : float  – chemical potential applied to impurity orbitals.
-    printoutput  : bool   – if True, print PySCF solver output.
-    eom_nroots   : int    – number of EOM-CCSD roots to compute (only used when
-                            energytype='EOM-CCSD').
-
-    Returns
-    -------
-    impurity_energy : float    – impurity energy contribution.
-    pyscf_rdm1      : ndarray  – 1-RDM in the local orbital basis (used for self-consistency).
-    '''
     assert energytype in _VALID_ETYPES, \
         f"cc::solve: unrecognised energytype='{energytype}'. Valid: {_VALID_ETYPES}"
 
     ctx = silent_stdout() if not printoutput else nullcontext()
 
-    # ------------------------------------------------------------------
-    # Apply chemical potential to impurity block of fock
-    # ------------------------------------------------------------------
     fock_copy = fock.copy()
     if chempot_imp != 0.0:
         for orb in range(nimp):
             fock_copy[orb, orb] -= chempot_imp
 
     with ctx:
-        # --------------------------------------------------------------
-        # Build a dummy PySCF Mole and run RHF
-        # --------------------------------------------------------------
         mol = gto.Mole()
         mol.build(verbose=0)
         mol.atom.append(('C', (0, 0, 0)))
@@ -100,18 +60,12 @@ def solve( const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
             mf.scf(dm_loc)
             dm_loc = np.dot(np.dot(mf.mo_coeff, np.diag(mf.mo_occ)), mf.mo_coeff.T)
 
-        # --------------------------------------------------------------
-        # CCSD kernel  (always computed – needed by all variants)
-        # --------------------------------------------------------------
         ccsolver = ccsd.CCSD(mf)
         ccsolver.verbose = 5
         e_corr, t1, t2 = ccsolver.ccsd()
         e_rhf  = mf.e_tot
         e_ccsd = e_rhf + e_corr
 
-        # ==============================================================
-        # CASCI energy type  – single-energy variant, no projection
-        # ==============================================================
         if energytype == 'CASCI':
             ccsolver.solve_lambda()
             pyscf_rdm1 = ccsolver.make_rdm1()
@@ -121,9 +75,6 @@ def solve( const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
             if chempot_imp != 0.0:
                 impurity_energy += np.einsum('ij,ij->', fock - fock_copy, pyscf_rdm1)
 
-        # ==============================================================
-        # CCSD(T)  – perturbative triples correction, CCSD Lambda-RDM
-        # ==============================================================
         elif energytype == 'CCSD(T)':
             from pyscf.cc import ccsd_t as _ccsd_t
             eris = ccsolver.ao2mo()
@@ -131,7 +82,6 @@ def solve( const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
             ECCSD_T = e_ccsd + ET
             print(f"cc::solve : e_ccsd = {e_ccsd:.10f},  E(T) = {ET:.10f},  e_ccsd(T) = {ECCSD_T:.10f}")
 
-            # Use standard CCSD Lambda-RDM for self-consistency
             ccsolver.solve_lambda()
             pyscf_rdm1 = ccsolver.make_rdm1()
             pyscf_rdm2 = ccsolver.make_rdm2()
@@ -143,9 +93,6 @@ def solve( const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
                 fock, chempot_imp, extra_energy=ET
             )
 
-        # ==============================================================
-        # CCSD(T) with relaxed RDM  – full CCSD(T) lambda equations
-        # ==============================================================
         elif energytype == 'CCSD(T)_RDM':
             from pyscf.cc import ccsd_t as _ccsd_t
             from pyscf.cc import ccsd_t_lambda as _ccsd_t_lambda
@@ -155,7 +102,6 @@ def solve( const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
             ECCSD_T = e_ccsd + ET
             print(f"cc::solve : e_ccsd = {e_ccsd:.10f},  E(T) = {ET:.10f},  e_ccsd(T) = {ECCSD_T:.10f}")
 
-            # Solve CCSD(T) lambda equations for the relaxed density matrix
             print("cc::solve : Solving CCSD(T) lambda equations ...")
             l1, l2 = _ccsd_t_lambda.kernel(ccsolver, eris, t1, t2)[1:]
             pyscf_rdm1 = _ccsd_t_rdm.make_rdm1(ccsolver, t1, t2, l1, l2, eris)
@@ -168,12 +114,7 @@ def solve( const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
                 fock, chempot_imp
             )
 
-        # ==============================================================
-        # EOM-CCSD  – ground state CCSD for self-consistency;
-        #             EOM singlet excitation energies printed as extras.
-        # ==============================================================
         elif energytype == 'EOM-CCSD':
-            # Run lambda + ground-state CCSD density matrices for self-consistency
             ccsolver.solve_lambda()
             pyscf_rdm1 = ccsolver.make_rdm1()
             pyscf_rdm2 = ccsolver.make_rdm2()
@@ -184,7 +125,6 @@ def solve( const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
                 fock, chempot_imp
             )
 
-            # Now compute EOM-CCSD excitation energies (informational only)
             print(f"\ncc::solve : Running EOM-CCSD for {eom_nroots} singlet root(s) ...")
             myeom = ccsolver.EOMEESinglet()
             e_exc, c_exc = myeom.kernel(nroots=eom_nroots)
@@ -195,9 +135,6 @@ def solve( const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
             for idx, e in enumerate(e_exc):
                 print(f"  State {idx+1}: {e:+.8f} Ha  ({e * eV:.4f} eV)")
 
-        # ==============================================================
-        # Standard CCSD variants (LAMBDA / LAMBDA_AMP / LAMBDA_ZERO)
-        # ==============================================================
         else:
             if energytype == 'LAMBDA':
                 ccsolver.solve_lambda()
@@ -223,12 +160,7 @@ def solve( const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
     return (impurity_energy, pyscf_rdm1)
 
 
-# ---------------------------------------------------------------------------
-# Private helpers – DRY up the repeated MO→local rotation and energy formula
-# ---------------------------------------------------------------------------
-
 def _rotate_rdms_to_local(mf, pyscf_rdm1, pyscf_rdm2):
-    '''Rotate 1-RDM and 2-RDM from MO basis into the local (dmet orbital) basis.'''
     C = mf.mo_coeff
     pyscf_rdm1 = np.dot(C, np.dot(pyscf_rdm1, C.T))
     pyscf_rdm2 = np.einsum('ai,ijkl->ajkl', C, pyscf_rdm2)
@@ -241,20 +173,6 @@ def _rotate_rdms_to_local(mf, pyscf_rdm1, pyscf_rdm2):
 def _compute_impurity_energy(const, fock_copy, oei, tei, nimp,
                               pyscf_rdm1, pyscf_rdm2, fock, chempot_imp,
                               extra_energy=0.0):
-    '''
-    Compute the dmet impurity contribution to the total energy using the
-    standard half-projector formula, with an optional additive extra_energy
-    (e.g. the (T) perturbative correction split equally over impurity/bath).
-
-    Parameters
-    ----------
-    extra_energy : float
-        Additional energy term added to impurity_energy after the RDM-based
-        projection. Used for the CCSD(T) perturbative correction — the
-        convention here is to add the *full* (T) correction to the impurity
-        energy (appropriate when there is a single impurity spanning the system).
-        For multi-impurity tilings, consider scaling by nimp/norb.
-    '''
     E_imp = const \
           + 0.25  * np.einsum('ij,ij->',     pyscf_rdm1[:nimp,:],     fock[:nimp,:] + oei[:nimp,:]) \
           + 0.25  * np.einsum('ij,ij->',     pyscf_rdm1[:,:nimp],     fock[:,:nimp] + oei[:,:nimp]) \
@@ -263,33 +181,10 @@ def _compute_impurity_energy(const, fock_copy, oei, tei, nimp,
           + 0.125 * np.einsum('ijkl,ijkl->', pyscf_rdm2[:,:,:nimp,:], tei[:,:,:nimp,:]) \
           + 0.125 * np.einsum('ijkl,ijkl->', pyscf_rdm2[:,:,:,:nimp], tei[:,:,:,:nimp])
 
-    # chempot already absorbed by fock_copy; no correction needed
     return E_imp + extra_energy
 
 
-# ---------------------------------------------------------------------------
-# SolverDispatcher entry point
-# ---------------------------------------------------------------------------
-
 def execute(task):
-    """
-    SolverDispatcher-compatible wrapper for the CC solver.
-
-    Unpacks the standardised task dict and calls solve(). Supports all
-    CC_E_TYPE variants: 'LAMBDA', 'LAMBDA_AMP', 'LAMBDA_ZERO', 'CASCI',
-    'CCSD(T)', 'CCSD(T)_RDM', 'EOM-CCSD'.
-
-    Parameters
-    ----------
-    task : dict
-        Must contain: const, dmet_oei, dmet_fock, dmet_tei, norb, nel, nimp,
-        dm_guess_rhf, chempot_imp.
-        Optional: CC_E_TYPE (default 'LAMBDA'), eom_nroots (default 3).
-
-    Returns
-    -------
-    (impurity_energy, pyscf_rdm1) — same as solve().
-    """
     return solve(
         task['const'],
         task['dmet_oei'],

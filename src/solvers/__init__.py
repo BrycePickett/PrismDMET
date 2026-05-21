@@ -1,76 +1,5 @@
-"""
-Central dispatcher that maps method-key strings to solver implementations.
+"""Solver dispatcher: maps method-key strings to solver implementations."""
 
-Every solver module exposes a top-level execute(task) function that accepts a
-standardized task dictionary and returns a standardized result dictionary.
-SolverDispatcher.execute(task) delegates to the correct module based on
-task['method'], so dmet.py and the parallel worker do not need to know
-anything about individual solver signatures.
-
-Task dict required keys:
-    method        : str    - solver key
-    const         : float  - frozen-core constant energy
-    dmet_oei       : ndarray (N,N)       - 1e integrals in dmet basis
-    dmet_fock      : ndarray (N,N)       - Fock matrix in dmet basis
-    dmet_tei       : ndarray (N,N,N,N)   - 2e integrals in dmet basis
-    norb          : int    - total embedding orbitals (impurity + bath)
-    nel           : int    - electrons in the embedding space
-    nimp          : int    - impurity orbitals (first nimp of norb)
-    chempot_imp   : float  - chemical potential on the impurity block
-    counter       : int    - fragment index
-    src_path      : str    - absolute path to src/ for worker sys.path
-
-Task dict optional keys:
-    dm_guess_rhf    : ndarray or None
-    CC_E_TYPE     : str
-    eom_nroots    : int
-    eom_type      : str
-    eom_koopmans  : bool
-    eom_kwargs    : dict
-    ncas          : int
-    nelecas       : int
-    sa_nstates    : int
-    sa_weights    : list
-    casscf_kwargs : dict
-    mo_guess      : ndarray or None
-    ci_guess      : ndarray or None
-    oei_s         : ndarray or None
-    nevpt2_kwargs : dict
-    qdnevpt2_kwargs: dict
-    mol_dumps     : str       - JSON from pyscf.gto.Mole.dumps()
-    mf_mo_coeff   : ndarray   - canonical MO coefficients
-    mf_mo_energy  : ndarray   - canonical MO energies
-    mf_mo_occ     : ndarray   - MO occupations
-    mf_e_tot      : float     - total RHF energy
-    xc            : str       - XC functional for DFT solvers (default 'pbe')
-    spin          : int       - 2S (number of unpaired electrons, default nel%2)
-    spin_polarized: bool      - UHF/UKS: return separate alpha/beta RDMs
-    chempot_imp_beta: float   - UHF/UKS spin_polarized: independent beta mu
-
-Result dict required keys:
-    counter       : int
-    energy        : float
-    rdm1          : ndarray (N,N)
-
-Result dict optional keys:
-    eom_res       : dict
-    cas_res       : dict
-    qdnevpt2_res  : dict
-    nevpt2_res    : dict
-    fallback_from : str or None
-
-OOM fallback chain:
-    FCI -> DMRG -> CASSCF -> CC -> MP2
-    ED  -> DMRG -> CASSCF -> CC -> MP2
-    QD-NEVPT2 -> NEVPT2 -> CASSCF -> CC -> MP2
-    EOM-CC -> CC -> MP2
-
-When a fallback fires, a RuntimeWarning is printed, task['method'] is
-updated, and task['fallback_from'] records the originally requested method.
-"""
-
-import sys
-import os
 import warnings
 
 
@@ -98,7 +27,6 @@ FALLBACK_CHAIN = {
 
 
 def _is_oom_like(exc):
-    """Return True if the exception should trigger a graceful fallback."""
     if isinstance(exc, MemoryError):
         return True
     if isinstance(exc, RuntimeError):
@@ -111,38 +39,9 @@ def _is_oom_like(exc):
 
 
 class SolverDispatcher:
-    """
-    Central dispatcher for all dmet fragment solvers.
-
-    Usage:
-        result = SolverDispatcher.execute(task)
-
-    If a solver raises MemoryError or an OOM-like RuntimeError, the factory
-    retries with the next cheaper method from FALLBACK_CHAIN. The result dict
-    carries 'fallback_from' indicating which method originally failed.
-    """
 
     @staticmethod
     def execute(task):
-        """
-        Dispatch a fragment task to the correct solver.
-
-        Parameters
-        ----------
-        task : dict
-            Standardized task dict. See module docstring for schema.
-
-        Returns
-        -------
-        dict with keys: counter, energy, rdm1, plus optional method-specific keys.
-
-        Raises
-        ------
-        ValueError
-            If task['method'] is not a recognized solver key.
-        MemoryError / RuntimeError
-            If an OOM error occurs and no fallback is defined for the method.
-        """
         method = task['method']
 
         dispatch = {

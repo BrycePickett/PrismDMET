@@ -1,7 +1,4 @@
-"""
-PrismDMET helper: C-extension interface and core DMET linear-algebra routines.
-Wraps libprismdmet.so (C) for the RHF response (1-RDM derivative w.r.t. u-matrix).
-"""
+"""C-extension interface and core DMET linear-algebra routines."""
 
 from . import rhf
 import numpy as np
@@ -14,27 +11,12 @@ lib_prismdmet = ctypes.CDLL(os.path.abspath(_so_path))
 
 
 class PrismDMETHelper:
-    """
-    Provides the bath construction and 1-RDM routines needed by the dmet loop.
-
-    Parameters
-    ----------
-    locints : local_integrals.LocalIntegrals
-        The localized integral object for the full system.
-    list_H1 : list of ndarray
-        The H1 basis matrices that parametrize the correlation potential (u-matrix).
-    use_constrained_opt : bool
-        If True, use the constrained cost function (OEI or FOCK_INIT minimization).
-    minFunc : str or None
-        Which quantity to minimize: 'OEI', 'FOCK_INIT', or None (standard dmet).
-    """
 
     def __init__(self, locints, list_H1, use_constrained_opt, minFunc):
         self.locints  = locints
         self._is_open_shell = (self.locints.Nelec % 2 != 0)
         self.numPairs = self.locints.Nelec // 2
         
-        # For open-shell (odd Nelec), track alpha/beta counts for 1-RDM construction
         self.num_alpha = (self.locints.Nelec + self.locints.mol.spin) // 2
         self.num_beta  = (self.locints.Nelec - self.locints.mol.spin) // 2
         self.altcf    = use_constrained_opt
@@ -46,13 +28,11 @@ class PrismDMETHelper:
                 f"PrismDMETHelper: minFunc must be 'OEI' or 'FOCK_INIT', got '{minFunc}'"
             self.minFunc = _mf
 
-        # Sparse representation of the H1 basis for the C-level gradient
         self.list_H1 = list_H1
         self.H1start, self.H1row, self.H1col = self._convert_H1_sparse()
         self.Nterms  = len(self.H1start) - 1
 
     def _convert_H1_sparse(self):
-        """Convert the H1 list to CSR-like arrays for the C gradient routine."""
         H1start, H1row, H1col = [0], [], []
         total = 0
         for mat in self.list_H1:
@@ -66,16 +46,6 @@ class PrismDMETHelper:
                 np.array(H1col,   dtype=ctypes.c_int))
 
     def construct1RDM_loc(self, doSCF, umat_loc):
-        """
-        Construct the mean-field 1-RDM in the LMO basis given the u-matrix.
-
-        Parameters
-        ----------
-        doSCF : bool
-            If True, perform a full SCF cycle on top of the initial guess.
-        umat_loc : ndarray (Norbs, Norbs)
-            The correlation potential in the LMO basis.
-        """
         if self._is_open_shell and doSCF:
             raise NotImplementedError("Open-shell DMET iterative SCF loops are not yet supported.")
         if self.altcf and self.minFunc == 'OEI':
@@ -91,10 +61,6 @@ class PrismDMETHelper:
         return dm_loc
 
     def construct1RDM_response(self, doSCF, umat_loc, NOrotation):
-        """
-        Compute the 1-RDM derivative dγ/du via the C-level RHF response function.
-        Used to build the analytical gradient of the cost function.
-        """
         if self._is_open_shell:
             raise NotImplementedError("DMET chemical-potential optimization requires an even electron count.")
         oei = self.locints.loc_fock() + umat_loc
@@ -124,13 +90,10 @@ class PrismDMETHelper:
         return rdm_deriv.reshape((self.Nterms, self.locints.Norbs, self.locints.Norbs), order='C')
 
     def _build_1rdm(self, oei, numPairs):
-        """Build the 1-RDM by occupying the lowest eigenstates of oei."""
         eigenvals, eigenvecs = np.linalg.eigh(oei)
         idx = eigenvals.argsort()
         
         if self._is_open_shell:
-            # Build separate alpha and beta densities for open-shell
-            # (assumes oei is spin-independent trial Hamiltonian)
             dm_a = np.dot(eigenvecs[:, idx[:self.num_alpha]], eigenvecs[:, idx[:self.num_alpha]].T)
             dm_b = np.dot(eigenvecs[:, idx[:self.num_beta]],  eigenvecs[:, idx[:self.num_beta]].T)
             return dm_a + dm_b
@@ -138,19 +101,6 @@ class PrismDMETHelper:
             return 2 * np.dot(eigenvecs[:, idx[:numPairs]], eigenvecs[:, idx[:numPairs]].T)
 
     def constructbath(self, OneDM, impurity_orbs, numBathOrbs, threshold=1e-13):
-        """
-        Perform the Schmidt decomposition to find the dmet bath orbitals.
-
-        Returns
-        -------
-        numBathOrbs : int
-            Number of bath orbitals retained (after threshold truncation).
-        loc_2_dmet : ndarray (Norbs, Norbs)
-            Rotation from LMO to dmet basis. Columns ordered as:
-            [impurity | bath | environment].
-        coreOccupations : ndarray
-            Occupation numbers of the environment (core) orbitals.
-        """
         embeddingOrbs  = np.array(1 - impurity_orbs, dtype=float)
         if embeddingOrbs.ndim == 1:
             embeddingOrbs = embeddingOrbs[:, np.newaxis]  # (Norbs, 1)
@@ -162,7 +112,6 @@ class PrismDMETHelper:
         numTotalOrbs = len(impurity_orbs)
 
         eigenvals, eigenvecs = np.linalg.eigh(embedding1RDM)
-        # Sort by entanglement: occupations closest to 1 first
         idx    = np.maximum(-eigenvals, eigenvals - 2.0).argsort()
         tokeep = np.sum(-np.maximum(-eigenvals, eigenvals - 2.0)[idx] > threshold)
         if tokeep < numBathOrbs:
@@ -173,7 +122,6 @@ class PrismDMETHelper:
         eigenvals = eigenvals[idx]
         eigenvecs = eigenvecs[:, idx]
 
-        # Separate environment (core) from bath
         pureEnvVals = -eigenvals[numBathOrbs:]
         pureEnvVecs = eigenvecs[:, numBathOrbs:]
         env_idx = pureEnvVals.argsort()
@@ -181,7 +129,6 @@ class PrismDMETHelper:
         pureEnvVals = -pureEnvVals[env_idx]
         coreOccupations = np.hstack((np.zeros([num_imp_orbs + numBathOrbs]), pureEnvVals))
 
-        # Insert impurity identity columns/rows
         for counter in range(num_imp_orbs):
             eigenvecs = np.insert(eigenvecs, counter, 0.0, axis=1)
         counter = 0
