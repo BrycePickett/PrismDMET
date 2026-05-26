@@ -1,6 +1,7 @@
 """PrismDMET core DMET driver."""
 
 from . import prismdmet_helper
+from .utils import scf_rdm1_total, scf_veff_total
 import numpy as np
 from scipy import optimize
 import time
@@ -573,25 +574,13 @@ class DMET:
                           "impurity fragment results are unaffected.")
 
                 rdm1_raw = mf_.make_rdm1()
-                jk_raw   = mf_.get_veff(dm=rdm1_raw)
-                rdm1_raw = np.asarray(rdm1_raw)
-                jk_raw   = np.asarray(jk_raw)
+                rdm1_ao  = scf_rdm1_total(mf_)
+                jk_ao    = scf_veff_total(mf_, rdm1_raw)
 
                 xorb = np.dot(mf_.get_ovlp(), self.ints.ao2loc)
                 oei  = np.dot(self.ints.ao2loc.T, np.dot(mf_.get_hcore()-hc, self.ints.ao2loc))
-
-                # ROHF returns (dm_a, dm_b) and (veff_a, veff_b) as 3D arrays;
-                # RHF returns 2D arrays. For the democratic energy calculation,
-                # use total density (dm_a + dm_b) for OEI, and sum over spins for JK.
-                if rdm1_raw.ndim == 3:
-                    rdm1 = np.dot(xorb.T, np.dot(rdm1_raw[0] + rdm1_raw[1], xorb))
-                    jk = np.zeros_like(rdm1)
-                    for s in range(2):
-                        jk_s = np.dot(self.ints.ao2loc.T, np.dot(jk_raw[s], self.ints.ao2loc))
-                        jk += jk_s
-                else:
-                    rdm1 = np.dot(xorb.T, np.dot(rdm1_raw, xorb))
-                    jk   = np.dot(self.ints.ao2loc.T, np.dot(jk_raw, self.ints.ao2loc))
+                rdm1 = np.dot(xorb.T, np.dot(rdm1_ao, xorb))
+                jk   = np.dot(self.ints.ao2loc.T, np.dot(jk_ao, self.ints.ao2loc))
 
                 ImpEnergy = \
                    + 0.50 * np.einsum('ji,ij->', rdm1[:,impOrbs], oei[impOrbs,:]) \
