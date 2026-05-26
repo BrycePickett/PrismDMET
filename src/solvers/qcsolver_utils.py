@@ -106,7 +106,7 @@ def project_amo_manually(old_mo_coeff, ncas, ncore, new_fock, norb):
 
 def fix_casscf_for_nonsinglet_env(mc, h1e_s):
     '''
-    Wrap a PySCF CASSCF object so that it correctly minimises in the
+    Wrap a PySCF CASSCF object so that it correctly minimizes in the
     presence of a spin-dependent one-electron potential (open-shell
     environment).
 

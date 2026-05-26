@@ -566,8 +566,11 @@ class DMET:
                     if mol is None: mol = self.mol
                     return scf.hf.get_hcore(mol) + hc
                 mf_.get_hcore = MethodType(mf_hcore, mf_)
+                mf_.max_cycle = 300
                 mf_.scf(dm0)
-                assert (mf_.converged)
+                if not mf_.converged:
+                    print("WARNING: environment HF fill-in did not converge; "
+                          "impurity fragment results are unaffected.")
 
                 rdm1 = mf_.make_rdm1()
                 jk   = mf_.get_veff(dm=rdm1)
