@@ -19,25 +19,7 @@
 
 import os
 import sys
-import numpy as np
-from contextlib import contextmanager, nullcontext
-
-
-def scf_rdm1_total(mf):
-    # Returns 2D (nao, nao) total density regardless of RHF/ROHF/UHF spin shape.
-    dm = np.asarray(mf.make_rdm1())
-    if dm.ndim == 3:
-        return dm[0] + dm[1]
-    return dm
-
-
-def scf_veff_total(mf, dm_raw):
-    # Returns 2D (nao, nao) total Veff. Pass raw make_rdm1() output so PySCF
-    # applies correct per-spin exchange before summing over spins.
-    veff = np.asarray(mf.get_veff(dm=dm_raw))
-    if veff.ndim == 3:
-        return veff[0] + veff[1]
-    return veff
+from contextlib import contextmanager
 
 
 @contextmanager

@@ -1,7 +1,6 @@
 """PrismDMET core DMET driver."""
 
 from . import prismdmet_helper
-from .utils import scf_rdm1_total, scf_veff_total
 import numpy as np
 from scipy import optimize
 import time
@@ -573,20 +572,32 @@ class DMET:
                     print("WARNING: environment HF fill-in did not converge; "
                           "impurity fragment results are unaffected.")
 
-                rdm1_raw = mf_.make_rdm1()
-                rdm1_ao  = scf_rdm1_total(mf_)
-                jk_ao    = scf_veff_total(mf_, rdm1_raw)
+                dm_raw = np.asarray(mf_.make_rdm1())
+                veff   = np.asarray(mf_.get_veff(dm=dm_raw))
 
                 xorb = np.dot(mf_.get_ovlp(), self.ints.ao2loc)
                 oei  = np.dot(self.ints.ao2loc.T, np.dot(mf_.get_hcore()-hc, self.ints.ao2loc))
-                rdm1 = np.dot(xorb.T, np.dot(rdm1_ao, xorb))
-                jk   = np.dot(self.ints.ao2loc.T, np.dot(jk_ao, self.ints.ao2loc))
+
+                # Total density for OEI and electron counting
+                dm_total_ao = dm_raw[0] + dm_raw[1] if dm_raw.ndim == 3 else dm_raw
+                rdm1 = np.dot(xorb.T, np.dot(dm_total_ao, xorb))
 
                 ImpEnergy = \
                    + 0.50 * np.einsum('ji,ij->', rdm1[:,impOrbs], oei[impOrbs,:]) \
-                   + 0.50 * np.einsum('ji,ij->', rdm1[impOrbs,:], oei[:,impOrbs]) \
-                   + 0.25 * np.einsum('ji,ij->', rdm1[:,impOrbs], jk[impOrbs,:]) \
-                   + 0.25 * np.einsum('ji,ij->', rdm1[impOrbs,:], jk[:,impOrbs])
+                   + 0.50 * np.einsum('ji,ij->', rdm1[impOrbs,:], oei[:,impOrbs])
+
+                # Two-electron part: spin-resolved D_s * V_s to match PySCF's
+                # ROHF energy formula (E_2e = 0.5 * sum_s Tr[D_s * V_s]).
+                if dm_raw.ndim == 3:
+                    for s in range(2):
+                        rdm1_s = np.dot(xorb.T, np.dot(dm_raw[s], xorb))
+                        jk_s   = np.dot(self.ints.ao2loc.T, np.dot(veff[s], self.ints.ao2loc))
+                        ImpEnergy += 0.25 * np.einsum('ji,ij->', rdm1_s[:,impOrbs], jk_s[impOrbs,:])
+                        ImpEnergy += 0.25 * np.einsum('ji,ij->', rdm1_s[impOrbs,:], jk_s[:,impOrbs])
+                else:
+                    jk = np.dot(self.ints.ao2loc.T, np.dot(veff, self.ints.ao2loc))
+                    ImpEnergy += 0.25 * np.einsum('ji,ij->', rdm1[:,impOrbs], jk[impOrbs,:])
+                    ImpEnergy += 0.25 * np.einsum('ji,ij->', rdm1[impOrbs,:], jk[:,impOrbs])
 
                 self.energy += ImpEnergy
                 Nelectrons += np.trace(rdm1[np.ix_(impOrbs,impOrbs)])
