@@ -566,7 +566,8 @@ class DMET:
                     if mol is None: mol = self.mol
                     return scf.hf.get_hcore(mol) + hc
                 mf_.get_hcore = MethodType(mf_hcore, mf_)
-                mf_.max_cycle = 300
+                mf_.max_cycle = 100
+                mf_.level_shift = 0.2
                 mf_.scf(dm0)
                 if not mf_.converged:
                     print("WARNING: environment HF fill-in did not converge; "
