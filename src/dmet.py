@@ -552,56 +552,20 @@ class DMET:
             else:
                 assert (np.array_equal(self.ints.active, np.ones([self.ints.mol.nao_nr()], dtype=int)))
 
-                from pyscf import scf
-                from types import MethodType
-                mol_ = self.ints.mol
-                mf_  = scf.ROHF(mol_) if mol_.spin != 0 else scf.RHF(mol_)
-
-                impOrbs = remainingOrbs==1
-                xorb = np.dot(mf_.get_ovlp(), self.ints.ao2loc)
-                hc  = -chempot_imp * np.dot(xorb[:,impOrbs], xorb[:,impOrbs].T)
-                dm0 = np.dot(self.ints.ao2loc, np.dot(one_rdm, self.ints.ao2loc.T))
-
-                def mf_hcore (self, mol=None):
-                    if mol is None: mol = self.mol
-                    return scf.hf.get_hcore(mol) + hc
-                mf_.get_hcore = MethodType(mf_hcore, mf_)
-                # Evaluate the environment energy directly from the DMET 1-RDM
-                # without running a separate SCF. The fill-in mf_ (RHF/ROHF on
-                # the bare mol) has no MM charges and uses HF exchange — both
-                # inconsistent with a DFT-in-DFT QM/MM canonical. dm0 is the
-                # AO projection of the DMET 1-RDM and is the physically correct
-                # density for this energy term; a fill-in SCF would converge it
-                # to a different, wrong-Hamiltonian solution.
-                dm_raw = np.asarray(dm0)
-                veff   = np.asarray(mf_.get_veff(dm=dm_raw))
-
-                xorb = np.dot(mf_.get_ovlp(), self.ints.ao2loc)
-                oei  = np.dot(self.ints.ao2loc.T, np.dot(mf_.get_hcore()-hc, self.ints.ao2loc))
-
-                # Total density for OEI and electron counting
-                dm_total_ao = dm_raw[0] + dm_raw[1] if dm_raw.ndim == 3 else dm_raw
-                rdm1 = np.dot(xorb.T, np.dot(dm_total_ao, xorb))
+                # Global-Fock mean-field energy E = 0.5 Tr[gamma (h + F)] of the
+                # orbitals no fragment covers (as in libDMET/Vayesta/mrh).
+                # activeOEI and activeFOCK already carry the QM/MM potential and
+                # DFT veff, so no environment SCF is needed; running one on the
+                # bare molecule would drop the MM field and use HF exchange.
+                impOrbs = remainingOrbs == 1
+                h_plus_F = self.ints.activeOEI + self.ints.activeFOCK
 
                 ImpEnergy = \
-                   + 0.50 * np.einsum('ji,ij->', rdm1[:,impOrbs], oei[impOrbs,:]) \
-                   + 0.50 * np.einsum('ji,ij->', rdm1[impOrbs,:], oei[:,impOrbs])
-
-                # Two-electron part: spin-resolved D_s * V_s to match PySCF's
-                # ROHF energy formula (E_2e = 0.5 * sum_s Tr[D_s * V_s]).
-                if dm_raw.ndim == 3:
-                    for s in range(2):
-                        rdm1_s = np.dot(xorb.T, np.dot(dm_raw[s], xorb))
-                        jk_s   = np.dot(self.ints.ao2loc.T, np.dot(veff[s], self.ints.ao2loc))
-                        ImpEnergy += 0.25 * np.einsum('ji,ij->', rdm1_s[:,impOrbs], jk_s[impOrbs,:])
-                        ImpEnergy += 0.25 * np.einsum('ji,ij->', rdm1_s[impOrbs,:], jk_s[:,impOrbs])
-                else:
-                    jk = np.dot(self.ints.ao2loc.T, np.dot(veff, self.ints.ao2loc))
-                    ImpEnergy += 0.25 * np.einsum('ji,ij->', rdm1[:,impOrbs], jk[impOrbs,:])
-                    ImpEnergy += 0.25 * np.einsum('ji,ij->', rdm1[impOrbs,:], jk[:,impOrbs])
+                     0.25 * np.einsum('ji,ij->', one_rdm[:, impOrbs], h_plus_F[impOrbs, :]) \
+                   + 0.25 * np.einsum('ji,ij->', one_rdm[impOrbs, :], h_plus_F[:, impOrbs])
 
                 self.energy += ImpEnergy
-                Nelectrons += np.trace(rdm1[np.ix_(impOrbs,impOrbs)])
+                Nelectrons += np.trace(one_rdm[np.ix_(impOrbs, impOrbs)])
 
             remainingOrbs[ remainingOrbs==1 ] -= 1
         assert( np.all( remainingOrbs == 0 ) )
