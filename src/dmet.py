@@ -566,14 +566,14 @@ class DMET:
                     if mol is None: mol = self.mol
                     return scf.hf.get_hcore(mol) + hc
                 mf_.get_hcore = MethodType(mf_hcore, mf_)
-                mf_.max_cycle = 100
-                mf_.level_shift = 0.2
-                mf_.scf(dm0)
-                if not mf_.converged:
-                    print("WARNING: environment HF fill-in did not converge; "
-                          "impurity fragment results are unaffected.")
-
-                dm_raw = np.asarray(mf_.make_rdm1())
+                # Evaluate the environment energy directly from the DMET 1-RDM
+                # without running a separate SCF. The fill-in mf_ (RHF/ROHF on
+                # the bare mol) has no MM charges and uses HF exchange — both
+                # inconsistent with a DFT-in-DFT QM/MM canonical. dm0 is the
+                # AO projection of the DMET 1-RDM and is the physically correct
+                # density for this energy term; a fill-in SCF would converge it
+                # to a different, wrong-Hamiltonian solution.
+                dm_raw = np.asarray(dm0)
                 veff   = np.asarray(mf_.get_veff(dm=dm_raw))
 
                 xorb = np.dot(mf_.get_ovlp(), self.ints.ao2loc)
