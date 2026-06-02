@@ -65,6 +65,8 @@ def solve( const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
         e_corr, t1, t2 = ccsolver.ccsd()
         e_rhf  = mf.e_tot
         e_ccsd = e_rhf + e_corr
+        _t1_norm = np.linalg.norm(t1) / np.sqrt(ccsolver.nocc)
+        print(f"cc::solve : T1 norm = {_t1_norm:.4f}  (>0.02: moderate MR; >0.05: strong MR)")
 
         if energytype == 'CASCI':
             ccsolver.solve_lambda()
