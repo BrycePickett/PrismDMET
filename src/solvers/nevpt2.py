@@ -103,7 +103,9 @@ def solve(mf_real, ncas, nelecas,
 
             # Step 2: Multi-root CASCI with SA-CASSCF MOs
             mc = mcscf.CASCI(mf_real, ncas, nelecas)
-            mc.verbose = 5 if printoutput else 0
+            # Verbose 4 avoids meta-Lowdin natural-orbital printing in canonicalize(),
+            # which fails on ECP boundary atoms (X-Cu, X-O) lacking ANO data.
+            mc.verbose = 4 if printoutput else 0
             mc.fcisolver.nroots = nstates
             mc.kernel(sa_mo)
 
