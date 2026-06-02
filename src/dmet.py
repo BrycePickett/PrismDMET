@@ -578,15 +578,19 @@ class DMET:
         ao2loc = self.ints.ao2loc      # shape: (nAO, Norbs_active)
         active_mask = self.ints.active # 1 for LMO-active orbs, 0 for frozen
 
+        # Use alpha channel for UHF/UKS references; RHF/ROHF is already 2D.
+        _mo_coeff = mf.mo_coeff[0] if mf.mo_coeff.ndim == 3 else mf.mo_coeff
+        _mo_occ   = mf.mo_occ[0]   if mf.mo_occ.ndim   == 2 else mf.mo_occ
+
         nAO  = ao2loc.shape[0]
-        nMO  = mf.mo_coeff.shape[1]
+        nMO  = _mo_coeff.shape[1]
 
         frozen_idx  = np.where(active_mask == 0)[0]
         active_idx  = np.where(active_mask == 1)[0]
-        frozen_occ  = frozen_idx[mf.mo_occ[frozen_idx] > 0]
-        frozen_virt = frozen_idx[mf.mo_occ[frozen_idx] == 0]
-        mo_frozen_core = mf.mo_coeff[:, frozen_occ]   # (nAO, N_frozen_core)
-        mo_frozen_virt = mf.mo_coeff[:, frozen_virt]  # (nAO, N_frozen_virt)
+        frozen_occ  = frozen_idx[_mo_occ[frozen_idx] > 0]
+        frozen_virt = frozen_idx[_mo_occ[frozen_idx] == 0]
+        mo_frozen_core = _mo_coeff[:, frozen_occ]   # (nAO, N_frozen_core)
+        mo_frozen_virt = _mo_coeff[:, frozen_virt]  # (nAO, N_frozen_virt)
 
         env_lmos = loc_2_dmet[:, norb_in_imp:]              # (Norbs_active, Nenv)
         env_occ_diag  = core_1rdm_dmet[norb_in_imp:]      # environment occupations only
