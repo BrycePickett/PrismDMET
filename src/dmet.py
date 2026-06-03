@@ -48,14 +48,6 @@ class DMET:
                     f"method='{method}' requires ncas and nelecas (active space size)."
                 )
         if method == 'QD-NEVPT2':
-            # QD-NEVPT2 still solves on the real physical molecule (full-space
-            # perturber); NEVPT2 is embedded and needs no mf_real.
-            if mf_real is None:
-                raise ValueError(
-                    "method='QD-NEVPT2' requires mf_real: a converged mf object on "
-                    "the REAL physical molecule. Pass it as mf_real=mf to DMET.__init__."
-                )
-        if method == 'QD-NEVPT2':
             if sa_nstates < 2:
                 raise ValueError(
                     "method='QD-NEVPT2' requires sa_nstates >= 2 for state-averaging."
@@ -365,23 +357,7 @@ class DMET:
                 'dmet_fock'    : dmet_fock,
             })
 
-            # QD-NEVPT2 runs on the real molecule and needs an embedding-partitioned
-            # full-molecule MO guess. NEVPT2 is embedded (solves on the cluster) and
-            # needs no such guess.
             _mo_guess = None
-            if _method_key == 'QD-NEVPT2' and self.mf_real is not None:
-                _mo_guess, _, _ = self._build_full_mo_guess(
-                    loc_2_dmet, norb_in_imp, core_1rdm_dmet)
-
-            _mf_serial = {}
-            if self.mf_real is not None:
-                _mf_serial = {
-                    'mol_dumps'    : self.mf_real.mol.dumps(),
-                    'mf_mo_coeff'  : self.mf_real.mo_coeff,
-                    'mf_mo_energy' : self.mf_real.mo_energy,
-                    'mf_mo_occ'    : self.mf_real.mo_occ,
-                    'mf_e_tot'     : self.mf_real.e_tot,
-                }
 
             # DFT solvers need the real molecule (for XC grid) and the
             # AO-to-localized-orbital transformation to back-transform the
@@ -440,11 +416,6 @@ class DMET:
                 'spin_polarized': self.spin_polarized,
                 # --- DFT mol and localization info --------------------------
                 **_dft_mol_info,
-                # --- Serialized physical molecule (NEVPT2 / QD-NEVPT2) -----
-                # Keys present only when self.mf_real is not None.
-                # Solver wrappers detect 'mol_dumps' to choose the
-                # parallel-safe reconstruction path.
-                **_mf_serial,
             }
 
             from .solvers import PARALLEL_ELIGIBLE
@@ -579,62 +550,6 @@ class DMET:
         self.energy += self.ints.const()
         return Nelectrons
 
-    def _build_full_mo_guess(self, loc_2_dmet, norb_in_imp, core_1rdm_dmet):
-        mf  = self.mf_real
-        ao2loc = self.ints.ao2loc      # shape: (nAO, Norbs_active)
-        active_mask = self.ints.active # 1 for LMO-active orbs, 0 for frozen
-
-        # Use alpha channel for UHF/UKS references; RHF/ROHF is already 2D.
-        _mo_coeff = mf.mo_coeff[0] if mf.mo_coeff.ndim == 3 else mf.mo_coeff
-        _mo_occ   = mf.mo_occ[0]   if mf.mo_occ.ndim   == 2 else mf.mo_occ
-
-        nAO  = ao2loc.shape[0]
-        nMO  = _mo_coeff.shape[1]
-
-        frozen_idx  = np.where(active_mask == 0)[0]
-        active_idx  = np.where(active_mask == 1)[0]
-        frozen_occ  = frozen_idx[_mo_occ[frozen_idx] > 0]
-        frozen_virt = frozen_idx[_mo_occ[frozen_idx] == 0]
-        mo_frozen_core = _mo_coeff[:, frozen_occ]   # (nAO, N_frozen_core)
-        mo_frozen_virt = _mo_coeff[:, frozen_virt]  # (nAO, N_frozen_virt)
-
-        env_lmos = loc_2_dmet[:, norb_in_imp:]              # (Norbs_active, Nenv)
-        env_occ_diag  = core_1rdm_dmet[norb_in_imp:]      # environment occupations only
-        env_occ_mask  = env_occ_diag > 1.0               # approximately 2
-        env_virt_mask = env_occ_diag < 1.0               # approximately 0
-
-        mo_env_core = ao2loc @ env_lmos[:, env_occ_mask]   # (nAO, Nenv_core)
-        mo_env_virt = ao2loc @ env_lmos[:, env_virt_mask]  # (nAO, Nenv_virt)
-
-        dmet_lmos    = loc_2_dmet[:, :norb_in_imp]       # (Norbs_active, norb_in_imp)
-        mo_active    = ao2loc @ dmet_lmos              # (nAO, norb_in_imp)
-
-        mo_guess = np.hstack([
-            mo_frozen_core,
-            mo_env_core,
-            mo_active,
-            mo_env_virt,
-            mo_frozen_virt,
-        ])
-
-        ncore_check = mo_frozen_core.shape[1] + mo_env_core.shape[1]
-        ncas_check  = norb_in_imp
-
-        if mo_guess.shape[1] != nMO:
-            raise RuntimeError(
-                f"_build_full_mo_guess: column count mismatch. "
-                f"Built {mo_guess.shape[1]} MOs but mf_real has {nMO}. "
-                f"Frozen-core={mo_frozen_core.shape[1]}, env_core={mo_env_core.shape[1]}, "
-                f"active={ncas_check}, env_virt={mo_env_virt.shape[1]}, "
-                f"frozen_virt={mo_frozen_virt.shape[1]}"
-            )
-
-        print(f"Prismdmet :: mo_guess : Built full MO guess for NEVPT2 solver.")
-        print(f"  Layout: {mo_frozen_core.shape[1]} frozen_core | {mo_env_core.shape[1]} env_core "
-              f"| {ncas_check} active | {mo_env_virt.shape[1]} env_virt "
-              f"| {mo_frozen_virt.shape[1]} frozen_virt")
-        return mo_guess, ncas_check, ncore_check
-
     def _run_fragment_sequential(self, counter, method_key, flag_rhf,
                                    dmet_oei, dmet_fock, dmet_tei,
                                    norb_in_imp, nelec_in_imp, num_imp_orbs,
@@ -659,9 +574,9 @@ class DMET:
                 print("DMET::CASSCF : MO shape mismatch, starting fresh.")
                 _mo_guess_cas = None
 
-        # Spin oei for open-shell environments (CASSCF only)
+        # Spin oei for open-shell environments (all correlated embedded solvers)
         _dmet_oei_s = None
-        if method_key == 'CASSCF':
+        if method_key in ('CASSCF', 'NEVPT2', 'QD-NEVPT2'):
             _dmet_oei_s = (self.ints.dmet_oei_s(loc_2_dmet, norb_in_imp)
                            if hasattr(self.ints, 'dmet_oei_s') else self.oei_s)
 
@@ -706,7 +621,6 @@ class DMET:
             'level_shift'          : self.level_shift           if method_key in ('RKS', 'UKS', 'ROKS') else 0.0,
             'use_density_fit'      : self.ints.use_density_fit  if method_key in ('RKS', 'UKS', 'ROKS') else False,
             'df_auxbasis'          : self.ints.df_auxbasis      if method_key in ('RKS', 'UKS', 'ROKS') else None,
-            'mf_real'              : self.mf_real,
             'nevpt2_kwargs'        : self.nevpt2_kwargs,
             'qdnevpt2_kwargs'      : self.qdnevpt2_kwargs,
         }
@@ -1000,10 +914,10 @@ class DMET:
         if self.method in ('EOM-CC', 'QD-NEVPT2', 'NEVPT2'):
             _labels = {
                 'EOM-CC'    : ("EOM-CCSD",  "provides excited-state energies, not a ground-state u-matrix"),
-                'QD-NEVPT2' : ("QD-NEVPT2", "Prism operates on the real molecular integrals and cannot be "
-                               "embedded in the u-matrix self-consistency loop"),
-                'NEVPT2'    : ("NEVPT2",    "NEVPT2 operates on the real molecular integrals and cannot be "
-                               "embedded in the u-matrix self-consistency loop"),
+                'QD-NEVPT2' : ("QD-NEVPT2", "perturbative correction on a fixed CASSCF reference — "
+                               "self-consistent u-matrix iteration is not defined for this method"),
+                'NEVPT2'    : ("NEVPT2",    "perturbative correction on a fixed CASSCF reference — "
+                               "self-consistent u-matrix iteration is not defined for this method"),
             }
             label, reason = _labels[self.method]
             raise RuntimeError(

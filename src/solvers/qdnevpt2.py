@@ -1,34 +1,23 @@
 '''
-    QD-NEVPT2 solver for QC-dmet using Prism (https://github.com/sokolov-group/prism).
+QD-NEVPT2 solver for QC-dmet using Prism (https://github.com/sokolov-group/prism).
 
-    IMPORTANT: Unlike the other solvers (FCI, CCSD, CASSCF), this solver operates
-    in the PHYSICAL molecular basis, not in the dmet embedding orbital basis. This
-    is a fundamental requirement of Prism's interface, which needs the real PySCF
-    mol / mf / mc objects (it calls mol.energy_nuc(), mol.intor_symmetric(), etc.).
+Runs SA-CASSCF + QD-NEVPT2 on the DMET embedding cluster (impurity + bath),
+mirroring the embedded CASSCF and NEVPT2 solvers. The cluster is built from
+the embedding integrals exactly as in the other solvers; Prism's PYSCF
+interface receives the embedded mf and mc objects.
 
-    Workflow
-    --------
-    1. The user builds their dmet system as normal (local_integrals, fragments).
-    2. Instead of calling dmet.dmet(..., method='CASSCF'), they use
-       dmet.dmet(..., method='QD-NEVPT2') and supply the real mf object.
-    3. Inside doexact, a full SA-CASSCF is run on the real molecule using the
-       dmet-defined active space (ncas, nelecas). The active orbital space
-       corresponds to the selected impurity fragment.
-    4. Prism QD-NEVPT2 is run on the resulting mc object.
-    5. The SA-weighted CASSCF 1-RDM (in the dmet embedding basis) is used for
-       the u-matrix fitting loop; QD-NEVPT2 provides the correlated energies.
+Note on total energies: the embedded dummy mol has one dummy atom with
+energy_nuc() = 0. Total QD-NEVPT2 energies therefore lack the nuclear
+repulsion constant. This constant is state-independent and cancels in all
+excitation energies, which are the primary deliverable.
 
-    Limitations
-    -----------
-    - Only compatible with one-shot dmet. Calling selfconsistent() with
-      method='QD-NEVPT2' raises a RuntimeError because the Prism interface
-      requires the real molecular integrals and cannot be embedded in the
-      standard dmet u-matrix loop.
-    - The active space (ncas, nelecas) must be specified explicitly.
-    - Requires Prism to be installed and importable.
+Note on oscillator strengths: dipole integrals require the real AO basis, which
+the dummy mol does not have. Oscillator strength calculation is disabled by
+default (compute_dipole=False).
+
+Only compatible with one-shot DMET (sc_method='NONE'). sa_nstates >= 2 required.
 '''
 
-import sys
 import numpy as np
 from pyscf import ao2mo, gto, scf, mcscf
 from pyscf import fci as pyscf_fci
@@ -36,7 +25,6 @@ from ..utils import silent_stdout, nullcontext
 
 
 def _check_prism():
-    '''Raise a clear error if Prism is not importable.'''
     try:
         import prism.interface
         import prism.nevpt
@@ -44,12 +32,14 @@ def _check_prism():
         raise ImportError(
             "Prism is required for QD-NEVPT2 but could not be imported.\n"
             f"Original error: {e}\n"
-            "Install Prism from https://github.com/sokolov-group/prism or add it to your PYTHONPATH."
+            "Install Prism from https://github.com/sokolov-group/prism or add it to PYTHONPATH."
         ) from e
 
 
-def solve(mf_real, ncas, nelecas,
+def solve(const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
+          ncas, nelecas,
           sa_nstates=3, sa_weights=None,
+          chempot_imp=0.0,
           prism_backend='opt_einsum',
           nfrozen=None,
           compute_singles=False,
@@ -58,56 +48,55 @@ def solve(mf_real, ncas, nelecas,
           select_reference=None,
           casscf_kwargs=None,
           nevpt_kwargs=None,
-          mo_guess=None,
+          spin=None,
+          oei_s=None,
           printoutput=True):
     '''
-    Run SA-CASSCF + QD-NEVPT2 via Prism on a real PySCF mf object.
-
-    This function is not called directly by the dmet loop — it is invoked
-    through dmet.doexact() when method='QD-NEVPT2'. It can also be used as
-    a standalone function for testing.
+    Run SA-CASSCF + QD-NEVPT2 via Prism on the DMET embedding cluster.
 
     Parameters
     ----------
-    mf_real      : pyscf.scf.hf.RHF
-        A converged RHF mean-field object on the REAL physical molecule.
-    ncas         : int
-        Number of active orbitals for CASSCF.
-    nelecas      : int
-        Number of active electrons for CASSCF.
-    sa_nstates   : int
-        Number of states for state-averaging (minimum 2 for QD-NEVPT2).
-    sa_weights   : list of float or None
-        Weights for state-averaging. Uniform if None.
-    prism_backend : str
-        Einsum backend for Prism: 'opt_einsum', 'numpy', or 'pytblis'.
-    nfrozen      : int or None
-        Number of frozen core orbitals for QD-NEVPT2 (not for CASSCF).
-    compute_singles : bool
-        Whether to include singles amplitudes in the QD-NEVPT2 energy.
-    s_thresh_singles : float
-        Threshold for singles space linear dependency screening.
-    s_thresh_doubles : float
-        Threshold for doubles space linear dependency screening.
-    select_reference : list of int or None
-        If set, select a subset of SA-CASSCF states for NEVPT2. 1-indexed.
-        E.g. [1, 3, 5] selects states 1, 3, and 5.
-    casscf_kwargs : dict or None
-        Extra keyword arguments set on the mc CASSCF object before kernel,
-        e.g. {'conv_tol': 1e-11, 'conv_tol_grad': 1e-6}.
-    nevpt_kwargs  : dict or None
-        Extra keyword arguments set on the Prism NEVPT object before kernel,
-        e.g. {'rdm_order': 2}.
-    printoutput   : bool
-        If False, suppress most output.
+    const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf
+        Embedding integrals in the cluster (impurity + bath) basis, as
+        provided by the DMET driver.
+    ncas, nelecas
+        Active space size.
+    sa_nstates
+        States for state-averaging (>= 2 required for QD-NEVPT2).
+    sa_weights
+        SA weights; uniform if None.
+    chempot_imp
+        Chemical potential on impurity diagonal.
+    prism_backend
+        Einsum backend for Prism.
+    nfrozen
+        Frozen core for Prism (cluster core, not physical frozen core).
+    compute_singles
+        Include singles amplitudes in QD-NEVPT2.
+    s_thresh_singles, s_thresh_doubles
+        Linear-dependency thresholds.
+    select_reference
+        Subset of SA states (1-indexed) for QD-NEVPT2.
+    casscf_kwargs
+        Extra attributes set on the mc CASSCF object.
+    nevpt_kwargs
+        Extra attributes set on the Prism NEVPT object.
+    spin
+        Cluster spin (2S); defaults to nel % 2.
+    oei_s
+        Spin-asymmetry 1e correction 0.5*(F_alpha - F_beta) in the cluster
+        basis. Applied via fix_casscf_for_nonsinglet_env to the CASSCF. See
+        the spin plan (docs/prismdmet_spin_plan.md) for full context.
+    printoutput
+        Suppress most output if False.
 
     Returns
     -------
-    e_tot   : ndarray  – total QD-NEVPT2 energies for each state (Ha)
-    e_corr  : ndarray  – QD-NEVPT2 correlation energies
-    osc     : object   – oscillator strengths (as returned by Prism)
-    mc      : mcscf.CASSCF – the converged SA-CASSCF object (for inspection)
-    nevpt   : prism.nevpt.QDNEVPT – the Prism NEVPT object (for RDMs, etc.)
+    e_tot   : ndarray – QD-NEVPT2 energies per state (Ha, no nuclear repulsion)
+    e_corr  : ndarray – QD-NEVPT2 correlation energies
+    osc     : object  – oscillator strengths from Prism (None if disabled)
+    mc      : mcscf.CASSCF – converged SA-CASSCF object
+    nevpt   : Prism NEVPT object
     '''
     _check_prism()
     import prism.interface
@@ -115,8 +104,8 @@ def solve(mf_real, ncas, nelecas,
 
     if sa_nstates < 2:
         raise ValueError(
-            "QD-NEVPT2 requires at least 2 states (sa_nstates >= 2). "
-            "For single-state NEVPT2 use method='CASSCF' with PySCF's built-in NEVPT2."
+            "QD-NEVPT2 requires sa_nstates >= 2. "
+            "For single-state NEVPT2 use method='NEVPT2'."
         )
 
     if sa_weights is None:
@@ -127,30 +116,59 @@ def solve(mf_real, ncas, nelecas,
     casscf_kwargs = casscf_kwargs or {}
     nevpt_kwargs  = nevpt_kwargs  or {}
 
+    _spin    = spin if spin is not None else (nel % 2)
+    _use_rohf = (_spin != 0)
+
+    fock_copy = fock.copy()
+    if chempot_imp != 0.0:
+        for orb in range(nimp):
+            fock_copy[orb, orb] -= chempot_imp
+
     ctx = silent_stdout() if not printoutput else nullcontext()
 
     with ctx:
-        # ------------------------------------------------------------------
-        # SA-CASSCF on the real molecule
-        # ------------------------------------------------------------------
-        mc = mcscf.CASSCF(mf_real, ncas, nelecas)
+        mol = gto.Mole()
+        mol.build(verbose=0)
+        mol.atom.append(('C', (0, 0, 0)))
+        mol.nelectron = nel
+        mol.spin = _spin
+        mol.incore_anyway = True
+
+        mf = scf.ROHF(mol) if _use_rohf else scf.RHF(mol)
+        mf.get_hcore = lambda *args: fock_copy
+        mf.get_ovlp  = lambda *args: np.eye(norb)
+        mf._eri      = ao2mo.restore(8, tei, norb)
+        mf.scf(dm_guess_rhf)
+        if not mf.converged:
+            mf = mf.newton()
+            mf.scf(mf.make_rdm1())
+        if _use_rohf:
+            print(f"qdnevpt2::solve : embedded ROHF (spin={_spin}, nel={nel}, norb={norb})")
+
+        mc = mcscf.CASSCF(mf, ncas, nelecas)
         mc = mcscf.state_average_(mc, weights=sa_weights.tolist())
+        mc.verbose = 5 if printoutput else 0
         for key, val in casscf_kwargs.items():
             setattr(mc, key, val)
 
-        mc.verbose = 5 if printoutput else 0
-        mc.kernel(mo_guess)
+        if oei_s is not None:
+            from .qcsolver_utils import fix_casscf_for_nonsinglet_env
+            if _use_rohf and not np.all(np.abs(oei_s) < 1e-8):
+                _uhf_fci = pyscf_fci.direct_uhf.FCI()
+                _uhf_fci.verbose = mc.fcisolver.verbose
+                mc.fcisolver = _uhf_fci
+            mc = fix_casscf_for_nonsinglet_env(mc, oei_s)
 
-        print(f"\nqdnevpt::solve : SA-CASSCF ({sa_nstates} states, ncas={ncas}, nelecas={nelecas})")
+        mc.kernel()
+
+        print(f"\nqdnevpt2::solve : embedded SA-CASSCF ({sa_nstates} states, "
+              f"ncas={ncas}, nelecas={nelecas})")
         for i, e in enumerate(mc.e_states):
             print(f"  State {i}: {e:.10f} Ha  (weight={sa_weights[i]:.4f})")
         print(f"  SA-weighted e_tot: {mc.e_tot:.10f} Ha")
 
-        # ------------------------------------------------------------------
-        # Prism interface + QD-NEVPT2
-        # ------------------------------------------------------------------
         interface = prism.interface.PYSCF(
-            mf_real, mc,
+            mf, mc,
             backend=prism_backend,
             select_reference=select_reference,
         )
@@ -166,18 +184,12 @@ def solve(mf_real, ncas, nelecas,
 
         e_tot, e_corr, osc = nevpt_obj.kernel()
 
-        print("\nqdnevpt::solve : QD-NEVPT2 state energies:")
-        eV = 27.21138602
+        print("\nqdnevpt2::solve : QD-NEVPT2 state energies (excitation = state - state 0):")
         for i, (et, ec) in enumerate(zip(e_tot, e_corr)):
-            print(f"  State {i}: E_tot = {et:.10f} Ha,  E_corr = {ec:.10f} Ha")
-        print()
-        if osc is not None:
-            print("  Oscillator strengths:")
-            for line in str(osc).splitlines():
-                print(f"    {line}")
+            de_ev = (et - e_tot[0]) * 27.21138602
+            print(f"  State {i}: E_tot = {et:.10f} Ha  ΔE = {de_ev:+.4f} eV")
 
     return e_tot, e_corr, osc, mc, nevpt_obj
-
 
 
 # ---------------------------------------------------------------------------
@@ -186,61 +198,30 @@ def solve(mf_real, ncas, nelecas,
 
 def execute(task):
     """
-    SolverDispatcher-compatible wrapper for the QD-NEVPT2 solver.
+    SolverDispatcher entry point for the embedded QD-NEVPT2 solver.
 
-    Supports two transport modes for the physical SCF object (mirroring the
-    pattern in ``solvers/nevpt2.py``):
-
-    1. **Serialized (parallel-worker) path** (preferred for ProcessPoolExecutor):
-       The task dict carries picklable numpy arrays + a JSON Mole dump:
-         task['mol_dumps'], task['mf_mo_coeff'], task['mf_mo_energy'],
-         task['mf_mo_occ'], task['mf_e_tot'].
-       A dummy PySCF RHF object is reconstructed from these inside the worker
-       process before calling solve().
-
-    2. **Live-object (legacy/sequential) path**:
-       task['mf_real'] is the live PySCF RHF object from the main process.
-       Used when called directly from ``_run_fragment_sequential()`` without
-       the parallel-task serialization step.
-
-    Mode 1 is chosen when 'mol_dumps' is present in the task dict.
-    Mode 2 is the fallback if 'mol_dumps' is absent.
-
-    Parameters
-    ----------
-    task : dict
-        Mode 1 keys: mol_dumps, mf_mo_coeff, mf_mo_energy, mf_mo_occ,
-                     mf_e_tot, ncas, nelecas.
-        Mode 2 keys: mf_real, ncas, nelecas.
-        Optional (both modes): sa_nstates, sa_weights, casscf_kwargs,
-                               qdnevpt2_kwargs, mo_guess.
-
-    Returns
-    -------
-    (energy, rdm1, qdnevpt2_res) where qdnevpt2_res is a dict with keys
-    'e_tot', 'e_corr', 'osc', 'mc', 'nevpt'.
+    Operates on the embedding-cluster integrals carried in the task dict
+    (dmet_oei / dmet_fock / dmet_tei / norb / nel / nimp), so no physical
+    molecule is needed.
     """
-    # ------------------------------------------------------------------
-    # Resolve mf_real via either the serialized or live-object protocol.
-    # Reuse the helper from nevpt2 — same serialization scheme.
-    # ------------------------------------------------------------------
-    if 'mol_dumps' in task:
-        # Mode 1: reconstruct from serialized arrays (parallel-safe).
-        from solvers.nevpt2 import _reconstruct_mf_from_task
-        mf_real = _reconstruct_mf_from_task(task)
-    else:
-        # Mode 2: live object passed directly (sequential / legacy path).
-        mf_real = task['mf_real']
-
     e_tot, e_corr, osc, mc, nevpt_obj = solve(
-        mf_real,
+        task['const'],
+        task['dmet_oei'],
+        task['dmet_fock'],
+        task['dmet_tei'],
+        task['norb'],
+        task['nel'],
+        task['nimp'],
+        task.get('dm_guess_rhf'),
         ncas=task.get('ncas'),
         nelecas=task.get('nelecas'),
         sa_nstates=task.get('sa_nstates', 3),
         sa_weights=task.get('sa_weights'),
+        chempot_imp=task.get('chempot_imp', 0.0),
         casscf_kwargs=task.get('casscf_kwargs', {}),
         nevpt_kwargs=task.get('qdnevpt2_kwargs', {}),
-        mo_guess=task.get('mo_guess'),
+        spin=task.get('spin'),
+        oei_s=task.get('oei_s'),
     )
 
     rdm1 = mc.make_rdm1()

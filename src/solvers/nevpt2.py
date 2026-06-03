@@ -171,41 +171,6 @@ def solve(const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
 
 
 # ---------------------------------------------------------------------------
-# mf_real reconstruction helper (used by the QD-NEVPT2 solver, which still
-# runs on the real physical molecule). Kept here for that solver's import.
-# ---------------------------------------------------------------------------
-
-def _reconstruct_mf_from_task(task):
-    """
-    Reconstruct a minimal PySCF RHF object from serialized task dict arrays.
-
-    Because PySCF Mole and SCF objects cannot be pickled across process
-    boundaries, dmet.doexact() serializes the physical MF state as:
-        task['mol_dumps']   : str   - from pyscf.gto.Mole.dumps()
-        task['mf_mo_coeff'] : ndarray
-        task['mf_mo_energy']: ndarray
-        task['mf_mo_occ']   : ndarray
-        task['mf_e_tot']    : float
-
-    The returned object can be passed directly into a solver as mf_real.
-    No SCF iterations are re-run.
-    """
-    import pyscf.gto
-    import pyscf.scf
-
-    mol = pyscf.gto.Mole.loads(task['mol_dumps'])
-    mol.build(verbose=0)
-
-    mf = pyscf.scf.ROHF(mol) if mol.spin != 0 else pyscf.scf.RHF(mol)
-    # Inject pre-computed MO state — no SCF cycles run.
-    mf.mo_coeff  = task['mf_mo_coeff']
-    mf.mo_energy = task['mf_mo_energy']
-    mf.mo_occ    = task['mf_mo_occ']
-    mf.e_tot     = task['mf_e_tot']
-    return mf
-
-
-# ---------------------------------------------------------------------------
 # SolverDispatcher entry point
 # ---------------------------------------------------------------------------
 
