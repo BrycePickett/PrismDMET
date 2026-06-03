@@ -32,8 +32,7 @@ class DMET:
                   use_symmetry=False, symmetry_map=None,
                   parallel=False, max_workers=None, bath_tol=1e-13,
                   xc='pbe', level_shift=0.0, spin_polarized=False,
-                  mm_coords=None, mm_charges=None,
-                  mo_spin_ref=None ):
+                  mm_coords=None, mm_charges=None ):
 
         if is_translation_invariant:
             assert the_ints.TI_OK
@@ -44,14 +43,17 @@ class DMET:
         assert method in _valid_methods, \
             f"DMET: unknown method='{method}'. Valid: {sorted(_valid_methods)}"
         if method in ('QD-NEVPT2', 'NEVPT2'):
-            if mf_real is None:
-                raise ValueError(
-                    f"method='{method}' requires mf_real: a converged RHF object on the "
-                    f"REAL physical molecule. Pass it as mf_real=mf to DMET.__init__."
-                )
             if ncas is None or nelecas is None:
                 raise ValueError(
                     f"method='{method}' requires ncas and nelecas (active space size)."
+                )
+        if method == 'QD-NEVPT2':
+            # QD-NEVPT2 still solves on the real physical molecule (full-space
+            # perturber); NEVPT2 is embedded and needs no mf_real.
+            if mf_real is None:
+                raise ValueError(
+                    "method='QD-NEVPT2' requires mf_real: a converged mf object on "
+                    "the REAL physical molecule. Pass it as mf_real=mf to DMET.__init__."
                 )
         if method == 'QD-NEVPT2':
             if sa_nstates < 2:
@@ -104,7 +106,6 @@ class DMET:
         self.spin_polarized = spin_polarized  # enable independent alpha/beta mu optimization
         self.mm_coords  = np.asarray(mm_coords,  dtype=float) if mm_coords  is not None else None
         self.mm_charges = np.asarray(mm_charges, dtype=float) if mm_charges is not None else None
-        self.mo_spin_ref      = mo_spin_ref
 
         self.use_symmetry = use_symmetry
         self.symmetry_map = symmetry_map  # user-provided {child_idx: parent_idx} or None
@@ -364,13 +365,11 @@ class DMET:
                 'dmet_fock'    : dmet_fock,
             })
 
-            # Build the embedding-partitioned full-molecule MO guess for NEVPT2,
-            # unless the user requested a specific UKS spin channel as the CASSCF
-            # reference (mo_spin_ref), in which case the solver builds the guess
-            # via sort_mo from that channel and this embedding guess is skipped.
+            # QD-NEVPT2 runs on the real molecule and needs an embedding-partitioned
+            # full-molecule MO guess. NEVPT2 is embedded (solves on the cluster) and
+            # needs no such guess.
             _mo_guess = None
-            if (_method_key in ('QD-NEVPT2', 'NEVPT2') and self.mf_real is not None
-                    and self.mo_spin_ref is None):
+            if _method_key == 'QD-NEVPT2' and self.mf_real is not None:
                 _mo_guess, _, _ = self._build_full_mo_guess(
                     loc_2_dmet, norb_in_imp, core_1rdm_dmet)
 
@@ -433,7 +432,6 @@ class DMET:
                 'sa_weights'    : self.sa_weights,
                 'casscf_kwargs' : self.casscf_kwargs,
                 'mo_guess'      : _mo_guess,
-                'mo_spin_ref'   : self.mo_spin_ref,
                 'nevpt2_kwargs' : self.nevpt2_kwargs,
                 'qdnevpt2_kwargs': self.qdnevpt2_kwargs,
                 # --- DFT / open-shell options --------------------------------
@@ -709,7 +707,6 @@ class DMET:
             'use_density_fit'      : self.ints.use_density_fit  if method_key in ('RKS', 'UKS', 'ROKS') else False,
             'df_auxbasis'          : self.ints.df_auxbasis      if method_key in ('RKS', 'UKS', 'ROKS') else None,
             'mf_real'              : self.mf_real,
-            'mo_spin_ref'          : self.mo_spin_ref,
             'nevpt2_kwargs'        : self.nevpt2_kwargs,
             'qdnevpt2_kwargs'      : self.qdnevpt2_kwargs,
         }
