@@ -33,7 +33,8 @@ class DMET:
                   parallel=False, max_workers=None, bath_tol=1e-13,
                   xc='pbe', level_shift=0.0, spin_polarized=False,
                   mm_coords=None, mm_charges=None,
-                  ghost_ao_indices=None ):
+                  ghost_ao_indices=None,
+                  mo_spin_ref=None ):
 
         if is_translation_invariant:
             assert the_ints.TI_OK
@@ -105,6 +106,7 @@ class DMET:
         self.mm_coords  = np.asarray(mm_coords,  dtype=float) if mm_coords  is not None else None
         self.mm_charges = np.asarray(mm_charges, dtype=float) if mm_charges is not None else None
         self.ghost_ao_indices = np.asarray(ghost_ao_indices, dtype=int) if ghost_ao_indices is not None else None
+        self.mo_spin_ref      = mo_spin_ref
 
         self.use_symmetry = use_symmetry
         self.symmetry_map = symmetry_map  # user-provided {child_idx: parent_idx} or None
@@ -714,6 +716,7 @@ class DMET:
             'df_auxbasis'          : self.ints.df_auxbasis      if method_key in ('RKS', 'UKS', 'ROKS') else None,
             'mf_real'              : self.mf_real,
             'ghost_ao_weights_emb' : _ghost_ao_weights_emb,
+            'mo_spin_ref'          : self.mo_spin_ref,
             'nevpt2_kwargs'        : self.nevpt2_kwargs,
             'qdnevpt2_kwargs'      : self.qdnevpt2_kwargs,
         }

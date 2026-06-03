@@ -26,6 +26,7 @@ def solve(mf_real, ncas, nelecas,
           casscf_kwargs=None,
           nevpt2_kwargs=None,
           mo_guess=None,
+          mo_spin_ref=None,
           printoutput=True):
     '''
     Run CASSCF + NEVPT2 on the real physical molecule.
@@ -60,25 +61,26 @@ def solve(mf_real, ncas, nelecas,
     casscf_kwargs = casscf_kwargs or {}
     nevpt2_kwargs = nevpt2_kwargs or {}
 
-    # For a UKS open-shell reference (mo_occ is 2D = spin-resolved):
-    # seed the CASSCF active window with the UKS beta-HOMO (Pz, SOMO) and
-    # beta-LUMO (Pz*, first active virtual) so the Pz/Pz* pair falls in the
-    # active window rather than an energetically lower Cu 3d virtual.
-    # Only applied when no explicit mo_guess is provided (first run, no cache).
-    if mo_guess is None and np.ndim(getattr(mf_real, 'mo_occ', None)) == 2:
-        _nel    = mf_real.mol.nelectron
-        _ncore  = (_nel - (nelecas if nelecas is not None else 0)) // 2
-        _mo_b   = mf_real.mo_coeff[1]
-        _b_homo = int(np.where(mf_real.mo_occ[1] > 0)[0][-1])
-        if _b_homo == _ncore - 1 and _ncore + 1 < _mo_b.shape[1]:
-            # 3-way column rotation: β-HOMO → ncore (SOMO), β-LUMO → ncore+1 (active virt)
-            _mo_new = _mo_b.copy()
-            _mo_new[:, _ncore]     = _mo_b[:, _b_homo]
-            _mo_new[:, _ncore + 1] = _mo_b[:, _b_homo + 1]
-            _mo_new[:, _b_homo]    = _mo_b[:, _ncore + 1]
-            mo_guess = _mo_new
-            print(f"nevpt2::solve : UKS β-HOMO/LUMO seeded into CASSCF active window "
-                  f"[{_ncore}, {_ncore+1}] (Pz/Pz* orbital pair)")
+    # When mo_spin_ref is set ('alpha' or 'beta'), use that UKS spin channel as the
+    # CASSCF initial reference. sort_mo explicitly places the spin-HOMO and the
+    # ncas-1 orbitals above it into the active window, bypassing the ROHF energy
+    # ordering that would otherwise select a lower-lying Cu 3d virtual instead of
+    # the vacancy Pz/Pz* pair.
+    # mo_spin_ref=None: use whatever mo_guess was passed in (or ROHF default if None).
+    if mo_spin_ref is not None and mo_guess is None:
+        _spin_idx = {'alpha': 0, 'beta': 1}.get(mo_spin_ref)
+        if _spin_idx is None:
+            raise ValueError(f"nevpt2::solve: mo_spin_ref must be 'alpha', 'beta', or None; got {mo_spin_ref!r}")
+        if np.ndim(getattr(mf_real, 'mo_occ', None)) != 2:
+            raise ValueError("nevpt2::solve: mo_spin_ref requires a UKS/UHF reference (spin-resolved mo_occ)")
+        _mo_ref  = mf_real.mo_coeff[_spin_idx]
+        _occ_ref = mf_real.mo_occ[_spin_idx]
+        _homo    = int(np.where(_occ_ref > 0)[0][-1])
+        _caslst  = [_homo + i + 1 for i in range(ncas)]   # 1-indexed: HOMO, LUMO, ...
+        _mc_ref  = mcscf.CASSCF(mf_real, ncas, nelecas)
+        mo_guess = mcscf.addons.sort_mo(_mc_ref, _mo_ref, caslst=_caslst, base=1)
+        print(f"nevpt2::solve : mo_spin_ref={mo_spin_ref!r} — "
+              f"HOMO={_homo} (0-idx), caslst={_caslst}")
 
     ctx = silent_stdout() if not printoutput else nullcontext()
 
@@ -227,6 +229,7 @@ def execute(task):
         casscf_kwargs=task.get('casscf_kwargs', {}),
         nevpt2_kwargs=task.get('nevpt2_kwargs', {}),
         mo_guess=task.get('mo_guess'),
+        mo_spin_ref=task.get('mo_spin_ref'),
     )
 
     # Extract the 1-RDM for the dmet self-consistency loop.
