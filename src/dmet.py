@@ -33,7 +33,6 @@ class DMET:
                   parallel=False, max_workers=None, bath_tol=1e-13,
                   xc='pbe', level_shift=0.0, spin_polarized=False,
                   mm_coords=None, mm_charges=None,
-                  ghost_ao_indices=None,
                   mo_spin_ref=None ):
 
         if is_translation_invariant:
@@ -105,7 +104,6 @@ class DMET:
         self.spin_polarized = spin_polarized  # enable independent alpha/beta mu optimization
         self.mm_coords  = np.asarray(mm_coords,  dtype=float) if mm_coords  is not None else None
         self.mm_charges = np.asarray(mm_charges, dtype=float) if mm_charges is not None else None
-        self.ghost_ao_indices = np.asarray(ghost_ao_indices, dtype=int) if ghost_ao_indices is not None else None
         self.mo_spin_ref      = mo_spin_ref
 
         self.use_symmetry = use_symmetry
@@ -366,8 +364,13 @@ class DMET:
                 'dmet_fock'    : dmet_fock,
             })
 
+            # Build the embedding-partitioned full-molecule MO guess for NEVPT2,
+            # unless the user requested a specific UKS spin channel as the CASSCF
+            # reference (mo_spin_ref), in which case the solver builds the guess
+            # via sort_mo from that channel and this embedding guess is skipped.
             _mo_guess = None
-            if _method_key in ('QD-NEVPT2', 'NEVPT2') and self.mf_real is not None:
+            if (_method_key in ('QD-NEVPT2', 'NEVPT2') and self.mf_real is not None
+                    and self.mo_spin_ref is None):
                 _mo_guess, _, _ = self._build_full_mo_guess(
                     loc_2_dmet, norb_in_imp, core_1rdm_dmet)
 
@@ -430,6 +433,7 @@ class DMET:
                 'sa_weights'    : self.sa_weights,
                 'casscf_kwargs' : self.casscf_kwargs,
                 'mo_guess'      : _mo_guess,
+                'mo_spin_ref'   : self.mo_spin_ref,
                 'nevpt2_kwargs' : self.nevpt2_kwargs,
                 'qdnevpt2_kwargs': self.qdnevpt2_kwargs,
                 # --- DFT / open-shell options --------------------------------
@@ -663,16 +667,6 @@ class DMET:
             _dmet_oei_s = (self.ints.dmet_oei_s(loc_2_dmet, norb_in_imp)
                            if hasattr(self.ints, 'dmet_oei_s') else self.oei_s)
 
-        # Ghost p-AO weights per embedding orbital — guides active-space selection
-        # so the Pz/Pz* vacancy orbitals land in the CASSCF active window.
-        # ghost_ao_weights_emb[j] = sum over ghost p-AOs i of (ao2loc[i,:] @ loc_2_dmet[:,j])^2
-        _ghost_ao_weights_emb = None
-        if (self.ghost_ao_indices is not None
-                and method_key in ('CASSCF', 'NEVPT2', 'QD-NEVPT2')):
-            ao2loc   = self.ints.ao2loc          # (nao, Norbs)
-            _g_proj  = ao2loc[self.ghost_ao_indices, :] @ loc_2_dmet  # (n_ghost, norb_in_imp)
-            _ghost_ao_weights_emb = np.sum(_g_proj ** 2, axis=0)      # (norb_in_imp,)
-
         task = {
             'counter'       : counter,
             'method'        : method_key if not flag_rhf else 'flag_rhf',
@@ -715,7 +709,6 @@ class DMET:
             'use_density_fit'      : self.ints.use_density_fit  if method_key in ('RKS', 'UKS', 'ROKS') else False,
             'df_auxbasis'          : self.ints.df_auxbasis      if method_key in ('RKS', 'UKS', 'ROKS') else None,
             'mf_real'              : self.mf_real,
-            'ghost_ao_weights_emb' : _ghost_ao_weights_emb,
             'mo_spin_ref'          : self.mo_spin_ref,
             'nevpt2_kwargs'        : self.nevpt2_kwargs,
             'qdnevpt2_kwargs'      : self.qdnevpt2_kwargs,

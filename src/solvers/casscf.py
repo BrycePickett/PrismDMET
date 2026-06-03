@@ -19,7 +19,6 @@ def solve(const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
           frozen=None,
           mo_guess=None, ci_guess=None,
           oei_s=None, spin=None,
-          ghost_ao_weights_emb=None,
           **casscf_kwargs):
     '''
     Solve a dmet impurity problem at the CASSCF level.
@@ -158,31 +157,6 @@ def solve(const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
 
         _mo0 = mo_guess if mo_guess is not None else None
         _ci0 = ci_guess if ci_guess is not None else None
-
-        # Ghost p-AO guided active-space selection.
-        # ghost_ao_weights_emb[j] = ghost p-AO weight of embedding orbital j
-        # (computed by dmet.py from ao2loc and loc_2_dmet before calling this solver).
-        # After ROHF, transform to ROHF-MO basis and swap the virtual with the
-        # largest ghost weight into the first active virtual slot (ncore+1) so that
-        # the Pz* antibonding orbital is in the CAS window, not a Cu 3d virtual.
-        if ghost_ao_weights_emb is not None and ncas is not None and ncas > 0:
-            ncore_loc = mc.ncore
-            rohf_ghost_w = ghost_ao_weights_emb @ (mf.mo_coeff ** 2)  # (norb,)
-            virt_start   = ncore_loc + nelecas if nelecas is not None else ncore_loc + 1
-            active_virt  = virt_start  # first active virtual slot
-
-            if virt_start < norb:
-                pz_star = virt_start + int(np.argmax(rohf_ghost_w[virt_start:]))
-                print(f"casscf::solve : Ghost-AO weights — max virt at MO {pz_star} "
-                      f"(ghost_w={rohf_ghost_w[pz_star]:.3f}), "
-                      f"current active_virt={active_virt} "
-                      f"(ghost_w={rohf_ghost_w[active_virt]:.3f})")
-                if pz_star != active_virt:
-                    print(f"casscf::solve : Swapping MO {pz_star} (Pz*) → position {active_virt}")
-                    mo_new = mf.mo_coeff.copy()
-                    mo_new[:, [active_virt, pz_star]] = mo_new[:, [pz_star, active_virt]]
-                    _mo0 = mo_new  # override any existing guess
-
         mc.kernel(_mo0, _ci0)
 
         ncore = mc.ncore
@@ -319,6 +293,5 @@ def execute(task):
         ci_guess=task.get('ci_guess'),
         oei_s=task.get('oei_s'),
         spin=task.get('spin'),
-        ghost_ao_weights_emb=task.get('ghost_ao_weights_emb'),
         **task.get('casscf_kwargs', {}),
     )
