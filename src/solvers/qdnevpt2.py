@@ -177,19 +177,22 @@ def solve(const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
         nevpt_obj.compute_singles_amplitudes = compute_singles
         nevpt_obj.s_thresh_singles = s_thresh_singles
         nevpt_obj.s_thresh_doubles = s_thresh_doubles
+        # Oscillator strengths require real AO dipole integrals (mol.intor('int1e_r')),
+        # which the embedded dummy mol does not have. Always disabled.
+        nevpt_obj.compute_properties = False
         if nfrozen is not None:
             nevpt_obj.nfrozen = nfrozen
         for key, val in nevpt_kwargs.items():
             setattr(nevpt_obj, key, val)
 
-        e_tot, e_corr, osc = nevpt_obj.kernel()
+        e_tot, e_corr, _ = nevpt_obj.kernel()
 
         print("\nqdnevpt2::solve : QD-NEVPT2 state energies (excitation = state - state 0):")
         for i, (et, ec) in enumerate(zip(e_tot, e_corr)):
             de_ev = (et - e_tot[0]) * 27.21138602
             print(f"  State {i}: E_tot = {et:.10f} Ha  ΔE = {de_ev:+.4f} eV")
 
-    return e_tot, e_corr, osc, mc, nevpt_obj
+    return e_tot, e_corr, None, mc, nevpt_obj
 
 
 # ---------------------------------------------------------------------------
@@ -228,7 +231,6 @@ def execute(task):
     qdnevpt2_res = {
         'e_tot' : e_tot,
         'e_corr': e_corr,
-        'osc'   : osc,
         'mc'    : mc,
         'nevpt' : nevpt_obj,
     }
