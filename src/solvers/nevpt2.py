@@ -60,6 +60,26 @@ def solve(mf_real, ncas, nelecas,
     casscf_kwargs = casscf_kwargs or {}
     nevpt2_kwargs = nevpt2_kwargs or {}
 
+    # For a UKS open-shell reference (mo_occ is 2D = spin-resolved):
+    # seed the CASSCF active window with the UKS beta-HOMO (Pz, SOMO) and
+    # beta-LUMO (Pz*, first active virtual) so the Pz/Pz* pair falls in the
+    # active window rather than an energetically lower Cu 3d virtual.
+    # Only applied when no explicit mo_guess is provided (first run, no cache).
+    if mo_guess is None and np.ndim(getattr(mf_real, 'mo_occ', None)) == 2:
+        _nel    = mf_real.mol.nelectron
+        _ncore  = (_nel - (nelecas if nelecas is not None else 0)) // 2
+        _mo_b   = mf_real.mo_coeff[1]
+        _b_homo = int(np.where(mf_real.mo_occ[1] > 0)[0][-1])
+        if _b_homo == _ncore - 1 and _ncore + 1 < _mo_b.shape[1]:
+            # 3-way column rotation: β-HOMO → ncore (SOMO), β-LUMO → ncore+1 (active virt)
+            _mo_new = _mo_b.copy()
+            _mo_new[:, _ncore]     = _mo_b[:, _b_homo]
+            _mo_new[:, _ncore + 1] = _mo_b[:, _b_homo + 1]
+            _mo_new[:, _b_homo]    = _mo_b[:, _ncore + 1]
+            mo_guess = _mo_new
+            print(f"nevpt2::solve : UKS β-HOMO/LUMO seeded into CASSCF active window "
+                  f"[{_ncore}, {_ncore+1}] (Pz/Pz* orbital pair)")
+
     ctx = silent_stdout() if not printoutput else nullcontext()
 
     with ctx:

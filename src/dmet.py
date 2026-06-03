@@ -32,7 +32,8 @@ class DMET:
                   use_symmetry=False, symmetry_map=None,
                   parallel=False, max_workers=None, bath_tol=1e-13,
                   xc='pbe', level_shift=0.0, spin_polarized=False,
-                  mm_coords=None, mm_charges=None ):
+                  mm_coords=None, mm_charges=None,
+                  ghost_ao_indices=None ):
 
         if is_translation_invariant:
             assert the_ints.TI_OK
@@ -103,6 +104,7 @@ class DMET:
         self.spin_polarized = spin_polarized  # enable independent alpha/beta mu optimization
         self.mm_coords  = np.asarray(mm_coords,  dtype=float) if mm_coords  is not None else None
         self.mm_charges = np.asarray(mm_charges, dtype=float) if mm_charges is not None else None
+        self.ghost_ao_indices = np.asarray(ghost_ao_indices, dtype=int) if ghost_ao_indices is not None else None
 
         self.use_symmetry = use_symmetry
         self.symmetry_map = symmetry_map  # user-provided {child_idx: parent_idx} or None
@@ -659,6 +661,16 @@ class DMET:
             _dmet_oei_s = (self.ints.dmet_oei_s(loc_2_dmet, norb_in_imp)
                            if hasattr(self.ints, 'dmet_oei_s') else self.oei_s)
 
+        # Ghost p-AO weights per embedding orbital — guides active-space selection
+        # so the Pz/Pz* vacancy orbitals land in the CASSCF active window.
+        # ghost_ao_weights_emb[j] = sum over ghost p-AOs i of (ao2loc[i,:] @ loc_2_dmet[:,j])^2
+        _ghost_ao_weights_emb = None
+        if (self.ghost_ao_indices is not None
+                and method_key in ('CASSCF', 'NEVPT2', 'QD-NEVPT2')):
+            ao2loc   = self.ints.ao2loc          # (nao, Norbs)
+            _g_proj  = ao2loc[self.ghost_ao_indices, :] @ loc_2_dmet  # (n_ghost, norb_in_imp)
+            _ghost_ao_weights_emb = np.sum(_g_proj ** 2, axis=0)      # (norb_in_imp,)
+
         task = {
             'counter'       : counter,
             'method'        : method_key if not flag_rhf else 'flag_rhf',
@@ -700,9 +712,10 @@ class DMET:
             'level_shift'          : self.level_shift           if method_key in ('RKS', 'UKS', 'ROKS') else 0.0,
             'use_density_fit'      : self.ints.use_density_fit  if method_key in ('RKS', 'UKS', 'ROKS') else False,
             'df_auxbasis'          : self.ints.df_auxbasis      if method_key in ('RKS', 'UKS', 'ROKS') else None,
-            'mf_real'       : self.mf_real,
-            'nevpt2_kwargs' : self.nevpt2_kwargs,
-            'qdnevpt2_kwargs': self.qdnevpt2_kwargs,
+            'mf_real'              : self.mf_real,
+            'ghost_ao_weights_emb' : _ghost_ao_weights_emb,
+            'nevpt2_kwargs'        : self.nevpt2_kwargs,
+            'qdnevpt2_kwargs'      : self.qdnevpt2_kwargs,
         }
 
         result = SolverDispatcher.execute(task)
