@@ -41,6 +41,22 @@ _VIS_LABELS = {
 }
 
 
+def _parse_pyscf_label(label: str) -> Tuple[str, int]:
+    """
+    Recover (element, region) from a PySCF label written by QMMMBuilder.
+
+    Inverse of QMMMBuilder._pyscf_label:
+      'X-Cu1'    -> ('Cu', REGION_ECP)
+      'ghost-Cu' -> ('Cu', REGION_GHOST)
+      'Cu0'      -> ('Cu', REGION_QM)
+    """
+    if label.startswith('X-'):
+        return label[2:].rstrip('0123456789'), REGION_ECP
+    if label.startswith('ghost-'):
+        return label[len('ghost-'):].rstrip('0123456789'), REGION_GHOST
+    return label.rstrip('0123456789'), REGION_QM
+
+
 @dataclass
 class AtomRecord:
     """
@@ -107,6 +123,58 @@ class QMMMCluster:
         self.qm_charge     = qm_charge
         self.qm_spin       = qm_spin
         self.material_name = material_name
+
+    # ------------------------------------------------------------------
+    # Construction from a labeled XYZ
+    # ------------------------------------------------------------------
+
+    @classmethod
+    def from_xyz(
+        cls,
+        filename: str,
+        qm_charge: float = 0.0,
+        qm_spin: int = 0,
+        material_name: str = '',
+    ) -> 'QMMMCluster':
+        """
+        Build a QMMMCluster from a PySCF-labeled XYZ file.
+
+        The inverse of ``to_xyz(mode='pyscf')``: regions are inferred from the
+        label prefix ('X-' -> ECP, 'ghost-' -> ghost, else QM).  An optional
+        5th column is read as the point charge.  This lets an externally
+        relaxed geometry feed the PySCF/DMET path (to_pyscf_mol_atom,
+        basis_dict, ecp_dict, find_indices).
+
+        MM point charges are not encoded in a labeled XYZ, so only QM, ECP,
+        and ghost atoms are recovered; MM charges must be assigned separately.
+
+        Parameters
+        ----------
+        filename : str
+            Path to an XYZ whose first column holds PySCF labels.
+        qm_charge, qm_spin :
+            Values to store on the cluster (XYZ carries no charge/spin).
+        material_name : str
+            Label for headers.
+        """
+        path = Path(filename).expanduser()
+        atoms: List[AtomRecord] = []
+        with open(path) as f:
+            lines = f.readlines()
+        for line in lines[2:]:
+            parts = line.split()
+            if len(parts) < 4:
+                continue
+            label = parts[0]
+            coords = np.array([float(c) for c in parts[1:4]], dtype=float)
+            charge = float(parts[4]) if len(parts) >= 5 else 0.0
+            element, region = _parse_pyscf_label(label)
+            atoms.append(AtomRecord(
+                element=element, coords=coords,
+                charge=charge, region=region, pyscf_label=label,
+            ))
+        return cls(atoms, qm_charge=qm_charge, qm_spin=qm_spin,
+                   material_name=material_name)
 
     # ------------------------------------------------------------------
     # Filtered atom views
@@ -310,9 +378,12 @@ class QMMMCluster:
             'mm'      — MM point charges only.
             'qm_ghost'— QM + ghost atoms.
         mode : str
-            'visual'  — raw element labels (e.g. 'Cu', 'O').
-            'pyscf'   — PySCF labels (e.g. 'Cu0', 'X-Cu1', 'ghost-Cu').
-                        Useful for debugging mol.atom.
+            'visual'    — raw element labels (e.g. 'Cu', 'O').
+            'pyscf'     — PySCF labels (e.g. 'Cu0', 'X-Cu1', 'ghost-Cu').
+                          Useful for debugging mol.atom.
+            'highlight' — ECP atoms → 'Th', ghost atoms → 'X', all others
+                          keep their element symbol.  Useful for region
+                          visualization in VESTA/Avogadro.
         include_charges : bool
             If True, append the point charge as a 5th column (produces
             a .qxyz-style file readable by Molden/Chemcraft).
@@ -333,8 +404,8 @@ class QMMMCluster:
         if region not in region_map:
             raise ValueError(f"region must be one of {list(region_map.keys())}")
             
-        if mode not in ('visual', 'pyscf'):
-            raise ValueError("mode must be 'visual' or 'pyscf'")
+        if mode not in ('visual', 'pyscf', 'highlight'):
+            raise ValueError("mode must be 'visual', 'pyscf', or 'highlight'")
 
         selected = [a for a in self._atoms if a.region in region_map[region]]
 
@@ -347,6 +418,9 @@ class QMMMCluster:
             for a in selected:
                 if mode == 'pyscf':
                     label = a.pyscf_label
+                elif mode == 'highlight':
+                    vis   = _VIS_LABELS[a.region]
+                    label = vis if vis else a.element
                 else:
                     label = a.element
                 x, y, z = a.coords
@@ -371,6 +445,74 @@ class QMMMCluster:
             f'  MM total Q : {self.mm_charges.sum():+.6f}',
         ]
         return '\n'.join(lines)
+
+    def find_indices(
+        self,
+        mol_atom: list,
+        region: str = 'qm',
+        use_slices: bool = False,
+        precision: int = 8,
+    ) -> list:
+        """
+        Return the positions of *region* atoms within a ``mol.atom`` list.
+
+        Matches by coordinate, so the result indexes into *mol_atom* and can be
+        passed straight to PySCF fragment specifications (e.g. DMET
+        ``make_fragments``).
+
+        Parameters
+        ----------
+        mol_atom : list of (label, coords)
+            A PySCF ``mol.atom`` list, as produced by ``to_pyscf_mol_atom()``.
+        region : str
+            'qm', 'ecp', 'mm', 'ghost', or 'all'.
+        use_slices : bool
+            If True, compress contiguous index runs into ``slice`` objects.
+        precision : int
+            Decimal places used for coordinate matching.
+
+        Example
+        -------
+        >>> qm_idx = cluster.find_indices(mol.atom, region='qm', use_slices=True)
+        >>> myInts = make_fragments(mol, myInts, [qm_idx])
+        """
+        _region_map = {
+            'qm': REGION_QM, 'ecp': REGION_ECP,
+            'mm': REGION_MM, 'ghost': REGION_GHOST,
+        }
+        if region == 'all':
+            selected = self._atoms
+        elif region in _region_map:
+            selected = [a for a in self._atoms if a.region == _region_map[region]]
+        else:
+            raise ValueError(
+                f"region must be one of {list(_region_map) + ['all']}"
+            )
+
+        ref_map = {
+            tuple(round(float(c), precision) for c in coords): i
+            for i, (_label, coords) in enumerate(mol_atom)
+        }
+        indices = []
+        for a in selected:
+            key = tuple(round(float(c), precision) for c in a.coords)
+            if key in ref_map:
+                indices.append(ref_map[key])
+        indices.sort()
+
+        if not use_slices or not indices:
+            return indices
+
+        result = []
+        start = prev = indices[0]
+        for idx in indices[1:]:
+            if idx == prev + 1:
+                prev = idx
+            else:
+                result.append(slice(start, prev + 1) if start != prev else start)
+                start = prev = idx
+        result.append(slice(start, prev + 1) if start != prev else start)
+        return result
 
     def __repr__(self) -> str:
         return (
