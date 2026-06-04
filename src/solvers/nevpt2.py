@@ -111,6 +111,13 @@ def solve(const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
             nevpt_obj.verbose = 5 if printoutput else 0
             for key, val in nevpt2_kwargs.items():
                 setattr(nevpt_obj, key, val)
+            # mrpt.NEVPT.kernel() calls self.canonicalize(..., cas_natorb=True), which
+            # invokes mc.cas_natorb() → orth.orth_ao(mc.mol, 'meta_lowdin') → fails on
+            # the dummy mol (no real AO basis). Override to skip the natorb step; Fock
+            # diagonalization still canonicalizes inactive/external orbitals correctly.
+            _mc_ref = mc
+            nevpt_obj.canonicalize = lambda mo, ci, eris=None, sort=False, cas_natorb=True, casdm1=None, verbose=None: \
+                _mc_ref.canonicalize(mo, ci, eris, sort, False, casdm1, verbose)
             e_c = nevpt_obj.kernel()
 
             e_tot  = np.array([nevpt_obj.e_tot])
@@ -150,11 +157,14 @@ def solve(const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
             e_tot  = np.zeros(nstates)
             e_corr = np.zeros(nstates)
             nevpt_objs = []
+            _mc_ref = mc
             for i in range(nstates):
                 nevpt_i = mrpt.NEVPT(mc, root=i)
                 nevpt_i.verbose = 5 if printoutput else 0
                 for key, val in nevpt2_kwargs.items():
                     setattr(nevpt_i, key, val)
+                nevpt_i.canonicalize = lambda mo, ci, eris=None, sort=False, cas_natorb=True, casdm1=None, verbose=None: \
+                    _mc_ref.canonicalize(mo, ci, eris, sort, False, casdm1, verbose)
                 e_c_i = nevpt_i.kernel()
                 e_tot[i]  = nevpt_i.e_tot
                 e_corr[i] = e_c_i

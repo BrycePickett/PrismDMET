@@ -178,8 +178,13 @@ def solve(const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
         nevpt_obj.s_thresh_singles = s_thresh_singles
         nevpt_obj.s_thresh_doubles = s_thresh_doubles
         # Oscillator strengths require real AO dipole integrals (mol.intor('int1e_r')),
-        # which the embedded dummy mol does not have. Always disabled.
-        nevpt_obj.compute_properties = False
+        # which the embedded dummy mol does not have. Override compute_properties to
+        # populate properties["osc_strengths"] with zeros so print_results does not
+        # crash, while skipping the actual dipole integral computation.
+        _n = sa_nstates
+        def _skip_osc():
+            nevpt_obj.properties["osc_strengths"] = np.zeros(_n - 1) if _n > 1 else None
+        nevpt_obj.compute_properties = _skip_osc
         if nfrozen is not None:
             nevpt_obj.nfrozen = nfrozen
         for key, val in nevpt_kwargs.items():
@@ -207,7 +212,10 @@ def execute(task):
     (dmet_oei / dmet_fock / dmet_tei / norb / nel / nimp), so no physical
     molecule is needed.
     """
-    e_tot, e_corr, osc, mc, nevpt_obj = solve(
+    # Extract solver-level parameters from qdnevpt2_kwargs; remaining keys
+    # go to setattr on the Prism NEVPT object via nevpt_kwargs.
+    _kw = dict(task.get('qdnevpt2_kwargs', {}))
+    e_tot, e_corr, _, mc, nevpt_obj = solve(
         task['const'],
         task['dmet_oei'],
         task['dmet_fock'],
@@ -221,8 +229,14 @@ def execute(task):
         sa_nstates=task.get('sa_nstates', 3),
         sa_weights=task.get('sa_weights'),
         chempot_imp=task.get('chempot_imp', 0.0),
+        prism_backend=_kw.pop('prism_backend', 'opt_einsum'),
+        nfrozen=_kw.pop('nfrozen', None),
+        compute_singles=_kw.pop('compute_singles', False),
+        s_thresh_singles=_kw.pop('s_thresh_singles', 1e-8),
+        s_thresh_doubles=_kw.pop('s_thresh_doubles', 1e-8),
+        select_reference=_kw.pop('select_reference', None),
         casscf_kwargs=task.get('casscf_kwargs', {}),
-        nevpt_kwargs=task.get('qdnevpt2_kwargs', {}),
+        nevpt_kwargs=_kw,
         spin=task.get('spin'),
         oei_s=task.get('oei_s'),
     )
