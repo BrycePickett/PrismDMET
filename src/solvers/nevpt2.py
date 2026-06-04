@@ -19,7 +19,7 @@ oneshot-dmet only.
 '''
 
 import numpy as np
-from pyscf import ao2mo, gto, scf, mcscf, mrpt
+from pyscf import ao2mo, fci as pyscf_fci, gto, scf, mcscf, mrpt
 from ..utils import silent_stdout, nullcontext
 
 _eV = 27.21138602
@@ -30,7 +30,8 @@ def solve(const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
           nstates=1, sa_weights=None,
           chempot_imp=0.0,
           casscf_kwargs=None, nevpt2_kwargs=None,
-          spin=None, printoutput=True):
+          spin=None, oei_s=None,
+          printoutput=True):
     '''
     Run CASSCF + NEVPT2 on the DMET embedding cluster.
 
@@ -52,6 +53,12 @@ def solve(const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
     casscf_kwargs : dict – extra attributes set on the CASSCF object
     nevpt2_kwargs : dict – extra attributes set on each mrpt.NEVPT object
     spin          : int or None – cluster spin (2S); defaults to nel % 2
+    oei_s         : ndarray (norb, norb) or None – spin-asymmetry correction
+                    0.5*(F_alpha - F_beta) in the embedding basis; injected into
+                    all CASSCF/CASCI CI solvers via fix_casscf_for_nonsinglet_env.
+                    Applied only to the reference (consistent with standard
+                    ROHF-NEVPT2 and with pDMET); NEVPT2 perturber denominators
+                    use spin-free canonical orbital energies.
     printoutput   : bool
 
     Returns
@@ -103,6 +110,15 @@ def solve(const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
             mc.verbose = 5 if printoutput else 0
             for key, val in casscf_kwargs.items():
                 setattr(mc, key, val)
+
+            if _use_rohf and oei_s is not None and not np.all(np.abs(oei_s) < 1e-8):
+                _uhf_fci = pyscf_fci.direct_uhf.FCI()
+                _uhf_fci.verbose = mc.fcisolver.verbose
+                mc.fcisolver = _uhf_fci
+            if oei_s is not None:
+                from .qcsolver_utils import fix_casscf_for_nonsinglet_env
+                mc = fix_casscf_for_nonsinglet_env(mc, oei_s)
+
             mc.kernel()
 
             print(f"\nnevpt2::solve : embedded CASSCF energy = {mc.e_tot:.10f} Ha")
@@ -132,10 +148,20 @@ def solve(const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
 
             # Step 1: SA-CASSCF for optimized orbitals
             mc_sa = mcscf.CASSCF(mf, ncas, nelecas)
+            # Swap base FCI solver BEFORE state_average_ so the SA wrapper inherits it.
+            # direct_spin1.FCI cannot accept [h1e_a, h1e_b]; direct_uhf.FCI handles it.
+            if _use_rohf and oei_s is not None and not np.all(np.abs(oei_s) < 1e-8):
+                _uhf_fci = pyscf_fci.direct_uhf.FCI()
+                _uhf_fci.verbose = mc_sa.fcisolver.verbose
+                mc_sa.fcisolver = _uhf_fci
             mc_sa = mcscf.state_average_(mc_sa, weights=sa_weights.tolist())
             mc_sa.verbose = 5 if printoutput else 0
             for key, val in casscf_kwargs.items():
                 setattr(mc_sa, key, val)
+            if oei_s is not None:
+                from .qcsolver_utils import fix_casscf_for_nonsinglet_env
+                mc_sa = fix_casscf_for_nonsinglet_env(mc_sa, oei_s)
+
             mc_sa.kernel()
             sa_mo = mc_sa.mo_coeff
 
@@ -147,6 +173,16 @@ def solve(const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
             mc = mcscf.CASCI(mf, ncas, nelecas)
             mc.verbose = 4 if printoutput else 0
             mc.fcisolver.nroots = nstates
+
+            if oei_s is not None:
+                from .qcsolver_utils import fix_casscf_for_nonsinglet_env
+                if _use_rohf and not np.all(np.abs(oei_s) < 1e-8):
+                    _uhf_fci = pyscf_fci.direct_uhf.FCI()
+                    _uhf_fci.verbose = mc.fcisolver.verbose
+                    mc.fcisolver = _uhf_fci
+                    mc.fcisolver.nroots = nstates
+                mc = fix_casscf_for_nonsinglet_env(mc, oei_s)
+
             mc.kernel(sa_mo)
 
             print(f"\nnevpt2::solve : Multi-root CASCI energies:")
@@ -181,6 +217,41 @@ def solve(const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
 
 
 # ---------------------------------------------------------------------------
+# mf_real reconstruction helper (used by the QD-NEVPT2 solver, which still
+# runs on the real physical molecule). Kept here for that solver's import.
+# ---------------------------------------------------------------------------
+
+def _reconstruct_mf_from_task(task):
+    """
+    Reconstruct a minimal PySCF RHF object from serialized task dict arrays.
+
+    Because PySCF Mole and SCF objects cannot be pickled across process
+    boundaries, dmet.doexact() serializes the physical MF state as:
+        task['mol_dumps']   : str   - from pyscf.gto.Mole.dumps()
+        task['mf_mo_coeff'] : ndarray
+        task['mf_mo_energy']: ndarray
+        task['mf_mo_occ']   : ndarray
+        task['mf_e_tot']    : float
+
+    The returned object can be passed directly into a solver as mf_real.
+    No SCF iterations are re-run.
+    """
+    import pyscf.gto
+    import pyscf.scf
+
+    mol = pyscf.gto.Mole.loads(task['mol_dumps'])
+    mol.build(verbose=0)
+
+    mf = pyscf.scf.ROHF(mol) if mol.spin != 0 else pyscf.scf.RHF(mol)
+    # Inject pre-computed MO state — no SCF cycles run.
+    mf.mo_coeff  = task['mf_mo_coeff']
+    mf.mo_energy = task['mf_mo_energy']
+    mf.mo_occ    = task['mf_mo_occ']
+    mf.e_tot     = task['mf_e_tot']
+    return mf
+
+
+# ---------------------------------------------------------------------------
 # SolverDispatcher entry point
 # ---------------------------------------------------------------------------
 
@@ -209,6 +280,7 @@ def execute(task):
         casscf_kwargs=task.get('casscf_kwargs', {}),
         nevpt2_kwargs=task.get('nevpt2_kwargs', {}),
         spin=task.get('spin'),
+        oei_s=task.get('oei_s'),
     )
 
     # 1-RDM (cluster orbital basis) for the dmet driver: prefer the NEVPT2
