@@ -4,10 +4,7 @@ import numpy as np
 
 
 def project_amo_manually(old_mo_coeff, ncas, ncore, new_fock, norb):
-    '''Project old CASSCF active MOs onto the current embedding basis to preserve the active space across u-matrix updates.
-
-    Returns (new_mo, fidelity): new_mo is [core | active | virtual]; fidelity eigenvalues near 1 mean the active space survived intact.
-    '''
+    '''Project old CASSCF active MOs onto the current embedding basis. Returns (new_mo, fidelity); fidelity near 1 means active space survived intact.'''
     assert old_mo_coeff.shape == (norb, norb), \
         f"project_amo_manually: expected old_mo_coeff shape ({norb},{norb}), got {old_mo_coeff.shape}"
     nocc = ncore + ncas
@@ -43,10 +40,7 @@ def project_amo_manually(old_mo_coeff, ncas, ncore, new_fock, norb):
 
 
 def fix_casscf_for_nonsinglet_env(mc, h1e_s):
-    '''Wrap a CASSCF object to inject a spin-dependent 1e potential h1e_s = 0.5*(h_alpha - h_beta).
-
-    Adapted from mrh.my_dmet.pyscf_casscf.fix_my_CASSCF_for_nonsinglet_env.
-    '''
+    '''Wrap a CASSCF object to inject spin-dependent 1e potential h1e_s = 0.5*(h_alpha - h_beta) (mrh-style).'''
     from pyscf import lib
 
     if h1e_s is None or np.all(np.abs(h1e_s) < 1e-8):

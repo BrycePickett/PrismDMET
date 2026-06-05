@@ -1,24 +1,4 @@
-'''
-    EOM-CCSD solver for QC-dmet.
-
-    Supports one-shot dmet only. Using this solver inside the self-consistent
-    dmet loop (selfconsistent()) will raise a RuntimeError.
-
-    Supported EOM-CCSD variants (set via eom_type parameter):
-        'EE-Singlet'  — Excitation energies, singlet manifold (default)
-        'EE-Triplet'  — Excitation energies, triplet manifold
-        'EE-SpinFlip' — Spin-flip excitation energies
-        'EE'          — General excitation energies (ms-conserving)
-        'IP'          — Ionization potentials (N -> N-1)
-        'IP*'         — Perturbative IP-EOMCCSDStar correction
-        'EA'          — Electron affinities (N -> N+1)
-        'EA*'         — Perturbative EA-EOMCCSDStar correction
-
-    The solver returns the ground-state CCSD energy as impurity_energy so that
-    the dmet chemical potential optimization (numeleccostfunction) is stable.
-    Excitation energies and absolute excited-state energies are accessible via
-    the 'results' key returned in the auxiliary dictionary.
-'''
+'''EOM-CCSD solver for DMET embedding clusters (one-shot only); eom_type sets variant: EE-Singlet/Triplet/SpinFlip, EE, IP/IP*, EA/EA*.'''
 
 import numpy as np
 from pyscf import ao2mo, gto, scf

@@ -3,10 +3,7 @@ import os
 from ..utils import silent_stdout, nullcontext
 
 def solve( const, oei, fock, tei, norb, nel, nimp, chempot_imp=0.0, printoutput=False ):
-    """
-    Solves the impurity problem using Block2 DMRG.
-    Returns (impurity_energy, one_rdm).
-    """
+    """Solve the impurity problem with Block2 DMRG. Returns (impurity_energy, rdm1)."""
 
     # Import block2 here so that QC-dmet can run without it if not using DMRG
     try:
@@ -29,8 +26,7 @@ def solve( const, oei, fock, tei, norb, nel, nimp, chempot_imp=0.0, printoutput=
         )
         driver.initialize_system(n_sites=norb, n_elec=nel, spin=0)
 
-        # Fiedler orbital reordering reduces 1D entanglement in the MPS chain.
-        # The block2 driver reverses the permutation automatically in get_1pdm/get_2pdm.
+        # Fiedler reordering reduces MPS entanglement; block2 auto-reverses it in get_1pdm/get_2pdm.
         mpo = driver.get_qc_mpo(h1e=fock_copy, g2e=tei, iprint=0, reorder='fiedler')
 
         bond_dims = [250, 250, 250, 250, 250]

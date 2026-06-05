@@ -1,10 +1,4 @@
-'''QD-NEVPT2 solver for QC-dmet via Prism (https://github.com/sokolov-group/prism).
-
-Runs SA-CASSCF + QD-NEVPT2 on the DMET embedding cluster (dummy mol, no real AO basis).
-Total energies lack nuclear repulsion (state-independent; cancels in excitation energies).
-Oscillator strengths are always zero — dipole integrals require real AO basis.
-One-shot DMET only (sc_method='NONE'). sa_nstates >= 2 required.
-'''
+'''SA-CASSCF + QD-NEVPT2 solver for DMET embedding clusters via Prism; one-shot only, sa_nstates >= 2.'''
 
 import numpy as np
 from pyscf import ao2mo, gto, scf, mcscf
@@ -88,8 +82,7 @@ def solve(const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
             print(f"qdnevpt2::solve : embedded ROHF (spin={_spin}, nel={nel}, norb={norb})")
 
         mc = mcscf.CASSCF(mf, ncas, nelecas)
-        # Swap base FCI solver BEFORE state_average_ so the SA wrapper inherits it.
-        # direct_spin1.FCI cannot accept [h1e_a, h1e_b]; direct_uhf.FCI handles it.
+        # Must swap FCI solver before state_average_; direct_uhf.FCI required for spin-asymmetric [h1e_a, h1e_b].
         if _use_rohf and oei_s is not None and not np.all(np.abs(oei_s) < 1e-8):
             _uhf_fci = pyscf_fci.direct_uhf.FCI()
             _uhf_fci.verbose = mc.fcisolver.verbose
@@ -121,10 +114,7 @@ def solve(const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
         nevpt_obj.compute_singles_amplitudes = compute_singles
         nevpt_obj.s_thresh_singles = s_thresh_singles
         nevpt_obj.s_thresh_doubles = s_thresh_doubles
-        # Oscillator strengths require real AO dipole integrals (mol.intor('int1e_r')),
-        # which the embedded dummy mol does not have. Override compute_properties to
-        # populate properties["osc_strengths"] with zeros so print_results does not
-        # crash, while skipping the actual dipole integral computation.
+        # Dummy mol has no real AO basis; stub out osc_strengths so print_results does not crash.
         _n = sa_nstates
         def _skip_osc():
             nevpt_obj.properties["osc_strengths"] = np.zeros(_n - 1) if _n > 1 else None
@@ -146,8 +136,7 @@ def solve(const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
 
 def execute(task):
     """SolverDispatcher entry point for the embedded QD-NEVPT2 solver."""
-    # Extract solver-level parameters from qdnevpt2_kwargs; remaining keys
-    # go to setattr on the Prism NEVPT object via nevpt_kwargs.
+    # Extract named solver params from qdnevpt2_kwargs; remainder forwarded to Prism NEVPT object.
     _kw = dict(task.get('qdnevpt2_kwargs', {}))
     e_tot, e_corr, _, mc, nevpt_obj = solve(
         task['const'],

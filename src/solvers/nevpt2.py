@@ -1,8 +1,4 @@
-'''NEVPT2 solver for QC-dmet embedded clusters.
-
-Runs SA-CASSCF then per-state SC-NEVPT2 on the DMET embedding cluster (impurity + bath).
-One-shot DMET only.
-'''
+'''NEVPT2 solver for DMET embedding clusters (SA-CASSCF + per-state SC-NEVPT2, one-shot only).'''
 
 import numpy as np
 from pyscf import ao2mo, fci as pyscf_fci, gto, scf, mcscf, mrpt
@@ -18,11 +14,7 @@ def solve(const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
           casscf_kwargs=None, nevpt2_kwargs=None,
           spin=None, oei_s=None,
           printoutput=True):
-    '''Run CASSCF + NEVPT2 on the DMET embedding cluster. Returns (e_tot, e_corr, mc, nevpt_objs).
-
-    oei_s: 0.5*(F_alpha - F_beta) injected into CI solvers via fix_casscf_for_nonsinglet_env;
-           applied to reference only, not NEVPT2 perturber denominators.
-    '''
+    '''Run CASSCF + NEVPT2 on the DMET embedding cluster. Returns (e_tot, e_corr, mc, nevpt_objs).'''
     casscf_kwargs = casscf_kwargs or {}
     nevpt2_kwargs = nevpt2_kwargs or {}
 

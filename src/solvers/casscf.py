@@ -1,10 +1,4 @@
-'''
-CASSCF solver for QC-dmet.
-
-Solves the dmet impurity problem at the CASSCF level using PySCF's mcscf module.
-Supports single-state and state-averaged CASSCF, warm restart via mo_guess/ci_guess,
-and open-shell environments via oei_s spin-potential injection.
-'''
+'''CASSCF solver for DMET embedding clusters using PySCF's mcscf module.'''
 
 import numpy as np
 from pyscf import ao2mo, gto, scf, mcscf

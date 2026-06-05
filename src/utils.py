@@ -24,14 +24,7 @@ from contextlib import contextmanager, nullcontext
 
 @contextmanager
 def silent_stdout():
-    '''
-    Context manager that safely suppresses stdout (C-level and Python-level).
-    Restores stdout correctly even if an exception is raised inside the block.
-
-    Usage:
-        with silent_stdout():
-            noisy_library_call()
-    '''
+    '''Suppress C-level and Python-level stdout, restoring it safely even if an exception is raised.'''
     sys.stdout.flush()
     old_fd = os.dup(sys.stdout.fileno())
     devnull = os.open(os.devnull, os.O_WRONLY)
