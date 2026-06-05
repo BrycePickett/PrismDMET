@@ -13,6 +13,7 @@ def solve(const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
           chempot_imp=0.0,
           casscf_kwargs=None, nevpt2_kwargs=None,
           spin=None, oei_s=None,
+          cas_select='energy',
           printoutput=True):
     '''Run CASSCF + NEVPT2 on the DMET embedding cluster. Returns (e_tot, e_corr, mc, nevpt_objs).'''
     casscf_kwargs = casscf_kwargs or {}
@@ -62,6 +63,19 @@ def solve(const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
                 from .qcsolver_utils import fix_casscf_for_nonsinglet_env
                 mc = fix_casscf_for_nonsinglet_env(mc, oei_s)
 
+            if cas_select == 'impurity':
+                C = mf.mo_coeff
+                if C.ndim == 3:
+                    C = C[0] + C[1]
+                weights = np.sum(np.abs(C[:nimp, :]) ** 2, axis=0)
+                ncore = mc.ncore
+                frontiers = sorted(range(ncore, norb), key=lambda i: -weights[i])
+                selected_orbs = sorted(frontiers[:ncas])
+                mc.sort_mo(selected_orbs, base=0)
+                if printoutput:
+                    print(f"nevpt2::solve : CAS selection by impurity localization")
+                    print(f"  ncore={ncore}, selected {ncas} orbitals: {selected_orbs}")
+
             mc.kernel()
 
             print(f"\nnevpt2::solve : embedded CASSCF energy = {mc.e_tot:.10f} Ha")
@@ -103,6 +117,19 @@ def solve(const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
             if oei_s is not None:
                 from .qcsolver_utils import fix_casscf_for_nonsinglet_env
                 mc_sa = fix_casscf_for_nonsinglet_env(mc_sa, oei_s)
+
+            if cas_select == 'impurity':
+                C = mf.mo_coeff
+                if C.ndim == 3:
+                    C = C[0] + C[1]
+                weights = np.sum(np.abs(C[:nimp, :]) ** 2, axis=0)
+                ncore = mc_sa.ncore
+                frontiers = sorted(range(ncore, norb), key=lambda i: -weights[i])
+                selected_orbs = sorted(frontiers[:ncas])
+                mc_sa.sort_mo(selected_orbs, base=0)
+                if printoutput:
+                    print(f"nevpt2::solve : CAS selection by impurity localization (SA)")
+                    print(f"  ncore={ncore}, selected {ncas} orbitals: {selected_orbs}")
 
             mc_sa.kernel()
             sa_mo = mc_sa.mo_coeff
@@ -178,6 +205,7 @@ def execute(task):
         nevpt2_kwargs=task.get('nevpt2_kwargs', {}),
         spin=task.get('spin'),
         oei_s=task.get('oei_s'),
+        cas_select=task.get('cas_select', 'energy'),
     )
 
     # 1-RDM (cluster orbital basis) for the dmet driver: prefer the NEVPT2

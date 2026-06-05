@@ -13,6 +13,7 @@ def solve(const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
           frozen=None,
           mo_guess=None, ci_guess=None,
           oei_s=None, spin=None,
+          cas_select='energy',
           **casscf_kwargs):
     '''Solve a DMET impurity problem at the CASSCF level. Returns (impurity_energy, rdm1, cas_results).'''
     if ncas is None:
@@ -105,6 +106,19 @@ def solve(const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
         if oei_s is not None:
             from .qcsolver_utils import fix_casscf_for_nonsinglet_env
             mc = fix_casscf_for_nonsinglet_env(mc, oei_s)
+
+        if cas_select == 'impurity':
+            C = mf.mo_coeff
+            if C.ndim == 3:
+                C = C[0] + C[1]
+            weights = np.sum(np.abs(C[:nimp, :]) ** 2, axis=0)
+            ncore = mc.ncore
+            frontiers = sorted(range(ncore, norb), key=lambda i: -weights[i])
+            selected_orbs = sorted(frontiers[:ncas])
+            mc.sort_mo(selected_orbs, base=0)
+            if printoutput:
+                print(f"casscf::solve : CAS selection by impurity localization")
+                print(f"  ncore={ncore}, selected {ncas} orbitals: {selected_orbs}")
 
         _mo0 = mo_guess if mo_guess is not None else None
         _ci0 = ci_guess if ci_guess is not None else None
@@ -218,5 +232,6 @@ def execute(task):
         ci_guess=task.get('ci_guess'),
         oei_s=task.get('oei_s'),
         spin=task.get('spin'),
+        cas_select=task.get('cas_select', 'energy'),
         **task.get('casscf_kwargs', {}),
     )
