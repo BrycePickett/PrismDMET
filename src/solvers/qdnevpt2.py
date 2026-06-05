@@ -76,7 +76,8 @@ def solve(const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
         mf._eri      = ao2mo.restore(8, tei, norb)
         mf.scf(dm_guess_rhf)
         if not mf.converged:
-            mf = mf.newton()
+            mf.max_cycle = 300
+            mf.diis_space = 12
             mf.scf(mf.make_rdm1())
         if _use_rohf:
             print(f"qdnevpt2::solve : embedded ROHF (spin={_spin}, nel={nel}, norb={norb})")
