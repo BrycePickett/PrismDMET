@@ -1,16 +1,4 @@
-"""
-Functions to translate a QMMMCluster into a PySCF mean-field object.
-
-Atom labeling:
-  QM atoms   : 'Cu0', 'O0'       - Standard labels.
-  ECP atoms  : 'X-Cu1', 'X-O1'  - 'X-' prefix for custom ECPs.
-  Ghost atoms: 'ghost-Cu'        - PySCF ghost prefix.
-
-Usage:
->>> from prismdmet.qmmm import build_meanfield
->>> mf, mol = build_meanfield(cluster, qm_basis='def2-svp', xc='b3lyp')
->>> mf.kernel()
-"""
+"""Translate a QMMMCluster into a PySCF Mole and mean-field object."""
 
 from __future__ import annotations
 
@@ -27,27 +15,7 @@ def build_mol(
     max_memory: int = 200_000,
     ecp_lib:   Optional[Dict[str, str]] = None,
 ):
-    """
-    Build and return a PySCF ``gto.Mole`` from a ``QMMMCluster``.
-
-    Parameters
-    ----------
-    cluster : QMMMCluster
-        Output of QMMMBuilder.build().
-    qm_basis : str
-        Basis set name for QM and ghost atoms (e.g. 'def2-svp').
-    verbose : int
-        PySCF verbosity level (4 = INFO).
-    max_memory : int
-        Maximum memory in MB for PySCF.
-    ecp_lib : dict, optional
-        Mapping {element: ecp_string}.  Defaults to ECP_LIBRARY from
-        ecp_library.py (Cu and O Pauli repulsion ECPs).
-
-    Returns
-    -------
-    mol : pyscf.gto.Mole  (built, ready for SCF)
-    """
+    """Build and return a PySCF gto.Mole from a QMMMCluster (built, ready for SCF)."""
     try:
         import pyscf.gto as gto
     except ImportError as e:
@@ -84,42 +52,7 @@ def build_meanfield(
     max_memory: int   = 200_000,
     ecp_lib:    Optional[Dict[str, str]] = None,
 ) -> Tuple:
-    """
-    Build a PySCF QM/MM mean-field object and return ``(mf, mol)``.
-
-    The mean field is NOT yet converged — call ``mf.kernel()`` or
-    ``mf.scf()`` to run the SCF.
-
-    Automatically selects:
-      - RKS  for closed-shell systems (cluster.qm_spin == 0).
-      - UKS  for open-shell systems   (cluster.qm_spin != 0).
-
-    Point charges (ECP + MM combined) are embedded via
-    ``pyscf.qmmm.mm_charge`` using ``cluster.mm_coords`` and
-    ``cluster.mm_charges``, matching Michael's PySCF script convention.
-
-    Parameters
-    ----------
-    cluster : QMMMCluster
-    qm_basis : str
-        Basis set for QM and ghost atoms.
-    xc : str
-        DFT exchange-correlation functional.
-    conv_tol : float
-        SCF convergence threshold.
-    max_cycle : int
-        Maximum number of SCF cycles.
-    density_fit : bool
-        Use density fitting (RI) to accelerate the SCF.
-    verbose : int
-    max_memory : int  (MB)
-    ecp_lib : dict, optional
-
-    Returns
-    -------
-    mf  : pyscf RKS or UKS object wrapped with mm_charge
-    mol : pyscf.gto.Mole (already built)
-    """
+    """Build a PySCF QM/MM mean-field (RKS or UKS) with mm_charge embedding. Returns (mf, mol); not yet converged."""
     try:
         import pyscf.scf
         import pyscf.dft

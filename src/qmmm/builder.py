@@ -1,13 +1,4 @@
-"""
-QMMMBuilder: Generalized SKZCAM cluster building framework.
-
-Supported qm_method values:
-- 'SKZCAM': Sphere-expansion snapping to magic-number plateaus.
-
-Lattice tiling:
-The supercell builder uses the full 3x3 lattice_vectors matrix from
-MaterialConfig to support any Bravais lattice.
-"""
+"""SKZCAM QM/MM cluster builder for periodic crystals."""
 
 from __future__ import annotations
 
@@ -32,134 +23,7 @@ from .cluster import (
 
 
 class QMMMBuilder:
-    """
-    Build a QM/MM embedding cluster for a periodic crystal.
-
-    Quick-start — Cu2O, 19-Cu SKZCAM (identical to Michael's output)
-    -----------------------------------------------------------------
-    >>> from prismdmet.qmmm import QMMMBuilder
-    >>> from prismdmet.qmmm import cu2o_matproj_config
-    >>> builder = QMMMBuilder(
-    ...     config         = cu2o_matproj_config,
-    ...     qm_method      = 'SKZCAM',
-    ...     target_element = 'Cu',
-    ...     center_element = 'Cu',
-    ...     qm_target_size = 19,
-    ...     ecp_layers     = 1,
-    ...     total_layers   = 12.5,
-    ...     mm_termination = 'Cu',
-    ...     defect_type    = 'pristine',
-    ... )
-    >>> cluster = builder.build()
-    >>> print(cluster.summary())
-
-    Parameters
-    ----------
-    config : MaterialConfig
-        Crystal physics. May use lattice_constant (cubic) or
-        lattice_vectors (general 3x3).
-    qm_method : str
-        Cluster-building method.  Only 'SKZCAM' is currently implemented.
-    target_element : str
-        Element whose count defines the SKZCAM magic number (e.g. 'Cu').
-    center_element : str
-        Element to place at the cluster origin (e.g. 'Cu').
-    qm_target_size : int, optional
-        Number of target_element atoms in the QM region.
-        Exactly one of qm_target_size / qm_radius must be supplied.
-    qm_radius : float, optional
-        Explicit QM sphere radius in Å (bypasses SKZCAM scan).
-    remove_unbonded : bool
-        If True, drop QM atoms left with no bonding neighbor after the sphere
-        cut (isolated artifacts at non-SKZCAM radii).  Default False.
-    ecp_layers : float
-        ECP shell thickness/size in units of config.characteristic_length.
-        Interpretation depends on ecp_shape (see below).
-    ecp_shape : str
-        Shape of the ECP boundary shell.  Default 'shell'.
-        'shell'  — conformal shell ecp_layers * characteristic_length Å thick
-                   outward from the QM surface (existing behavior).
-        'bonds'  — int(ecp_layers) chemical bond layers outward from QM
-                   (bond-traversal, element-agnostic).
-        'sphere' — absolute sphere of total radius ecp_layers *
-                   characteristic_length Å from the central atom, with QM
-                   atoms stripped.  Unlike 'shell', the boundary is fixed
-                   to the origin, not measured outward from the QM surface.
-    pc_layers : float, optional
-        MM shell thickness beyond the ECP shell, in units of
-        config.characteristic_length.  Mutually exclusive with total_layers.
-    total_layers : float, optional
-        Total cluster radius in units of config.characteristic_length,
-        measured from the central atom (origin-based).  Reproduces
-        Michael's ``get_sphere(central, sphere_layers=N)`` behavior so the
-        cluster size is constant across all QM sizes.  Mutually exclusive
-        with pc_layers.
-    mm_termination : str
-        Element used to fully-coordinate the outer MM boundary
-        Element that forms the boundary of the outer passivation shell.
-        Only this element is added during boundary coordination.
-        Default 'Cu' matches Michael's production model (cluster terminates
-        in Cu, adding Cu atoms to satisfy dangling-bond coordination).
-        Use 'O' to terminate in oxygen instead.
-    defect_type : str
-        'pristine'       — no defect.
-        'vacancy'        — remove central defect_element; replace with
-                           a ghost-basis atom (spin + 1 automatically).
-        'substitutional' — swap central defect_element for
-                           substitutional_element.
-        'interstitial'   — add interstitial_element at interstitial_position
-                           as a QM atom.
-    defect_element : str, optional
-        Element to remove/replace (defaults to center_element).
-    defect_site : array-like, optional
-        Cartesian coordinates (Å) of the site to make defective.  The nearest
-        QM defect_element atom is selected.  When None, the central atom is
-        used (matching the previous behavior).
-    substitutional_element : str, optional
-        Element to insert for 'substitutional' defect_type.
-    substitutional_spin : int, optional
-        2*S for the substitutional system.  Defaults to 0.
-    interstitial_element : str, optional
-        Element to insert for 'interstitial' defect_type.
-    interstitial_position : array-like, optional
-        Cartesian coordinates (Å) of the interstitial atom.  The atom is added
-        to the QM region with its canonical charge; use defect_charge /
-        defect_spin to set the desired charge state.
-    defect_charge : int
-        Charge added to the QM region relative to the neutral defect, e.g.
-        -1 for V_Cu^- or +1 for V_Cu^+.  The MM environment still represents
-        the neutral bulk, so the full system carries a net charge equal to
-        defect_charge.  Default 0.
-    defect_spin : int, optional
-        Absolute override of qm_spin (2*S).  When None, the automatic value
-        is used (vacancy -> 1, substitutional -> substitutional_spin).
-    defects : list of dict, optional
-        Multiple defects applied in sequence (overrides defect_type when set).
-        Each dict is one defect:
-          {'type': 'vacancy',        'site': [x,y,z], 'element': 'Cu'}
-          {'type': 'substitutional', 'site': [x,y,z], 'element': 'Zn',
-                                      'target': 'Cu'}
-          {'type': 'interstitial',   'element': 'Cu', 'position': [x,y,z]}
-        Keys 'site'/'element'/'target' default to the central atom /
-        defect_element / substitutional_element as appropriate.  Because the
-        spin of a multi-defect system is ambiguous, defect_spin is required
-        when defects is set.
-    alt_charges : dict, optional
-        Override canonical_charges for MM charge assignment.
-    coordination_scaling : bool
-        Apply coordination-scaling to MM charges (default True).
-    neutralize : bool
-        Balance the boundary point charges after assignment (default True).
-    neutralize_target : str
-        Where the boundary charge is balanced to (default 'qm_charge').
-        'qm_charge'   — the ECP+MM point charges sum to -qm_charge, so the
-                        full QM/MM system is charge-neutral.  Independent of
-                        the charge magnitudes in alt_charges, matching the
-                        embedded-cluster convention.
-        'environment' — neutralize the bulk environment to zero before
-                        partitioning.  The MM sum then scales with the
-                        alt_charges magnitude (legacy behavior).
-    """
+    """Build a QM/MM embedding cluster for a periodic crystal using the SKZCAM method."""
 
     def __init__(
         self,
@@ -292,38 +156,12 @@ class QMMMBuilder:
         self._qm_spin   = 0
         self._lattice_cache: dict = {}
 
-    # ==========================================================================
-    # Public API
-    # ==========================================================================
-
     def find_skzcam_sizes(self, upper_bound: int = 200) -> Dict[int, float]:
-        """
-        Return all valid SKZCAM magic numbers up to *upper_bound*.
-
-        Returns
-        -------
-        dict  {n_target_atoms: minimum_radius_angstrom}
-        """
+        """Return {n_target_atoms: min_radius_angstrom} for all valid SKZCAM magic numbers up to upper_bound."""
         return self._find_qm_skzcam(upper_bound=upper_bound)
 
     def build(self) -> QMMMCluster:
-        """
-        Construct the full QM/MM cluster and return a QMMMCluster.
-
-        Steps
-        -----
-        1. Determine QM radius (SKZCAM scan or direct).
-        2. Cut QM sphere; fully-coordinate target_element at boundary.
-        3. Assign formal charges to QM region (no coordination-scaling).
-        4. Build ECP shell (formal charges, no scaling).
-        5. Build full environment with coord-scaling and neutralization.
-           Two modes:
-           - total_layers: origin-based absolute sphere (Michael's method).
-             Total cluster size is constant across all QM sizes.
-           - pc_layers: conformal shell grown outward from the QM surface.
-        6. Partition into regions; apply defect.
-        7. Package into QMMMCluster.
-        """
+        """Construct the full QM/MM cluster and return a QMMMCluster."""
         cfg = self.config
 
         # --- 1. QM radius ---------------------------------------------------
@@ -424,10 +262,6 @@ class QMMMBuilder:
         # --- 8. Package -------------------------------------------------------
         return self._package(partitioned)
 
-    # ==========================================================================
-    # SKZCAM scan  (port of find_qm_SKZCAM)
-    # ==========================================================================
-
     def _find_qm_skzcam(self, upper_bound: int) -> Dict[int, float]:
         """Return {n_target: min_radius} dict for all SKZCAM plateaus."""
         cfg = self.config
@@ -467,10 +301,6 @@ class QMMMBuilder:
 
         return {k: v for k, v in result.items() if k <= upper_bound}
 
-    # ==========================================================================
-    # Geometry helpers
-    # ==========================================================================
-
     @staticmethod
     def _dist2(c1, c2) -> float:
         return sum((x - y) ** 2 for x, y in zip(c1, c2))
@@ -481,18 +311,7 @@ class QMMMBuilder:
         dimensions: list,
         center=False,
     ) -> Tuple[list, list]:
-        """
-        Tile *unitcell* into a supercell of size *dimensions*.
-
-        Uses the full 3x3 lattice_vectors matrix: new coordinates are
-            r_new = r_atom + l*a1 + w*a2 + h*a3
-        where a1, a2, a3 are the rows of config.lattice_vectors.
-        This handles all Bravais lattice types correctly.
-
-        Results are memoized per (dimensions, center); a build calls this
-        several times at the same size, and the largest tilings are expensive.
-        Callers treat the returned lattice as read-only.
-        """
+        """Tile unitcell into a supercell using the full 3x3 lattice_vectors matrix; results are memoized."""
         cfg = self.config
         lv  = cfg.lattice_vectors   # shape (3, 3); rows = lattice vectors
         p   = cfg.precision
@@ -562,13 +381,7 @@ class QMMMBuilder:
         self, unitcell: list, center_type: str, rad: float,
         remove_unbonded: bool = False,
     ) -> Tuple[list, list]:
-        """
-        Cut a sphere of radius *rad* from the lattice centered on *center_type*.
-
-        If *remove_unbonded* is True, atoms at the boundary that have no
-        bonding neighbor inside the sphere (isolated cut artifacts) are
-        stripped.
-        """
+        """Cut a sphere of radius rad from the lattice centered on center_type."""
         cfg = self.config
         cl  = cfg.characteristic_length
         tol = cfg.tol
@@ -653,11 +466,7 @@ class QMMMBuilder:
         return cluster
 
     def _rebalance_mm(self, partitioned: list, target: float) -> list:
-        """
-        Distribute charge over under-coordinated MM atoms so the ECP+MM point
-        charges sum to *target*.  With target = -qm_charge the full QM/MM
-        system is neutral regardless of the alt_charges magnitude.
-        """
+        """Distribute charge over under-coordinated MM atoms so ECP+MM sums to target."""
         cfg   = self.config
         p     = cfg.precision
         fracs = self._get_coordinations(partitioned)
@@ -680,12 +489,7 @@ class QMMMBuilder:
         return result
 
     def _get_shell(self, cluster: list, shell_layers: float) -> list:
-        """
-        Return atoms within shell_layers * characteristic_length of *cluster*.
-
-        Surface-based (conformal): shell thickness is measured outward from
-        the surface of *cluster*, not from the central atom.
-        """
+        """Return atoms within shell_layers * characteristic_length outward from the surface of cluster."""
         cfg       = self.config
         cl        = cfg.characteristic_length
         tol       = cfg.tol
@@ -743,13 +547,7 @@ class QMMMBuilder:
         return shell_atoms
 
     def _get_sphere_absolute(self, central_atom: list, rad: float) -> list:
-        """
-        Return all atoms within *rad* Å of *central_atom* (origin-based).
-
-        Reproduces Michael's ``get_sphere(central, sphere_layers=N)``.
-        The sphere boundary is fixed to the central atom regardless of the
-        QM size, so total cluster size is constant across scaling studies.
-        """
+        """Return all atoms within rad Å of central_atom (origin-based, constant across QM size scaling)."""
         cfg = self.config
         cl  = cfg.characteristic_length
         tol = cfg.tol
@@ -777,14 +575,7 @@ class QMMMBuilder:
         ]
 
     def _get_layers(self, cluster: list, n_layers: int) -> Dict[int, list]:
-        """
-        Bond-layer traversal outward from *cluster*.
-
-        Returns {layer_index: [atoms]} where layer 0 is *cluster* and
-        layer i contains atoms bonded to layer i-1 but not in any earlier
-        layer.  Uses cKDTree on a bounding supercell aligned to the cluster
-        center.
-        """
+        """Return {layer_index: [atoms]} from bond-layer traversal outward from cluster (layer 0)."""
         cfg    = self.config
         p      = cfg.precision
         cutoff = cfg.bond_cutoff + cfg.tol
@@ -854,14 +645,7 @@ class QMMMBuilder:
     def _fully_coordinate(
         self, cluster: list, atom_type: Optional[str] = None
     ) -> list:
-        """
-        Add missing bond-level neighbors to fully coordinate *cluster*.
-
-        Uses bond-layer traversal so only atoms genuinely bonded to boundary
-        sites are added.  If *atom_type* is given, only atoms of that element
-        are added (e.g. 'Cu' adds only Cu to satisfy dangling-bond
-        coordination at the cluster boundary).
-        """
+        """Add bond-level neighbors to fully coordinate cluster boundary; optionally restricted to atom_type."""
         layers    = self._get_layers(cluster, n_layers=1)
         new_atoms = layers.get(1, [])
         if atom_type:
@@ -907,21 +691,10 @@ class QMMMBuilder:
         result.sort(key=lambda a: (a[5], self._dist2(a[1:4], center[1:4])))
         return result, round(qm_charge, 6)
 
-    # ==========================================================================
-    # Defect handlers
-    # ==========================================================================
-
     def _select_defect_index(
         self, partitioned: list, site, element: str
     ) -> Optional[int]:
-        """
-        Index of the QM *element* atom to make defective.
-
-        With *site* (Cartesian coords) the nearest such atom is chosen; with
-        None the central one is used.  partitioned is sorted by
-        (region, distance-from-center), so the first QM *element* atom is the
-        central one.
-        """
+        """Return index of the QM element atom nearest to site, or the central atom if site is None."""
         candidates = [
             (i, at) for i, at in enumerate(partitioned)
             if at[5] == REGION_QM and at[0] == element
@@ -952,16 +725,7 @@ class QMMMBuilder:
 
     def _apply_substitutional(self, partitioned: list, site=None,
                               element=None, target=None) -> list:
-        """
-        Swap the selected *target* QM atom for *element* (the replacement).
-
-        The substituted atom keeps its position.  Its charge is set from
-        canonical_charges if available; otherwise it inherits the original
-        element's charge.
-
-        Note: canonical_charges must include the replacement element if
-        charge accuracy is required.
-        """
+        """Swap the selected target QM atom for element, inheriting position and updating charge."""
         sub_el  = element or self.substitutional_element
         target  = target or self.defect_element
         charges = self.alt_charges or self.config.canonical_charges
@@ -980,12 +744,7 @@ class QMMMBuilder:
         return result
 
     def _apply_interstitial(self, partitioned: list, element, position) -> list:
-        """
-        Add *element* at *position* as a QM atom.
-
-        The atom carries its canonical charge, which is added to qm_charge.
-        Raises if the position coincides with an existing atom.
-        """
+        """Add element at position as a QM atom with its canonical charge."""
         p       = self.config.precision
         charges = self.alt_charges or self.config.canonical_charges
         pos     = [round(float(c), p) for c in position]
@@ -1027,20 +786,8 @@ class QMMMBuilder:
             "'vacancy', 'substitutional', 'interstitial'."
         )
 
-    # ==========================================================================
-    # Packaging → QMMMCluster
-    # ==========================================================================
-
     def _pyscf_label(self, element: str, region: int) -> str:
-        """
-        Map (element, region) → PySCF mol.atom label.
-
-        Follows Michael's file_utils.py convention:
-          QM (0)    → 'Cu0', 'O0'          (suffix = region index)
-          ECP (1)   → 'X-Cu1', 'X-O1'      (X- prefix; PySCF ECP-eligible)
-          Ghost (3) → 'ghost-Cu'            (PySCF native ghost-basis syntax)
-          MM (2)    → element only          (not in mol.atom)
-        """
+        """Map (element, region) to PySCF mol.atom label: QM→'Cu0', ECP→'X-Cu1', ghost→'ghost-Cu', MM→element."""
         if region == REGION_QM:
             return f'{element}0'
         if region == REGION_ECP:

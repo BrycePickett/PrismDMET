@@ -1,13 +1,4 @@
-"""
-MaterialConfig: Dataclass describing the bulk crystal physics for QM/MM embedding.
-All length units are Angstroms.
-
-Lattice representation
-----------------------
-Provide either:
-  - `lattice_constant` (float): Assumes a simple cubic lattice.
-  - `lattice_vectors` (3x3 array-like): General Bravais lattice support.
-"""
+"""MaterialConfig: bulk crystal parameters for QM/MM embedding (Angstroms; cubic or general Bravais lattice)."""
 
 from __future__ import annotations
 
@@ -18,35 +9,7 @@ from typing import Dict, List, Optional
 
 @dataclass
 class MaterialConfig:
-    """
-    Container for the material-specific parameters used by QMMMBuilder.
-
-    Parameters
-    ----------
-    unitcell : list of [str, float, float, float]
-        Cartesian coordinates (Å) of each basis atom in the primitive cell.
-        Format: [['Cu', x, y, z], ['O', x, y, z], ...]
-    canonical_charges : dict
-        Formal ionic charges, e.g. {'Cu': 1.0, 'O': -2.0}.
-    bulk_coordinations : dict
-        Ideal bulk coordination number for each species,
-        e.g. {'Cu': 2, 'O': 4}.  Used for coordination-scaling.
-    bond_cutoff : float
-        Nearest-neighbor distance (Å) below which two atoms are
-        considered bonded.
-    lattice_constant : float, optional
-        Cubic lattice parameter (Å).  Auto-builds a diagonal
-        ``lattice_vectors`` matrix.  Provide this OR ``lattice_vectors``.
-    lattice_vectors : array-like (3, 3), optional
-        Full 3x3 lattice matrix in Å.  Rows are the three lattice vectors
-        a1, a2, a3.  Provide this OR ``lattice_constant``.
-    precision : int
-        Number of decimal places kept on coordinates (default 8).
-    ecp_exclude : list of str
-        Elements excluded from the ECP shell (e.g. ['O']).
-    name : str
-        Human-readable material label for logging / file headers.
-    """
+    """Material-specific parameters for QMMMBuilder (unitcell, charges, coordinations, lattice)."""
 
     unitcell:          List[List]
     canonical_charges: Dict[str, float]
@@ -80,10 +43,6 @@ class MaterialConfig:
             a = self.lattice_constant
             self.lattice_vectors = np.diag([a, a, a]).astype(float)
 
-    # ------------------------------------------------------------------
-    # Derived quantities (always computed from lattice_vectors)
-    # ------------------------------------------------------------------
-
     @property
     def tol(self) -> float:
         """Floating-point tolerance derived from precision."""
@@ -91,13 +50,7 @@ class MaterialConfig:
 
     @property
     def characteristic_length(self) -> float:
-        """
-        The shortest lattice vector norm (Å).
-
-        Used to convert shell thickness (in 'layer' units) to Å, and to
-        estimate supercell dimensions.  For cubic systems this equals
-        ``lattice_constant`` exactly, preserving backward compatibility.
-        """
+        """The shortest lattice vector norm (Å); used to convert layer units to Å."""
         return float(np.min(np.linalg.norm(self.lattice_vectors, axis=1)))
 
 

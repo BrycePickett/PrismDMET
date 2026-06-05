@@ -1,14 +1,4 @@
-"""
-Hard-coded ECP parameters for the boundary (repulsion) region.
-
-These use PySCF's native parse_ecp string format. They are nelec=0
-pseudopotentials that contribute only a Pauli repulsion potential;
-no electrons are placed on these atoms.
-"""
-
-# ---------------------------------------------------------------------------
-# Raw ECP strings — PySCF format (nelec 0 → repulsion-only)
-# ---------------------------------------------------------------------------
+"""Nelec=0 Pauli repulsion ECPs for QM/MM boundary atoms in PySCF parse_ecp string format."""
 
 _CU_ECP_STR = """\
 Cu nelec 0
@@ -37,11 +27,6 @@ O D
 2      8.164798000            -3.312124000
 """
 
-# ---------------------------------------------------------------------------
-# Public registry: maps element symbol → raw ECP string
-# Add new elements here to extend the library.
-# ---------------------------------------------------------------------------
-
 ECP_LIBRARY: dict = {
     'Cu': _CU_ECP_STR,
     'O':  _O_ECP_STR,
@@ -49,11 +34,7 @@ ECP_LIBRARY: dict = {
 
 
 def get_ecp_string(element: str) -> str:
-    """
-    Return the raw ECP string for *element*.
-
-    Raises KeyError if the element is not in the library.
-    """
+    """Return the raw ECP string for element; raises KeyError if not in the library."""
     if element not in ECP_LIBRARY:
         raise KeyError(
             f"No ECP parameters found for element '{element}'. "

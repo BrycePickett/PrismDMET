@@ -1,10 +1,4 @@
-"""
-Auxiliary basis sets for density-fitted QM/MM calculations.
-
-Stores raw Gaussian basis strings (def2-universal-jkfit, valence-only)
-compatible with GTH pseudopotentials. Use QMMMCluster.auxbasis_dict() to
-obtain a mol.auxbasis-ready dict keyed by PySCF atom labels.
-"""
+"""Def2-universal-jkfit auxiliary basis sets (valence-only, GTH-compatible) for density-fitted QM/MM."""
 
 _CU2O_JKFIT_O = '''
 O    S
