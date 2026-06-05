@@ -3,6 +3,59 @@
 import numpy as np
 
 
+def select_cas_orbitals(mc, cas_select, ncas, nimp, norb,
+                        ao2eo=None, ao_mol_dumps=None, ao_labels=None):
+    '''Pick the CAS active orbitals and reorder mc.mo_coeff so they occupy the active window.
+
+    cas_select:
+      'energy'       - no reordering (default PySCF energy ordering).
+      'impurity'     - rank frontier MOs by impurity localization weight and take the ncas largest.
+      'ao_character' - mrh-style: rank MOs by projection onto ao_labels and take the ncas largest.
+
+    Returns the selected orbital index list (1-based PySCF convention via base=0 sort_mo),
+    or None when cas_select == 'energy'.
+    '''
+    if cas_select == 'energy':
+        return None
+
+    C = mc.mo_coeff
+    if C.ndim == 3:
+        C = C[0] + C[1]
+
+    if cas_select == 'impurity':
+        weights = np.sum(np.abs(C[:nimp, :]) ** 2, axis=0)
+        frontier = range(mc.ncore, norb)
+    elif cas_select == 'ao_character':
+        weights = _ao_character_weights(C, ao2eo, ao_mol_dumps, ao_labels)
+        frontier = range(norb)
+    else:
+        raise ValueError(f"select_cas_orbitals: unknown cas_select='{cas_select}'")
+
+    selected = sorted(sorted(frontier, key=lambda i: -weights[i])[:ncas])
+    mc.mo_coeff = mc.sort_mo(selected, base=0)
+    return selected
+
+
+def _ao_character_weights(emb_mo, ao2eo, ao_mol_dumps, ao_labels):
+    '''Projection of each embedded MO onto the named AO labels (mrh getorbindex / mo_comps style).
+
+    Uses plain Lowdin orthogonalization (pre_orth_ao=None) instead of pyscf's mo_comps, whose
+    default meta-lowdin ANO reference fails on GTH/ECP/ghost-atom systems such as Cu2O.
+    '''
+    from pyscf import gto
+    from pyscf.lo.orth import lowdin
+
+    ao_mol = gto.loads(ao_mol_dumps)
+    ao_mo  = ao2eo @ emb_mo                       # embedded MOs in AO basis
+    s      = ao_mol.intor_symmetric('int1e_ovlp')
+    idx    = ao_mol.search_ao_label(ao_labels)
+    if len(idx) == 0:
+        raise ValueError(f"ao_character selection: no AOs match labels {ao_labels}")
+    c_orth = lowdin(s)
+    mo1    = c_orth[:, idx].T @ s @ ao_mo
+    return np.einsum('ki,ki->i', mo1, mo1)
+
+
 def project_amo_manually(old_mo_coeff, ncas, ncore, new_fock, norb):
     '''Project old CASSCF active MOs onto the current embedding basis. Returns (new_mo, fidelity); fidelity near 1 means active space survived intact.'''
     assert old_mo_coeff.shape == (norb, norb), \

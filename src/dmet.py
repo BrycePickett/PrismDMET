@@ -33,7 +33,7 @@ class DMET:
                   parallel=False, max_workers=None, bath_tol=1e-13,
                   xc='pbe', level_shift=0.0, spin_polarized=False,
                   mm_coords=None, mm_charges=None,
-                  include_spin_oei=False, cas_select='energy' ):
+                  include_spin_oei=False, cas_select='energy', ao_labels=None ):
 
         if is_translation_invariant:
             assert the_ints.TI_OK
@@ -80,6 +80,7 @@ class DMET:
         self.sa_weights    = sa_weights
         self.casscf_kwargs = casscf_kwargs or {}
         self.cas_select    = cas_select
+        self.ao_labels     = ao_labels
         self.cas_results   = []   # populated by doexact() when method='CASSCF'
         self.mf_real       = mf_real
         self.qdnevpt2_kwargs   = qdnevpt2_kwargs or {}
@@ -407,6 +408,9 @@ class DMET:
                 'sa_nstates'    : self.sa_nstates,
                 'sa_weights'    : self.sa_weights,
                 'cas_select'    : self.cas_select,
+                'ao_labels'     : self.ao_labels,
+                'ao_mol_dumps'  : self.ints.mol.dumps() if self.cas_select == 'ao_character' else None,
+                'ao2eo'         : (self.ints.ao2loc @ loc_2_dmet[:, :norb_in_imp]) if self.cas_select == 'ao_character' else None,
                 'casscf_kwargs' : self.casscf_kwargs,
                 'mo_guess'      : _mo_guess,
                 'nevpt2_kwargs' : self.nevpt2_kwargs,
@@ -606,6 +610,10 @@ class DMET:
             'nelecas'       : self.nelecas,
             'sa_nstates'    : self.sa_nstates,
             'sa_weights'    : self.sa_weights,
+            'cas_select'    : self.cas_select,
+            'ao_labels'     : self.ao_labels,
+            'ao_mol_dumps'  : self.ints.mol.dumps() if self.cas_select == 'ao_character' else None,
+            'ao2eo'         : (self.ints.ao2loc @ loc_2_dmet[:, :norb_in_imp]) if self.cas_select == 'ao_character' else None,
             'casscf_kwargs' : self.casscf_kwargs,
             'mo_guess'      : _mo_guess_cas,
             'ci_guess'      : _ci_guess_cas,
