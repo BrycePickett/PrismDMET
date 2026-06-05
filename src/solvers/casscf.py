@@ -115,7 +115,7 @@ def solve(const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
             ncore = mc.ncore
             frontiers = sorted(range(ncore, norb), key=lambda i: -weights[i])
             selected_orbs = sorted(frontiers[:ncas])
-            mc.sort_mo(selected_orbs, base=0)
+            mc.mo_coeff = mc.sort_mo(selected_orbs, base=0)
             if printoutput:
                 print(f"casscf::solve : CAS selection by impurity localization")
                 print(f"  ncore={ncore}, selected {ncas} orbitals: {selected_orbs}")

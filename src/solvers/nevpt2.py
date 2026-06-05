@@ -71,7 +71,7 @@ def solve(const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
                 ncore = mc.ncore
                 frontiers = sorted(range(ncore, norb), key=lambda i: -weights[i])
                 selected_orbs = sorted(frontiers[:ncas])
-                mc.sort_mo(selected_orbs, base=0)
+                mc.mo_coeff = mc.sort_mo(selected_orbs, base=0)
                 if printoutput:
                     print(f"nevpt2::solve : CAS selection by impurity localization")
                     print(f"  ncore={ncore}, selected {ncas} orbitals: {selected_orbs}")
@@ -126,7 +126,7 @@ def solve(const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
                 ncore = mc_sa.ncore
                 frontiers = sorted(range(ncore, norb), key=lambda i: -weights[i])
                 selected_orbs = sorted(frontiers[:ncas])
-                mc_sa.sort_mo(selected_orbs, base=0)
+                mc_sa.mo_coeff = mc_sa.sort_mo(selected_orbs, base=0)
                 if printoutput:
                     print(f"nevpt2::solve : CAS selection by impurity localization (SA)")
                     print(f"  ncore={ncore}, selected {ncas} orbitals: {selected_orbs}")
