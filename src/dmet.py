@@ -32,7 +32,8 @@ class DMET:
                   use_symmetry=False, symmetry_map=None,
                   parallel=False, max_workers=None, bath_tol=1e-13,
                   xc='pbe', level_shift=0.0, spin_polarized=False,
-                  mm_coords=None, mm_charges=None ):
+                  mm_coords=None, mm_charges=None,
+                  include_spin_oei=False ):
 
         if is_translation_invariant:
             assert the_ints.TI_OK
@@ -160,6 +161,13 @@ class DMET:
         self.time_cf  = 0.0
         self.time_func= 0.0
         self.time_grad= 0.0
+
+        # Opt-in injection of the spin-asymmetry 1e potential 0.5*(F_a - F_b) into
+        # the correlated solvers (mrh-style treatment of a spin-polarized
+        # environment). Default off: the embedded ROHF + spin-adapted CASSCF
+        # reference is correct on its own; the cluster-projected ||dmet_oei_s|| is
+        # still printed per fragment as a diagnostic so its magnitude can be judged.
+        self.include_spin_oei = include_spin_oei
 
         # Auto-detect open-shell reference from localintegrals
         if hasattr(self.ints, 'loc_spin_oei'):
@@ -574,11 +582,20 @@ class DMET:
                 print("DMET::CASSCF : MO shape mismatch, starting fresh.")
                 _mo_guess_cas = None
 
-        # Spin oei for open-shell environments (all correlated embedded solvers)
+        # Spin-asymmetry 1e potential projected onto the cluster. Its norm
+        # quantifies how much environmental spin polarization the active space
+        # would feel; it is only injected into the solver when include_spin_oei
+        # is set (the injection path is still experimental).
         _dmet_oei_s = None
-        if method_key in ('CASSCF', 'NEVPT2', 'QD-NEVPT2'):
-            _dmet_oei_s = (self.ints.dmet_oei_s(loc_2_dmet, norb_in_imp)
-                           if hasattr(self.ints, 'dmet_oei_s') else self.oei_s)
+        if (method_key in ('CASSCF', 'NEVPT2', 'QD-NEVPT2')
+                and hasattr(self.ints, 'dmet_oei_s')):
+            _vsp = self.ints.dmet_oei_s(loc_2_dmet, norb_in_imp)
+            if _vsp is not None:
+                _tag = 'APPLIED' if self.include_spin_oei else 'diagnostic only'
+                print(f"DMET :: spin-oei : ||dmet_oei_s||_F (cluster, {norb_in_imp} orb) "
+                      f"= {np.linalg.norm(_vsp):.6f}  [{_tag}]")
+                if self.include_spin_oei:
+                    _dmet_oei_s = _vsp
 
         task = {
             'counter'       : counter,

@@ -202,7 +202,9 @@ def solve(const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
                 nevpt_i.canonicalize = lambda mo, ci, eris=None, sort=False, cas_natorb=True, casdm1=None, verbose=None: \
                     _mc_ref.canonicalize(mo, ci, eris, sort, False, casdm1, verbose)
                 e_c_i = nevpt_i.kernel()
-                e_tot[i]  = nevpt_i.e_tot
+                # mc.e_tot is the full multi-root CASCI array; nevpt_i.e_tot would
+                # broadcast (e_corr + array). Take the scalar total for root i.
+                e_tot[i]  = mc.e_tot[i] + e_c_i
                 e_corr[i] = e_c_i
                 nevpt_objs.append(nevpt_i)
 
@@ -214,41 +216,6 @@ def solve(const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
             print(f"  {i:>5d}  {et:>16.10f}  {ec:>14.10f}  {de_ev:>+16.4f}")
 
     return e_tot, e_corr, mc, nevpt_objs
-
-
-# ---------------------------------------------------------------------------
-# mf_real reconstruction helper (used by the QD-NEVPT2 solver, which still
-# runs on the real physical molecule). Kept here for that solver's import.
-# ---------------------------------------------------------------------------
-
-def _reconstruct_mf_from_task(task):
-    """
-    Reconstruct a minimal PySCF RHF object from serialized task dict arrays.
-
-    Because PySCF Mole and SCF objects cannot be pickled across process
-    boundaries, dmet.doexact() serializes the physical MF state as:
-        task['mol_dumps']   : str   - from pyscf.gto.Mole.dumps()
-        task['mf_mo_coeff'] : ndarray
-        task['mf_mo_energy']: ndarray
-        task['mf_mo_occ']   : ndarray
-        task['mf_e_tot']    : float
-
-    The returned object can be passed directly into a solver as mf_real.
-    No SCF iterations are re-run.
-    """
-    import pyscf.gto
-    import pyscf.scf
-
-    mol = pyscf.gto.Mole.loads(task['mol_dumps'])
-    mol.build(verbose=0)
-
-    mf = pyscf.scf.ROHF(mol) if mol.spin != 0 else pyscf.scf.RHF(mol)
-    # Inject pre-computed MO state — no SCF cycles run.
-    mf.mo_coeff  = task['mf_mo_coeff']
-    mf.mo_energy = task['mf_mo_energy']
-    mf.mo_occ    = task['mf_mo_occ']
-    mf.e_tot     = task['mf_e_tot']
-    return mf
 
 
 # ---------------------------------------------------------------------------
