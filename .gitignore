@@ -25,3 +25,6 @@ build/
 lib/build/
 lib/object/
 lib/objects/
+
+# Local developer docs (verbose reference material, not version-controlled)
+docs/
