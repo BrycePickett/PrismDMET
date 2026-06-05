@@ -40,8 +40,8 @@ def solve(const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
     Solve a dmet impurity problem with CCSD followed by EOM-CCSD.
 
     The ground-state CCSD energy and Lambda-RDM are used for the dmet
-    embedding (chemical-potential optimisation and energy projection).
-    EOM-CCSD provides excitation/ionisation/attachment energies on top.
+    embedding (chemical-potential optimization and energy projection).
+    EOM-CCSD provides excitation/ionization/attachment energies on top.
 
     Parameters
     ----------
@@ -149,7 +149,7 @@ def solve(const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
             ccsolver, eom_type, nroots, koopmans, eom_kwargs
         )
 
-        # Normalise output (single root → list)
+        # Normalize output (single root → list)
         if not hasattr(e_exc, '__len__'):
             e_exc   = np.array([e_exc])
             amplitudes = [amplitudes]

@@ -92,7 +92,7 @@ def solve(const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
         assert len(sa_weights) == sa_nstates, \
             "casscf::solve: len(sa_weights) must equal sa_nstates"
         sa_weights = np.array(sa_weights, dtype=float)
-        sa_weights /= sa_weights.sum()   # normalise
+        sa_weights /= sa_weights.sum()   # normalize
     else:
         sa_weights = np.array([1.0])
 
