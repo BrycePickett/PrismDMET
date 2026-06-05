@@ -1,21 +1,9 @@
-'''
-QD-NEVPT2 solver for QC-dmet using Prism (https://github.com/sokolov-group/prism).
+'''QD-NEVPT2 solver for QC-dmet via Prism (https://github.com/sokolov-group/prism).
 
-Runs SA-CASSCF + QD-NEVPT2 on the DMET embedding cluster (impurity + bath),
-mirroring the embedded CASSCF and NEVPT2 solvers. The cluster is built from
-the embedding integrals exactly as in the other solvers; Prism's PYSCF
-interface receives the embedded mf and mc objects.
-
-Note on total energies: the embedded dummy mol has one dummy atom with
-energy_nuc() = 0. Total QD-NEVPT2 energies therefore lack the nuclear
-repulsion constant. This constant is state-independent and cancels in all
-excitation energies, which are the primary deliverable.
-
-Note on oscillator strengths: dipole integrals require the real AO basis, which
-the dummy mol does not have. Oscillator strength calculation is disabled by
-default (compute_dipole=False).
-
-Only compatible with one-shot DMET (sc_method='NONE'). sa_nstates >= 2 required.
+Runs SA-CASSCF + QD-NEVPT2 on the DMET embedding cluster (dummy mol, no real AO basis).
+Total energies lack nuclear repulsion (state-independent; cancels in excitation energies).
+Oscillator strengths are always zero — dipole integrals require real AO basis.
+One-shot DMET only (sc_method='NONE'). sa_nstates >= 2 required.
 '''
 
 import numpy as np
@@ -51,53 +39,7 @@ def solve(const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
           spin=None,
           oei_s=None,
           printoutput=True):
-    '''
-    Run SA-CASSCF + QD-NEVPT2 via Prism on the DMET embedding cluster.
-
-    Parameters
-    ----------
-    const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf
-        Embedding integrals in the cluster (impurity + bath) basis, as
-        provided by the DMET driver.
-    ncas, nelecas
-        Active space size.
-    sa_nstates
-        States for state-averaging (>= 2 required for QD-NEVPT2).
-    sa_weights
-        SA weights; uniform if None.
-    chempot_imp
-        Chemical potential on impurity diagonal.
-    prism_backend
-        Einsum backend for Prism.
-    nfrozen
-        Frozen core for Prism (cluster core, not physical frozen core).
-    compute_singles
-        Include singles amplitudes in QD-NEVPT2.
-    s_thresh_singles, s_thresh_doubles
-        Linear-dependency thresholds.
-    select_reference
-        Subset of SA states (1-indexed) for QD-NEVPT2.
-    casscf_kwargs
-        Extra attributes set on the mc CASSCF object.
-    nevpt_kwargs
-        Extra attributes set on the Prism NEVPT object.
-    spin
-        Cluster spin (2S); defaults to nel % 2.
-    oei_s
-        Spin-asymmetry 1e correction 0.5*(F_alpha - F_beta) in the cluster
-        basis. Applied via fix_casscf_for_nonsinglet_env to the CASSCF. See
-        the spin plan (docs/prismdmet_spin_plan.md) for full context.
-    printoutput
-        Suppress most output if False.
-
-    Returns
-    -------
-    e_tot   : ndarray – QD-NEVPT2 energies per state (Ha, no nuclear repulsion)
-    e_corr  : ndarray – QD-NEVPT2 correlation energies
-    osc     : object  – oscillator strengths from Prism (None if disabled)
-    mc      : mcscf.CASSCF – converged SA-CASSCF object
-    nevpt   : Prism NEVPT object
-    '''
+    '''Run SA-CASSCF + QD-NEVPT2 via Prism on the DMET embedding cluster. Returns (e_tot, e_corr, None, mc, nevpt_obj).'''
     _check_prism()
     import prism.interface
     import prism.nevpt
@@ -146,6 +88,12 @@ def solve(const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
             print(f"qdnevpt2::solve : embedded ROHF (spin={_spin}, nel={nel}, norb={norb})")
 
         mc = mcscf.CASSCF(mf, ncas, nelecas)
+        # Swap base FCI solver BEFORE state_average_ so the SA wrapper inherits it.
+        # direct_spin1.FCI cannot accept [h1e_a, h1e_b]; direct_uhf.FCI handles it.
+        if _use_rohf and oei_s is not None and not np.all(np.abs(oei_s) < 1e-8):
+            _uhf_fci = pyscf_fci.direct_uhf.FCI()
+            _uhf_fci.verbose = mc.fcisolver.verbose
+            mc.fcisolver = _uhf_fci
         mc = mcscf.state_average_(mc, weights=sa_weights.tolist())
         mc.verbose = 5 if printoutput else 0
         for key, val in casscf_kwargs.items():
@@ -153,10 +101,6 @@ def solve(const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
 
         if oei_s is not None:
             from .qcsolver_utils import fix_casscf_for_nonsinglet_env
-            if _use_rohf and not np.all(np.abs(oei_s) < 1e-8):
-                _uhf_fci = pyscf_fci.direct_uhf.FCI()
-                _uhf_fci.verbose = mc.fcisolver.verbose
-                mc.fcisolver = _uhf_fci
             mc = fix_casscf_for_nonsinglet_env(mc, oei_s)
 
         mc.kernel()
