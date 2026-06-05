@@ -44,7 +44,6 @@ def solve_ERI( oei, tei, dm_guess, numPairs ):
     
 def wrap_my_jk( mol_orig, ao2basis ): # mol_orig works in ao
 
-    #get_jk(mol, dm, hermi=1, vhfopt=None)
     def my_jk( mol, dm, hermi=1, vhfopt=None ): # mol works in basis, dm is in basis
     
         dm_ao        = np.dot( np.dot( ao2basis, dm ), ao2basis.T )
@@ -57,7 +56,6 @@ def wrap_my_jk( mol_orig, ao2basis ): # mol_orig works in ao
 
 def wrap_my_veff( mol_orig, ao2basis ): # mol_orig works in ao
 
-    #get_veff(mol, dm, dm_last=0, vhf_last=0, hermi=1, vhfopt=None)
     def my_veff( mol, dm, dm_last=0, vhf_last=0, hermi=1, vhfopt=None ): # mol works in basis, dm is in basis
         
         ddm_basis    = np.array(dm, copy=False) - np.array(dm_last, copy=False)

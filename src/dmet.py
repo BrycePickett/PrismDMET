@@ -309,7 +309,7 @@ class DMET:
 
         for counter in range( maxiter ):
 
-            # --- Symmetry skip (handled immediately, no solver needed) ---
+            # Symmetry skip: handled immediately without a solver.
             if (self.symmetry_map is not None and counter in self.symmetry_map
                     and not self.TransInv):
                 _sym_counters.add(counter)
@@ -323,7 +323,6 @@ class DMET:
                 })
                 continue
 
-            # --- Build embedding Hamiltonian via fragment_builder -----------
             frag = _builder.build(counter, one_rdm, chempot_imp)
 
             # Unpack frequently-used local names (improves readability below)
@@ -385,11 +384,9 @@ class DMET:
                 }
 
             task = {
-                # --- Core identity ------------------------------------------
                 'counter'       : counter,
                 'method'        : _method_key,
                 'src_path'      : _src_path,
-                # --- Embedding integrals (always picklable) -----------------
                 'const'         : 0.0,
                 'dmet_oei'       : dmet_oei,
                 'dmet_fock'      : dmet_fock,
@@ -399,13 +396,11 @@ class DMET:
                 'nimp'          : num_imp_orbs,
                 'chempot_imp'   : chempot_imp,
                 'dm_guess_rhf'    : dm_guess_rhf,
-                # --- CC / EOM-CC options ------------------------------------
                 'CC_E_TYPE'     : self.CC_E_TYPE,
                 'eom_nroots'    : self.eom_nroots,
                 'eom_type'      : self.eom_type,
                 'eom_koopmans'  : self.eom_koopmans,
                 'eom_kwargs'    : self.eom_kwargs,
-                # --- CASSCF / NEVPT2 active-space options -------------------
                 'ncas'          : self.ncas,
                 'nelecas'       : self.nelecas,
                 'sa_nstates'    : self.sa_nstates,
@@ -414,11 +409,9 @@ class DMET:
                 'mo_guess'      : _mo_guess,
                 'nevpt2_kwargs' : self.nevpt2_kwargs,
                 'qdnevpt2_kwargs': self.qdnevpt2_kwargs,
-                # --- DFT / open-shell options --------------------------------
                 'xc'            : self.xc,
                 'spin'          : self.ints.mol.spin,
                 'spin_polarized': self.spin_polarized,
-                # --- DFT mol and localization info --------------------------
                 **_dft_mol_info,
             }
 

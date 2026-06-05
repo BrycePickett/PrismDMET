@@ -36,44 +36,7 @@ _eV = 27.21138602  # Hartree to eV
 def solve(const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
           chempot_imp=0.0, printoutput=True,
           eom_type='EE-Singlet', nroots=3, koopmans=False, **eom_kwargs):
-    '''
-    Solve a dmet impurity problem with CCSD followed by EOM-CCSD.
-
-    The ground-state CCSD energy and Lambda-RDM are used for the dmet
-    embedding (chemical-potential optimization and energy projection).
-    EOM-CCSD provides excitation/ionization/attachment energies on top.
-
-    Parameters
-    ----------
-    const        : float
-    oei          : ndarray (norb, norb)
-    fock         : ndarray (norb, norb)
-    tei          : ndarray (norb, norb, norb, norb)
-    norb         : int
-    nel          : int  (must be even for RHF)
-    nimp         : int
-    dm_guess_rhf   : ndarray
-    chempot_imp  : float
-    printoutput  : bool
-    eom_type     : str   — one of _VALID_EOM_TYPES (default 'EE-Singlet')
-    nroots       : int   — number of EOM roots (default 3)
-    koopmans     : bool  — use Koopmans-like initial guess (default False)
-    **eom_kwargs : extra keyword arguments forwarded to the EOM kernel, e.g.
-                   partition='mp'  for IP/EA, guess=<custom>
-
-    Returns
-    -------
-    impurity_energy : float   — CCSD ground-state impurity energy (for dmet loop)
-    pyscf_rdm1      : ndarray — CCSD Lambda 1-RDM in local basis (for dmet loop)
-    eom_results    : dict    — {
-        'eom_type'    : str,
-        'E_ccsd'      : float,          ground-state CCSD energy (absolute)
-        'delta_E'     : ndarray,        excitation energies in Ha
-        'delta_E_eV'  : ndarray,        excitation energies in eV
-        'E_states'    : ndarray,        absolute state energies  = E_ccsd + delta_E
-        'amplitudes'  : list of arrays, EOM right eigenvectors
-    }
-    '''
+    '''Run CCSD + EOM-CCSD on the DMET embedding cluster. Returns (impurity_energy, rdm1, eom_results).'''
     if eom_type not in _VALID_EOM_TYPES:
         raise ValueError(
             f"eomcc::solve: unknown eom_type='{eom_type}'. "
@@ -88,9 +51,6 @@ def solve(const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
             fock_copy[orb, orb] -= chempot_imp
 
     with ctx:
-        # ------------------------------------------------------------------
-        # SCF reference in the dmet embedding space
-        # ------------------------------------------------------------------
         mol = gto.Mole()
         mol.build(verbose=0)
         mol.atom.append(('C', (0, 0, 0)))
@@ -108,9 +68,6 @@ def solve(const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
             mf.scf(dm_loc)
             dm_loc = np.dot(np.dot(mf.mo_coeff, np.diag(mf.mo_occ)), mf.mo_coeff.T)
 
-        # ------------------------------------------------------------------
-        # Ground-state CCSD + lambda equations
-        # ------------------------------------------------------------------
         ccsolver = ccsd.CCSD(mf)
         ccsolver.verbose = 5
         e_corr, t1, t2 = ccsolver.ccsd()
@@ -140,9 +97,6 @@ def solve(const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
             + 0.125 * np.einsum('ijkl,ijkl->', pyscf_rdm2[:,:,:,:nimp], tei[:,:,:,:nimp])
         )
 
-        # ------------------------------------------------------------------
-        # EOM-CCSD  –  choose the correct class and call its kernel
-        # ------------------------------------------------------------------
         print(f"\neomcc::solve : Running EOM-CCSD [{eom_type}] for {nroots} root(s) ...")
 
         eom_obj, e_exc, amplitudes = _run_eom(
@@ -176,16 +130,8 @@ def solve(const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
     return impurity_energy, pyscf_rdm1, eom_results
 
 
-# ---------------------------------------------------------------------------
-# Internal dispatcher: selects the right EOM class and runs kernel
-# ---------------------------------------------------------------------------
-
 def _run_eom(ccsolver, eom_type, nroots, koopmans, eom_kwargs):
-    '''
-    Instantiate the correct EOM object and call its kernel.
-
-    Returns (eom_obj, e_exc, amplitudes).
-    '''
+    '''Instantiate the correct EOM object and return (eom_obj, e_exc, amplitudes).'''
     from pyscf.cc import eom_rccsd
 
     if eom_type == 'EE-Singlet':
@@ -226,29 +172,8 @@ def _run_eom(ccsolver, eom_type, nroots, koopmans, eom_kwargs):
     return eom, e, v
 
 
-# ---------------------------------------------------------------------------
-# SolverDispatcher entry point
-# ---------------------------------------------------------------------------
-
 def execute(task):
-    """
-    SolverDispatcher-compatible wrapper for the EOM-CCSD solver.
-
-    Unpacks the standardised task dict and calls solve(), which returns
-    a 3-tuple: (impurity_energy, pyscf_rdm1, eom_results).
-
-    Parameters
-    ----------
-    task : dict
-        Must contain: const, dmet_oei, dmet_fock, dmet_tei, norb, nel, nimp,
-        dm_guess_rhf, chempot_imp.
-        Optional: eom_type (default 'EE-Singlet'), eom_nroots (default 3),
-        eom_koopmans (default False), eom_kwargs (default {}).
-
-    Returns
-    -------
-    (impurity_energy, pyscf_rdm1, eom_results) — same as solve().
-    """
+    """SolverDispatcher entry point for the EOM-CCSD solver."""
     return solve(
         task['const'],
         task['dmet_oei'],

@@ -58,26 +58,8 @@ def solve( const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf, chempot_imp=0.0
     return ( impurity_energy, RDM1 )
 
 
-# ---------------------------------------------------------------------------
-# SolverDispatcher entry point
-# ---------------------------------------------------------------------------
-
 def execute(task):
-    """
-    SolverDispatcher-compatible wrapper for the RHF solver.
-
-    Unpacks the standardised task dict and calls solve().
-
-    Parameters
-    ----------
-    task : dict
-        Must contain: const, dmet_oei, dmet_fock, dmet_tei, norb, nel, nimp,
-        chempot_imp, dm_guess_rhf.
-
-    Returns
-    -------
-    (impurity_energy, RDM1) — same as solve().
-    """
+    """SolverDispatcher entry point for the RHF solver."""
     return solve(
         task['const'],
         task['dmet_oei'],

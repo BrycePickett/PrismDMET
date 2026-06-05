@@ -165,18 +165,8 @@ def solve(const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
     return e_tot, e_corr, mc, nevpt_objs
 
 
-# ---------------------------------------------------------------------------
-# SolverDispatcher entry point
-# ---------------------------------------------------------------------------
-
 def execute(task):
-    """
-    SolverDispatcher entry point for the embedded NEVPT2 solver.
-
-    Operates entirely on the embedding-cluster integrals carried in the task
-    dict (dmet_oei / dmet_fock / dmet_tei / norb / nel / nimp), so no physical
-    molecule is needed.
-    """
+    """SolverDispatcher entry point for the embedded NEVPT2 solver."""
     e_tot, e_corr, mc, nevpt_objs = solve(
         task['const'],
         task['dmet_oei'],

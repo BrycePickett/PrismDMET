@@ -178,8 +178,6 @@ def solve(const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
         pyscf_rdm2 = np.einsum('ck,abkl->abcl', C, pyscf_rdm2)
         pyscf_rdm2 = np.einsum('dl,abcl->abcd', C, pyscf_rdm2)
 
-        # -----------
-        # dmet impurity energy (half-projector formula)
         impurity_energy = (
             const
             + 0.25  * np.einsum('ij,ij->', pyscf_rdm1[:nimp,:],     fock[:nimp,:] + oei[:nimp,:])
@@ -205,32 +203,8 @@ def solve(const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
     return impurity_energy, pyscf_rdm1, cas_results
 
 
-# ---------------------------------------------------------------------------
-# SolverDispatcher entry point
-# ---------------------------------------------------------------------------
-
 def execute(task):
-    """
-    SolverDispatcher-compatible wrapper for the CASSCF solver.
-
-    Unpacks the standardised task dict and calls solve(), which returns
-    a 3-tuple: (impurity_energy, pyscf_rdm1, cas_results).
-
-    The warm-restart cache (mo_guess, ci_guess) and the open-shell spin
-    potential (oei_s) are passed through transparently via the task dict.
-
-    Parameters
-    ----------
-    task : dict
-        Must contain: const, dmet_oei, dmet_fock, dmet_tei, norb, nel, nimp,
-        dm_guess_rhf, chempot_imp.
-        Optional: ncas, nelecas, sa_nstates, sa_weights, casscf_kwargs,
-        mo_guess, ci_guess, oei_s.
-
-    Returns
-    -------
-    (impurity_energy, pyscf_rdm1, cas_results) — same as solve().
-    """
+    """SolverDispatcher entry point for the CASSCF solver."""
     return solve(
         task['const'],
         task['dmet_oei'],

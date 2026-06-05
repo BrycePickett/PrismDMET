@@ -53,26 +53,8 @@ def solve( const, oei, fock, tei, norb, nel, nimp, chempot_imp=0.0, printoutput=
     return (impurity_energy, rdm1)
 
 
-# ---------------------------------------------------------------------------
-# SolverDispatcher entry point
-# ---------------------------------------------------------------------------
-
 def execute(task):
-    """
-    SolverDispatcher-compatible wrapper for the Block2 DMRG solver.
-
-    Unpacks the standardised task dict and calls solve().
-
-    Parameters
-    ----------
-    task : dict
-        Must contain: const, dmet_oei, dmet_fock, dmet_tei, norb, nel, nimp,
-        chempot_imp.
-
-    Returns
-    -------
-    (impurity_energy, rdm1) — same as solve().
-    """
+    """SolverDispatcher entry point for the Block2 DMRG solver."""
     return solve(
         task['const'],
         task['dmet_oei'],

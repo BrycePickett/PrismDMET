@@ -50,26 +50,8 @@ def solve( const, oei, fock, tei, norb, nel, nimp, chempot_imp=0.0, printoutput=
     return ( impurity_energy, one_rdm )
 
 
-# ---------------------------------------------------------------------------
-# SolverDispatcher entry point
-# ---------------------------------------------------------------------------
-
 def execute(task):
-    """
-    SolverDispatcher-compatible wrapper for the FCI solver.
-
-    Unpacks the standardised task dict and calls solve().
-
-    Parameters
-    ----------
-    task : dict
-        Must contain: const, dmet_oei, dmet_fock, dmet_tei, norb, nel, nimp,
-        chempot_imp.
-
-    Returns
-    -------
-    (impurity_energy, one_rdm) — same as solve().
-    """
+    """SolverDispatcher entry point for the FCI solver."""
     return solve(
         task['const'],
         task['dmet_oei'],

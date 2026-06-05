@@ -78,26 +78,8 @@ def solve( const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf, chempot_imp=0.0
     return ( impurity_energy, one_rdm_loc )
 
 
-# ---------------------------------------------------------------------------
-# SolverDispatcher entry point
-# ---------------------------------------------------------------------------
-
 def execute(task):
-    """
-    SolverDispatcher-compatible wrapper for the MP2 solver.
-
-    Unpacks the standardised task dict and calls solve().
-
-    Parameters
-    ----------
-    task : dict
-        Must contain: const, dmet_oei, dmet_fock, dmet_tei, norb, nel, nimp,
-        dm_guess_rhf, chempot_imp.
-
-    Returns
-    -------
-    (impurity_energy, one_rdm_loc) — same as solve().
-    """
+    """SolverDispatcher entry point for the MP2 solver."""
     return solve(
         task['const'],
         task['dmet_oei'],

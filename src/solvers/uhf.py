@@ -1,39 +1,11 @@
-"""
-solvers/uhf.py
-==============
-PrismDMET impurity solver: open-shell Hartree-Fock (UHF / ROHF).
-
-Supported method keys
----------------------
-  'UHF'   -- Unrestricted Hartree-Fock
-  'ROHF'  -- Restricted Open-Shell Hartree-Fock
-
-These solvers follow the same algebraic embedding Hamiltonian pattern as
-rhf.py but accept odd electron counts and open-shell spin states.
-
-Spin convention
----------------
-* UHF  : returns the spin-summed total RDM (rdm_alpha + rdm_beta) by
-         default. When task['spin_polarized'] is True, returns separate
-         alpha and beta RDMs for independent chemical-potential optimization.
-* ROHF : always returns the spin-summed total RDM.
-"""
+"""PrismDMET impurity solver: UHF and ROHF."""
 
 import numpy as np
 from pyscf import ao2mo, gto, scf
 
 
-# ---------------------------------------------------------------------------
-# Private helper
-# ---------------------------------------------------------------------------
-
 def _embedding_mol(nel, spin=0):
-    """Build a minimal dummy Mole for the embedding space.
-
-    Uses a single ghost-like carbon atom.  Because HF solvers do not require
-    a numerical grid, the basis is left as the PySCF default; the actual AO
-    dimension is controlled by the supplied integral matrices.
-    """
+    """Build a minimal dummy Mole for the embedding space."""
     mol = gto.Mole()
     mol.build(verbose=0)
     mol.atom.append(('C', (0, 0, 0)))
@@ -43,23 +15,9 @@ def _embedding_mol(nel, spin=0):
     return mol
 
 
-# ---------------------------------------------------------------------------
-# Unrestricted HF: UHF
-# ---------------------------------------------------------------------------
-
 def solve_uhf(const, oei, fock, tei, norb, nel, nimp, dm_guess,
               chempot_imp=0.0, spin_polarized=False, chempot_imp_beta=None):
-    """Solve the embedding Hamiltonian at the UHF level.
-
-    Parameters
-    ----------
-    spin_polarized : bool
-        If True, apply independent alpha/beta chemical potentials and return
-        separate alpha and beta RDMs.
-        If False (default), return the spin-summed total RDM.
-    chempot_imp_beta : float or None
-        Independent beta chemical potential. Used only when spin_polarized=True.
-    """
+    """Solve the embedding Hamiltonian at the UHF level. Returns (energy, rdm1) or (energy, rdm_a, rdm_b) when spin_polarized."""
     spin = nel % 2
 
     h1_a = fock.copy()
@@ -106,16 +64,9 @@ def solve_uhf(const, oei, fock, tei, norb, nel, nimp, dm_guess,
     return energy, rdm1_tot
 
 
-# ---------------------------------------------------------------------------
-# Restricted open-shell HF: ROHF
-# ---------------------------------------------------------------------------
-
 def solve_rohf(const, oei, fock, tei, norb, nel, nimp, dm_guess,
                chempot_imp=0.0):
-    """Solve the embedding Hamiltonian at the ROHF level.
-
-    Returns the spin-summed total RDM.
-    """
+    """Solve the embedding Hamiltonian at the ROHF level. Returns (energy, rdm1)."""
     spin = nel % 2
 
     h1 = fock.copy()
@@ -153,19 +104,8 @@ def solve_rohf(const, oei, fock, tei, norb, nel, nimp, dm_guess,
     return energy, rdm1_tot
 
 
-# ---------------------------------------------------------------------------
-# SolverDispatcher entry point
-# ---------------------------------------------------------------------------
-
 def execute(task):
-    """SolverDispatcher-compatible entry point for UHF / ROHF solvers.
-
-    Relevant task keys
-    ------------------
-    method           : 'UHF' or 'ROHF'
-    spin_polarized   : bool -- UHF only; enables independent alpha/beta mu
-    chempot_imp_beta : float -- independent beta chemical potential (UHF + spin_polarized)
-    """
+    """SolverDispatcher entry point for UHF and ROHF solvers."""
     method         = task['method']
     spin_polarized = task.get('spin_polarized', False)
 
