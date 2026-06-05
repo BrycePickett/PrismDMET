@@ -68,7 +68,7 @@ def solve( const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf, chempot_imp=0.0
         TwoRDM_loc = np.einsum('ck,abkl->abcl', mf.mo_coeff, TwoRDM_loc)
         TwoRDM_loc = np.einsum('dl,abcl->abcd', mf.mo_coeff, TwoRDM_loc)
     
-    # To calculate the impurity energy, rescale the JK matrix with a factor 0.5 to avoid double counting: 0.5 * ( oei + fock ) = oei + 0.5 * JK
+    # Half-projector: 0.5*(oei + fock) avoids double-counting JK.
     impurity_energy = const
     impurity_energy += 0.5 * np.einsum( 'ij,ij->', DMrhf[:nimp,:], oei[:nimp,:] + fock[:nimp,:] ) # To be consistent with the energy formula above, this should be the HF RDM !!!
     impurity_energy += 0.125 * np.einsum( 'ijkl,ijkl->', TwoRDM_loc[:nimp,:,:,:], tei[:nimp,:,:,:] )

@@ -1,21 +1,7 @@
-'''
-NEVPT2 solver for QC-dmet.
+'''NEVPT2 solver for QC-dmet embedded clusters.
 
-Runs CASSCF followed by strongly-contracted NEVPT2 (PySCF's mrpt.NEVPT) on the
-DMET embedding cluster (impurity + bath). The cluster is built from the
-embedding integrals exactly as in the CASSCF solver, so the NEVPT2 perturber
-space is the cluster's inactive + virtual orbitals — the DMET bath's
-representation of the environment — not the full physical molecule. This is the
-embedded multireference approach used by libDMET / Vayesta style cluster
-solvers: the bath captures static entanglement with the environment, and the
-correlated solver treats the cluster as a closed problem.
-
-For multi-state runs:
-    1. SA-CASSCF on the cluster to get optimized orbitals.
-    2. Multi-root CASCI with those MOs.
-    3. Per-state SC-NEVPT2 via mrpt.NEVPT(mc_casci, root=i).
-
-oneshot-dmet only.
+Runs SA-CASSCF then per-state SC-NEVPT2 on the DMET embedding cluster (impurity + bath).
+One-shot DMET only.
 '''
 
 import numpy as np
@@ -32,41 +18,10 @@ def solve(const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
           casscf_kwargs=None, nevpt2_kwargs=None,
           spin=None, oei_s=None,
           printoutput=True):
-    '''
-    Run CASSCF + NEVPT2 on the DMET embedding cluster.
+    '''Run CASSCF + NEVPT2 on the DMET embedding cluster. Returns (e_tot, e_corr, mc, nevpt_objs).
 
-    Parameters
-    ----------
-    const         : float  – embedding constant (added by the dmet driver)
-    oei           : ndarray (norb, norb) – embedding one-electron integrals
-    fock          : ndarray (norb, norb) – embedding Fock (one-shot: == oei + ...)
-    tei           : ndarray – embedding two-electron integrals (norb^4)
-    norb          : int  – total cluster orbitals (impurity + bath)
-    nel           : int  – total cluster electrons
-    nimp          : int  – impurity orbitals (first nimp of norb)
-    dm_guess_rhf  : ndarray – RHF/ROHF density-matrix guess in the cluster basis
-    ncas          : int  – active orbitals
-    nelecas       : int  – active electrons
-    nstates       : int  – 1 = single-state; >1 = state-averaged
-    sa_weights    : list or None – SA weights (uniform if None)
-    chempot_imp   : float – impurity chemical potential (subtracted on diagonal)
-    casscf_kwargs : dict – extra attributes set on the CASSCF object
-    nevpt2_kwargs : dict – extra attributes set on each mrpt.NEVPT object
-    spin          : int or None – cluster spin (2S); defaults to nel % 2
-    oei_s         : ndarray (norb, norb) or None – spin-asymmetry correction
-                    0.5*(F_alpha - F_beta) in the embedding basis; injected into
-                    all CASSCF/CASCI CI solvers via fix_casscf_for_nonsinglet_env.
-                    Applied only to the reference (consistent with standard
-                    ROHF-NEVPT2 and with pDMET); NEVPT2 perturber denominators
-                    use spin-free canonical orbital energies.
-    printoutput   : bool
-
-    Returns
-    -------
-    e_tot      : ndarray  – NEVPT2 total energy per state (Ha)
-    e_corr     : ndarray  – NEVPT2 correlation energy per state (Ha)
-    mc         : mcscf object – the CASSCF/CASCI object used for NEVPT2
-    nevpt_objs : list of mrpt.NEVPT – one per state
+    oei_s: 0.5*(F_alpha - F_beta) injected into CI solvers via fix_casscf_for_nonsinglet_env;
+           applied to reference only, not NEVPT2 perturber denominators.
     '''
     casscf_kwargs = casscf_kwargs or {}
     nevpt2_kwargs = nevpt2_kwargs or {}
@@ -82,11 +37,6 @@ def solve(const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
     ctx = silent_stdout() if not printoutput else nullcontext()
 
     with ctx:
-        # Embedded mean field on the (impurity + bath) cluster. Identical
-        # construction to the CASSCF solver: a dummy Mole carries only the
-        # electron count and spin, while the embedding integrals are injected
-        # via get_hcore / get_ovlp / _eri so the SCF lives in the norb-orbital
-        # cluster space.
         mol = gto.Mole()
         mol.build(verbose=0)
         mol.atom.append(('C', (0, 0, 0)))
@@ -146,7 +96,6 @@ def solve(const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
             sa_weights = np.array(sa_weights, dtype=float)
             sa_weights /= sa_weights.sum()
 
-            # Step 1: SA-CASSCF for optimized orbitals
             mc_sa = mcscf.CASSCF(mf, ncas, nelecas)
             # Swap base FCI solver BEFORE state_average_ so the SA wrapper inherits it.
             # direct_spin1.FCI cannot accept [h1e_a, h1e_b]; direct_uhf.FCI handles it.
@@ -169,7 +118,6 @@ def solve(const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
             for i, e in enumerate(mc_sa.e_states):
                 print(f"  State {i}: {e:.10f} Ha  (weight={sa_weights[i]:.4f})")
 
-            # Step 2: Multi-root CASCI with SA-CASSCF MOs
             mc = mcscf.CASCI(mf, ncas, nelecas)
             mc.verbose = 4 if printoutput else 0
             mc.fcisolver.nroots = nstates
@@ -189,7 +137,6 @@ def solve(const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
             for i, e in enumerate(mc.e_tot):
                 print(f"  State {i}: {e:.10f} Ha")
 
-            # Step 3: Per-state NEVPT2
             e_tot  = np.zeros(nstates)
             e_corr = np.zeros(nstates)
             nevpt_objs = []

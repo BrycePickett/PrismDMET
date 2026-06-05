@@ -48,7 +48,7 @@ def solve( const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf, chempot_imp=0.0
     RDM1 = mf.make_rdm1()
     JK   = mf.get_veff(None, dm=RDM1)
  
-    # To calculate the impurity energy, rescale the JK matrix with a factor 0.5 to avoid double counting: 0.5 * ( oei + fock ) = oei + 0.5 * JK
+    # Half-projector: 0.5*(oei + fock) avoids double-counting JK.
     impurity_energy = const \
                    + 0.25 * np.einsum('ji,ij->', RDM1[:,:nimp], fock[:nimp,:] + oei[:nimp,:]) \
                    + 0.25 * np.einsum('ji,ij->', RDM1[:nimp,:], fock[:,:nimp] + oei[:,:nimp]) \

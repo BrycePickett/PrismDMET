@@ -20,59 +20,12 @@ def solve(const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
           mo_guess=None, ci_guess=None,
           oei_s=None, spin=None,
           **casscf_kwargs):
-    '''
-    Solve a dmet impurity problem at the CASSCF level.
-
-    Parameters
-    ----------
-    const        : float
-    oei          : ndarray (norb, norb)
-    fock         : ndarray (norb, norb)
-    tei          : ndarray (norb, norb, norb, norb)
-    norb         : int – total number of embedding orbitals (impurity + bath)
-    nel          : int – total number of electrons (must be even for RHF ref.)
-    nimp         : int – number of impurity orbitals (first nimp of norb)
-    dm_guess_rhf   : ndarray – RHF density matrix initial guess
-    ncas         : int – number of active orbitals.  Defaults to norb (full space).
-    nelecas      : int – number of active electrons.  Defaults to nel (full space).
-    chempot_imp  : float – chemical potential on impurity block
-    printoutput  : bool
-    sa_nstates   : int – number of states for state-averaged CASSCF (default 1 = SS)
-    sa_weights   : list of float – weights for SA; uniform if None
-    frozen       : list or None – orbital indices to freeze (passed to CASSCF)
-    mo_guess     : ndarray or None – MO coefficients from a previous iteration
-                   (warm restart).  If provided, these are used instead of the
-                   RHF canonical MOs as the initial CASSCF orbital guess.
-    ci_guess     : ndarray or None – CI vector(s) from a previous iteration.
-    oei_s        : ndarray (norb, norb) or None – spin-dependent one-electron
-                   potential for open-shell environments.  When provided, the
-                   CASSCF object is wrapped to inject spin-gradient corrections.
-    **casscf_kwargs : extra keyword arguments set on the mcscf.CASSCF object
-                     (e.g. max_cycle=200, conv_tol=1e-9, fcisolver=...)
-
-    Returns
-    -------
-    impurity_energy : float
-    pyscf_rdm1      : ndarray – 1-RDM in local orbital basis (for dmet loop)
-    cas_results    : dict – {
-        'e_tot'     : float or ndarray   (SS: total energy; SA: weighted avg)
-        'e_states'  : ndarray or None    (SA only: individual state energies)
-        'ncas'      : int
-        'nelecas'   : int
-        'nstates'   : int
-        'weights'   : ndarray
-        'ci'        : CASSCF CI vector(s)
-        'mo_coeff'  : ndarray – converged MO coefficients (for caching)
-    }
-    '''
-    # Default: full active space (equivalent to FCI within the embedding space)
+    '''Solve a DMET impurity problem at the CASSCF level. Returns (impurity_energy, rdm1, cas_results).'''
     if ncas is None:
         ncas = norb
     if nelecas is None:
         nelecas = nel
 
-    # Auto-detect spin: if nel is odd (or caller passes spin > 0) use ROHF reference.
-    # This guarantees a qualitatively correct orbital guess for open-shell CASSCF.
     _spin = spin if spin is not None else (nel % 2)
     _use_rohf = (_spin != 0)
 

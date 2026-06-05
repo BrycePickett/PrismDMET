@@ -162,11 +162,7 @@ class DMET:
         self.time_func= 0.0
         self.time_grad= 0.0
 
-        # Opt-in injection of the spin-asymmetry 1e potential 0.5*(F_a - F_b) into
-        # the correlated solvers (mrh-style treatment of a spin-polarized
-        # environment). Default off: the embedded ROHF + spin-adapted CASSCF
-        # reference is correct on its own; the cluster-projected ||dmet_oei_s|| is
-        # still printed per fragment as a diagnostic so its magnitude can be judged.
+        # When True, injects 0.5*(F_a - F_b) into embedded CASSCF/NEVPT2 (mrh-style). Default off.
         self.include_spin_oei = include_spin_oei
 
         # Auto-detect open-shell reference from localintegrals
@@ -582,10 +578,7 @@ class DMET:
                 print("DMET::CASSCF : MO shape mismatch, starting fresh.")
                 _mo_guess_cas = None
 
-        # Spin-asymmetry 1e potential projected onto the cluster. Its norm
-        # quantifies how much environmental spin polarization the active space
-        # would feel; it is only injected into the solver when include_spin_oei
-        # is set (the injection path is still experimental).
+        # Always printed as diagnostic; injected into solver only if include_spin_oei=True.
         _dmet_oei_s = None
         if (method_key in ('CASSCF', 'NEVPT2', 'QD-NEVPT2')
                 and hasattr(self.ints, 'dmet_oei_s')):
@@ -683,7 +676,6 @@ class DMET:
             e_fun = np.trace( np.dot(self.ints.loc_oei(), one_rdm_loc) )
         elif self.minFunc == 'FOCK_INIT' :
             e_fun = np.trace( np.dot(self.ints.loc_fock(), one_rdm_loc) )
-        # e_cstr = np.sum( newumatflat * errors )    # not correct, but gives correct verify_gradient results
         e_cstr = np.sum( newumatsquare_loc * errors_sq )
         return -e_fun-e_cstr
         
@@ -769,8 +761,6 @@ class DMET:
             mf_1RDM = (one_rdm_loc[:,np.flatnonzero(self.impClust[count])])[np.flatnonzero(self.impClust[count]),:]
             ed_1RDM = self.imp_1RDM[count][:self.imp_size[count],:self.imp_size[count]]
             theerror = mf_1RDM - ed_1RDM
-            # squaresize = theerror.shape[0] * theerror.shape[1]
-            # errors[ jump : jump + squaresize ] = np.reshape( theerror, squaresize, order='F' )
             mask_t = self.mask[ np.ix_(list(range(jumpc,jumpc+self.imp_size[count])),list(range(jumpc,jumpc+self.imp_size[count]))) ]
             squaresize = np.count_nonzero( mask_t )
             errors[ jump : jump + squaresize ] = np.reshape( theerror[mask_t], squaresize, order='F' )

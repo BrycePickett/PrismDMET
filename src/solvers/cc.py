@@ -31,7 +31,7 @@ def solve( const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
            eom_nroots=3,
            use_density_fit=False, df_auxbasis=None ):
     assert energytype in _VALID_ETYPES, \
-        f"cc::solve: unrecognised energytype='{energytype}'. Valid: {_VALID_ETYPES}"
+        f"cc::solve: unrecognized energytype='{energytype}'. Valid: {_VALID_ETYPES}"
 
     ctx = silent_stdout() if not printoutput else nullcontext()
 
