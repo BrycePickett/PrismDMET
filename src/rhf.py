@@ -24,7 +24,7 @@ from pyscf import gto, scf, ao2mo
 def solve_ERI( oei, tei, dm_guess, numPairs ):
 
     mol = gto.Mole()
-    mol.build(verbose=3)
+    mol.build(verbose=0)
     mol.atom.append(('C', (0, 0, 0)))
     mol.nelectron = 2 * numPairs
 
@@ -33,11 +33,13 @@ def solve_ERI( oei, tei, dm_guess, numPairs ):
     mf.get_hcore = lambda *args: oei
     mf.get_ovlp = lambda *args: np.eye( L )
     mf._eri = ao2mo.restore(8, tei, L)
-    
+
     mf.scf( dm_guess )
     dm_loc = np.dot(np.dot( mf.mo_coeff, np.diag( mf.mo_occ )), mf.mo_coeff.T )
-    if ( mf.converged == False ):
-        mf = mf.newton()
+    if not mf.converged:
+        # Newton/SOSCF rebuilds _eri from the dummy mol and crashes; retry plain SCF.
+        mf.max_cycle = 300
+        mf.diis_space = 12
         mf.scf( dm_loc )
         dm_loc = np.dot(np.dot( mf.mo_coeff, np.diag( mf.mo_occ )), mf.mo_coeff.T )
     return dm_loc
@@ -82,7 +84,7 @@ def solve_JK( oei, mol_orig, ao2basis, dm_guess, numPairs ):
     mf.get_jk   = wrap_my_jk(   mol_orig, ao2basis )
     mf.get_veff = wrap_my_veff( mol_orig, ao2basis )
     mf.max_cycle = 500
-    mf.damp_factor = 0.33
+    mf.damp = 0.33
     
     mf.scf( dm_guess )
     dm_loc = np.dot(np.dot( mf.mo_coeff, np.diag( mf.mo_occ )), mf.mo_coeff.T )

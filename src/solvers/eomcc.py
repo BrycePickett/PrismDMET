@@ -44,7 +44,9 @@ def solve(const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
         mf.scf(dm_guess_rhf)
         dm_loc = np.dot(np.dot(mf.mo_coeff, np.diag(mf.mo_occ)), mf.mo_coeff.T)
         if not mf.converged:
-            mf = mf.newton()
+            # Newton/SOSCF rebuilds _eri from the dummy mol and crashes; retry plain SCF.
+            mf.max_cycle = 300
+            mf.diis_space = 12
             mf.scf(dm_loc)
             dm_loc = np.dot(np.dot(mf.mo_coeff, np.diag(mf.mo_occ)), mf.mo_coeff.T)
 
