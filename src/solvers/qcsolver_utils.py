@@ -10,7 +10,8 @@ def select_cas_orbitals(mc, cas_select, ncas, nimp, norb,
     cas_select:
       'energy'       - no reordering (default PySCF energy ordering).
       'impurity'     - rank frontier MOs by impurity localization weight and take the ncas largest.
-      'ao_character' - mrh-style: rank MOs by projection onto ao_labels and take the ncas largest.
+      'ao_character' - rank MOs by projection onto ao_labels; falls back to 'impurity' if
+                       ao_labels or required parameters are missing.
 
     Returns the selected orbital index list (1-based PySCF convention via base=0 sort_mo),
     or None when cas_select == 'energy'.
@@ -26,10 +27,24 @@ def select_cas_orbitals(mc, cas_select, ncas, nimp, norb,
         weights = np.sum(np.abs(C[:nimp, :]) ** 2, axis=0)
         frontier = range(mc.ncore, norb)
     elif cas_select == 'ao_character':
-        weights = _ao_character_weights(C, ao2eo, ao_mol_dumps, ao_labels)
-        frontier = range(norb)
+        # Validate all required parameters for ao_character mode
+        if ao_labels is None or ao2eo is None or ao_mol_dumps is None:
+            print(f"WARNING: cas_select='ao_character' but ao_labels/ao2eo/ao_mol_dumps not fully provided. "
+                  f"Falling back to 'impurity' localization selection.")
+            weights = np.sum(np.abs(C[:nimp, :]) ** 2, axis=0)
+            frontier = range(mc.ncore, norb)
+        else:
+            try:
+                weights = _ao_character_weights(C, ao2eo, ao_mol_dumps, ao_labels)
+                frontier = range(norb)
+            except (ValueError, KeyError) as e:
+                print(f"WARNING: ao_character selection failed ({e}). "
+                      f"Falling back to 'impurity' localization selection.")
+                weights = np.sum(np.abs(C[:nimp, :]) ** 2, axis=0)
+                frontier = range(mc.ncore, norb)
     else:
-        raise ValueError(f"select_cas_orbitals: unknown cas_select='{cas_select}'")
+        raise ValueError(f"select_cas_orbitals: unknown cas_select='{cas_select}'. "
+                        f"Valid options: 'energy', 'impurity', 'ao_character'")
 
     selected = sorted(sorted(frontier, key=lambda i: -weights[i])[:ncas])
     mc.mo_coeff = mc.sort_mo(selected, base=0)
@@ -40,17 +55,28 @@ def _ao_character_weights(emb_mo, ao2eo, ao_mol_dumps, ao_labels):
     '''Projection of each embedded MO onto the named AO labels (mrh getorbindex / mo_comps style).
 
     Uses plain Lowdin orthogonalization (pre_orth_ao=None) instead of pyscf's mo_comps, whose
-    default meta-lowdin ANO reference fails on GTH/ECP/ghost-atom systems such as Cu2O.
+    default meta-lowdin ANO reference fails on GTH/ECP/ghost-atom systems.
+
+    Raises ValueError if ao_labels do not match any AO or if ao2eo/ao_mol_dumps are invalid.
     '''
     from pyscf import gto
     from pyscf.lo.orth import lowdin
+
+    # Validate inputs
+    if ao_mol_dumps is None:
+        raise ValueError("ao_character selection: ao_mol_dumps is None")
+    if ao2eo is None:
+        raise ValueError("ao_character selection: ao2eo is None")
+    if ao_labels is None or len(ao_labels) == 0:
+        raise ValueError("ao_character selection: ao_labels is None or empty")
 
     ao_mol = gto.loads(ao_mol_dumps)
     ao_mo  = ao2eo @ emb_mo                       # embedded MOs in AO basis
     s      = ao_mol.intor_symmetric('int1e_ovlp')
     idx    = ao_mol.search_ao_label(ao_labels)
     if len(idx) == 0:
-        raise ValueError(f"ao_character selection: no AOs match labels {ao_labels}")
+        raise ValueError(f"ao_character selection: no AOs match labels {ao_labels}. "
+                        f"Available AO labels in system: {ao_mol.ao_labels()}")
     c_orth = lowdin(s)
     mo1    = c_orth[:, idx].T @ s @ ao_mo
     return np.einsum('ki,ki->i', mo1, mo1)
