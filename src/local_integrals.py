@@ -85,7 +85,7 @@ class LocalIntegrals:
             self.TI_OK = False
         if self._which == 'lowdin':
             assert self.Norbs == self.mol.nao_nr(), "lowdin requires full active space"
-            ovlp = self.mol.intor('cint1e_ovlp_sph')
+            ovlp = self.mol.intor_symmetric('int1e_ovlp')
             ovlp_eigs, ovlp_vecs = np.linalg.eigh(ovlp)
             self.ao2loc = np.dot(np.dot(ovlp_vecs, np.diag(np.power(ovlp_eigs, -0.5))), ovlp_vecs.T)
             self.TI_OK  = False
@@ -152,7 +152,7 @@ class LocalIntegrals:
             molden.orbital_coeff(self.mol, thefile, self.ao2loc)
 
     def loc_ortho(self):
-        S = self.mol.intor('cint1e_ovlp_sph')
+        S = self.mol.intor_symmetric('int1e_ovlp')
         return np.linalg.norm(np.dot(np.dot(self.ao2loc.T, S), self.ao2loc) - np.eye(self.Norbs))
 
     def debug_matrixelements(self):

@@ -24,7 +24,7 @@ def solve( const, oei, fock, tei, norb, nel, nimp, chempot_imp=0.0, printoutput=
             symm_type=SymmetryTypes.SU2,
             n_threads=1
         )
-        driver.initialize_system(n_sites=norb, n_elec=nel, spin=0)
+        driver.initialize_system(n_sites=norb, n_elec=nel, spin=nel % 2)
 
         # Fiedler reordering reduces MPS entanglement; block2 auto-reverses it in get_1pdm/get_2pdm.
         mpo = driver.get_qc_mpo(h1e=fock_copy, g2e=tei, iprint=0, reorder='fiedler')

@@ -107,7 +107,9 @@ def solve(const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
             from .qcsolver_utils import fix_casscf_for_nonsinglet_env
             mc = fix_casscf_for_nonsinglet_env(mc, oei_s)
 
-        if cas_select != 'energy':
+        # Skip selection when a warm-restart MO guess is supplied: mc.kernel(mo_guess)
+        # would overwrite the reordered mo_coeff anyway.
+        if cas_select != 'energy' and mo_guess is None:
             from .qcsolver_utils import select_cas_orbitals
             selected_orbs = select_cas_orbitals(
                 mc, cas_select, ncas, nimp, norb,
@@ -122,7 +124,7 @@ def solve(const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
 
         ncore = mc.ncore
         if _use_rohf:
-            _nelecas_fci = ((nelecas + 1) // 2, nelecas // 2)
+            _nelecas_fci = ((nelecas + _spin) // 2, (nelecas - _spin) // 2)
             _used_uhf_fci = oei_s is not None and not np.all(np.abs(oei_s) < 1e-8)
             ci_solver_base = (pyscf_fci.direct_uhf.FCI() if _used_uhf_fci
                               else pyscf_fci.direct_spin1.FCI())

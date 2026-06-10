@@ -37,9 +37,16 @@ def orthogonalize_iao( coeff, ovlp ):
     coeff      = np.dot( coeff, np.dot( np.dot( vecs, np.diag( np.power( eigs, -0.5 ) ) ), vecs.T ) )
     return coeff
     
-def _build_pmol_with_ghosts(mol, minao='gth-szv-molopt-sr'):
-    """Like reference_mol() but keeps ghost vacancy atoms (nonzero AO width)."""
+def _build_pmol_with_ghosts(mol, minao=None):
+    """Like reference_mol() but keeps ghost vacancy atoms (nonzero AO width).
+
+    The minimal reference basis defaults to PySCF's standard 'minao' for
+    all-electron molecules; GTH-pseudopotential molecules need a matching
+    valence-only reference since 'minao' includes core functions.
+    """
     import pyscf.gto
+    if minao is None:
+        minao = 'gth-szv-molopt-sr' if getattr(mol, 'pseudo', None) else 'minao'
     aoslice = mol.aoslice_by_atom()
     pmol = pyscf.gto.Mole()
     pmol.unit    = 'Bohr'
@@ -124,7 +131,7 @@ def construct_iao(mol, mf):
         DM1    = np.dot(ao2occ, ao2occ.T)
 
     pmol   = _build_pmol_with_ghosts(mol)
-    S1     = mol.intor('cint1e_ovlp_sph')
+    S1     = mol.intor_symmetric('int1e_ovlp')
     ao2iao = _iao_with_pmol(mol, ao2occ, pmol)
     ao2iao = orthogonalize_iao(ao2iao, S1)
     return (ao2iao, S1, pmol)
