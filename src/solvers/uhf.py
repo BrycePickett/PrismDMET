@@ -46,7 +46,6 @@ def solve_uhf(const, oei, fock, tei, norb, nel, nimp, dm_guess,
     rdm1_tot = rdm1_a + rdm1_b
 
     JK_a, JK_b = mf.get_veff(None, dm=mf.make_rdm1())
-    JK_tot = JK_a + JK_b
 
     e1_a = 0.5 * (np.einsum('ji,ij->', rdm1_a[:, :nimp], fock[:nimp, :] + oei[:nimp, :]) +
                   np.einsum('ji,ij->', rdm1_a[:nimp, :], fock[:, :nimp] + oei[:, :nimp]))

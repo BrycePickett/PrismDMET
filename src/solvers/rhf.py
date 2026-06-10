@@ -42,13 +42,10 @@ def solve( const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf, chempot_imp=0.0
         mf.max_cycle = 300
         mf.diis_space = 12
         mf.scf( dm_loc )
-        dm_loc = np.dot(np.dot( mf.mo_coeff, np.diag( mf.mo_occ )), mf.mo_coeff.T )
 
-    
-    e_rhf = mf.e_tot
     RDM1 = mf.make_rdm1()
     JK   = mf.get_veff(None, dm=RDM1)
- 
+
     # Half-projector: 0.5*(oei + fock) avoids double-counting JK.
     impurity_energy = const \
                    + 0.25 * np.einsum('ji,ij->', RDM1[:,:nimp], fock[:nimp,:] + oei[:nimp,:]) \

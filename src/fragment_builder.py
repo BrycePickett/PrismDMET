@@ -5,7 +5,7 @@ import numpy as np
 
 class FragmentBuilder:
 
-    _NEEDS_DM_METHODS = frozenset({'CC', 'MP2', 'EOM-CC', 'CASSCF'})
+    _NEEDS_DM_METHODS = frozenset({'CC', 'MP2', 'EOM-CC', 'CASSCF', 'NEVPT2', 'QD-NEVPT2'})
 
     def __init__(self, ints, helper, impClust, method, BATH_ORBS, NI_hack, umat, bath_tol):
         self._ints      = ints
