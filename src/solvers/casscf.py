@@ -109,6 +109,7 @@ def solve(const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
 
         # Skip selection when a warm-restart MO guess is supplied: mc.kernel(mo_guess)
         # would overwrite the reordered mo_coeff anyway.
+        selected_orbs = None
         if cas_select != 'energy' and mo_guess is None:
             from .qcsolver_utils import select_cas_orbitals
             selected_orbs = select_cas_orbitals(
@@ -205,6 +206,8 @@ def solve(const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
         'weights'  : sa_weights,
         'ci'       : mc.ci,
         'mo_coeff' : mc.mo_coeff,
+        'cas_select'    : cas_select,
+        'selected_orbs' : selected_orbs,
     }
 
     return impurity_energy, pyscf_rdm1, cas_results

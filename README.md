@@ -122,8 +122,8 @@ energy = d.selfconsistent()
 | `'MP2'`   | MP2 | Fast, RHF reference only |
 | `'EOM-CC'` | EOM-CCSD | Excited states (one-shot only) |
 | `'CASSCF'` | CASSCF | Requires `ncas`, `nelecas` |
-| `'NEVPT2'` | SC-NEVPT2 | Requires `mf_real`, `ncas`, `nelecas` |
-| `'QD-NEVPT2'` | QD-NEVPT2 (Prism) | Requires Prism backend |
+| `'NEVPT2'` | SC-NEVPT2 | Requires `ncas`, `nelecas` |
+| `'QD-NEVPT2'` | QD-NEVPT2 (Prism) | Requires `ncas`, `nelecas`, `sa_nstates >= 2`, Prism backend |
 | `'RKS'`   | Restricted KS-DFT | Set `xc='pbe'` etc. |
 | `'ROKS'`  | Restricted open-shell KS | Set `xc='pbe'` etc. |
 | `'UKS'`   | Unrestricted KS-DFT | Set `xc='pbe'` etc. |
@@ -150,7 +150,8 @@ energy = d.selfconsistent()
 | `ncas` | int | Active orbitals (CASSCF/NEVPT2) |
 | `nelecas` | int | Active electrons (CASSCF/NEVPT2) |
 | `sa_nstates` | int | Number of states for SA-CASSCF |
-| `mf_real` | object | Converged PySCF mean-field object (required for NEVPT2/QD-NEVPT2) |
+| `cas_select` | str | Active-space selection: `'energy'` (default), `'impurity'`, or `'ao_character'` |
+| `ao_labels` | list | AO labels targeted by `cas_select='ao_character'` (e.g. `['0 H 1s']`) |
 | `xc` | str | XC functional for DFT solvers (default `'pbe'`) |
 | `parallel` | bool | Enable parallel fragment execution |
 | `use_symmetry` | bool | Auto-detect equivalent fragments |
@@ -168,6 +169,7 @@ energy = d.selfconsistent()
 | `hydrogen_hf.py` | H2/H3 RHF/ROHF/UHF validation | < 10 s |
 | `hydrogen_dft.py` | H2/H3 DFT (PBE) validation | < 10 s |
 | `h6_casscf.py` | H6 chain CASSCF with multi-fragment | < 15 s |
+| `cas_active_space_selection.py` | CASSCF active-space selection modes (energy/impurity/ao_character) | < 60 s |
 | `h10_fci_selfconsistent.py` | H10 ring self-consistent FCI DMET | < 60 s |
 | `nitrogen_nevpt2.py` | N2 NEVPT2 | < 30 s |
 | `h6_symmetry_test.py` | H6 ring symmetry detection | < 30 s |
@@ -190,8 +192,10 @@ The C++ extension is optional. Build it with `cd lib && mkdir build && cd build 
 PrismDMET has automatic OOM fallback chains (e.g., FCI → DMRG → CASSCF → CC → MP2).
 A RuntimeWarning will indicate when a fallback is triggered.
 
-**NEVPT2/QD-NEVPT2 requires mf_real**
-These methods need the original PySCF mean-field object. Pass it as `mf_real=mf`.
+**Wrong active space in CASSCF/NEVPT2**
+The embedding Fock is non-canonical, so the default energy-ordered active window
+can pick the wrong orbitals. Use `cas_select='impurity'` or `'ao_character'` (with
+`ao_labels`) to target the intended orbitals. See `cas_active_space_selection.py`.
 
 ---
 
