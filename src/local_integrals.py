@@ -31,23 +31,28 @@ class LocalIntegrals:
         self.fullEhf = the_mf.e_tot
         _dm = the_mf.make_rdm1()
         _hcore = the_mf.get_hcore()
-        if _dm.ndim == 3:  # UHF: (2, nao, nao)
+        _S = self.mol.intor_symmetric('int1e_ovlp')
+        if _dm.ndim == 3:  # UHF/UKS
             self.fullDMao       = _dm[0] + _dm[1]
             self.fullDMao_alpha = _dm[0]
             self.fullDMao_beta  = _dm[1]
-            _v = the_mf.get_veff(self.mol, _dm)        # 3D input → correct per-spin exchange
-            self.fullJKao = 0.5 * (_v[0] + _v[1])     # spin-averaged Veff
-            self.fullFOCKao_alpha = _hcore + _v[0]
-            self.fullFOCKao_beta  = _hcore + _v[1]
-        else:
+            # F = S C eps C.T S: invariant to degenerate-subspace eigenvector
+            # rotation; avoids BLAS non-determinism in get_veff ERI contraction.
+            SC_a = _S @ the_mf.mo_coeff[0]
+            SC_b = _S @ the_mf.mo_coeff[1]
+            self.fullFOCKao_alpha = SC_a @ np.diag(the_mf.mo_energy[0]) @ SC_a.T
+            self.fullFOCKao_beta  = SC_b @ np.diag(the_mf.mo_energy[1]) @ SC_b.T
+            self.fullFOCKao = 0.5 * (self.fullFOCKao_alpha + self.fullFOCKao_beta)
+            self.fullJKao   = self.fullFOCKao - _hcore
+        else:  # RHF/RKS
             self.fullDMao       = _dm
             self.fullDMao_alpha = _dm / 2.0
             self.fullDMao_beta  = _dm / 2.0
-            _v = the_mf.get_veff(self.mol, self.fullDMao)
-            self.fullJKao = _v[0] if _v.ndim == 3 else _v
-            self.fullFOCKao_alpha = _hcore + self.fullJKao
-            self.fullFOCKao_beta  = _hcore + self.fullJKao
-        self.fullFOCKao = _hcore + self.fullJKao
+            SC = _S @ the_mf.mo_coeff
+            self.fullFOCKao = SC @ np.diag(the_mf.mo_energy) @ SC.T
+            self.fullJKao   = self.fullFOCKao - _hcore
+            self.fullFOCKao_alpha = self.fullFOCKao
+            self.fullFOCKao_beta  = self.fullFOCKao
 
         _with_df = getattr(the_mf, 'with_df', None)
         self.use_density_fit = _with_df is not None
@@ -146,18 +151,17 @@ class LocalIntegrals:
             return None
 
         if is_uhf:
-            dm_ao = the_mf.make_rdm1()
-            dm_a, dm_b = dm_ao[0], dm_ao[1]
+            fock_a = self.fullFOCKao_alpha
+            fock_b = self.fullFOCKao_beta
         else:  # ROHF: reconstruct alpha/beta DMs from mo_occ
             mo  = the_mf.mo_coeff
             occ = the_mf.mo_occ
             dm_a = np.dot(mo * (occ > 0),  mo.T)
             dm_b = np.dot(mo * (occ == 2), mo.T)
-
-        hcore  = the_mf.get_hcore()
-        veff   = the_mf.get_veff(self.mol, np.stack([dm_a, dm_b]))
-        fock_a = hcore + veff[0]
-        fock_b = hcore + veff[1]
+            hcore  = the_mf.get_hcore()
+            veff   = the_mf.get_veff(self.mol, np.stack([dm_a, dm_b]))
+            fock_a = hcore + veff[0]
+            fock_b = hcore + veff[1]
 
         spin_loc = self.ao2loc.T @ (0.5 * (fock_a - fock_b)) @ self.ao2loc
         print(f"localintegrals: open-shell reference detected; ||oei_s||_F = {np.linalg.norm(spin_loc):.6f}")
