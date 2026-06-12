@@ -8,6 +8,17 @@ from . import iao_helper
 import numpy as np
 
 
+# ===== TEMPORARY DIAGNOSTIC =====================================================
+# Localization instrumentation for the QD-NEVPT2 non-reproducibility bug. These
+# hashes bracket the bath-construction pipeline (mean-field Fock -> localization
+# -> projected Fock) so an A/A run shows exactly which stage first diverges.
+# Grep "TEMPORARY DIAGNOSTIC" / "FINGERPRINT" to remove all of it.
+import hashlib as _hashlib
+def _fp(arr):
+    return _hashlib.md5(np.ascontiguousarray(arr, dtype=np.float64).tobytes()).hexdigest()[:12]
+# ===== END TEMPORARY DIAGNOSTIC =================================================
+
+
 class LocalIntegrals:
 
     def __init__(self, the_mf, active_orbs, localizationtype,
@@ -113,6 +124,12 @@ class LocalIntegrals:
         self.activeCONST = the_mf.energy_nuc() + np.einsum('ij,ij->', self.frozenOEIao - 0.5 * self.frozenJKao, self.frozenDMao)
         self.activeOEI   = np.dot(np.dot(self.ao2loc.T, self.frozenOEIao), self.ao2loc)
         self.activeFOCK  = np.dot(np.dot(self.ao2loc.T, self.fullFOCKao), self.ao2loc)
+        # TEMPORARY DIAGNOSTIC: full-array hashes (the bare norm cannot prove a
+        # matrix is bit-identical across runs). fullFOCKao = is the mean field
+        # deterministic; ao2loc = is localization deterministic; activeFOCK = is
+        # the projected Fock that seeds _build_1rdm deterministic.
+        print(f"localintegrals::FINGERPRINT fullFOCKao={_fp(self.fullFOCKao)} "
+              f"ao2loc={_fp(self.ao2loc)} activeFOCK={_fp(self.activeFOCK)}")
         if self.Norbs <= 150:
             self.ERIinMEM  = True
             self.activeERI = ao2mo.outcore.full_iofree(self.mol, self.ao2loc, compact=False).reshape(

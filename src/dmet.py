@@ -10,6 +10,17 @@ from .solvers import SolverDispatcher
 from .fragment_builder import FragmentBuilder
 
 
+# ===== TEMPORARY DIAGNOSTIC =====================================================
+# Localization instrumentation for the QD-NEVPT2 non-reproducibility bug. Hashes
+# the 1-RDM that feeds constructbath; sits between activeFOCK (local_integrals)
+# and the embedding fock (qdnevpt2 solver) to localize the divergence stage.
+# Grep "TEMPORARY DIAGNOSTIC" / "FINGERPRINT" to remove all of it.
+import hashlib as _hashlib
+def _fp(arr):
+    return _hashlib.md5(np.ascontiguousarray(arr, dtype=np.float64).tobytes()).hexdigest()[:12]
+# ===== END TEMPORARY DIAGNOSTIC =================================================
+
+
 def _fragment_worker(task):
     os.environ['OMP_NUM_THREADS'] = '1'
     os.environ['MKL_NUM_THREADS'] = '1'
@@ -275,6 +286,11 @@ class DMET:
     def doexact( self, chempot_imp=0.0 ):
     
         one_rdm = self.helper.construct1RDM_loc( self.doSCF, self.umat )
+        # TEMPORARY DIAGNOSTIC: the 1-RDM handed to constructbath. If activeFOCK
+        # matches but this differs, the divergence is in _build_1rdm's eigh
+        # (near-degenerate eigenvector rotation); if this matches but the solver
+        # fock differs, the divergence is inside constructbath.
+        print(f"dmet::FINGERPRINT one_rdm={_fp(one_rdm)}")
         self.energy   = 0.0
         self.imp_1RDM = []
         self.dmetOrbs = []
