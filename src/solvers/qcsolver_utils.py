@@ -46,9 +46,26 @@ def select_cas_orbitals(mc, cas_select, ncas, nimp, norb,
         raise ValueError(f"select_cas_orbitals: unknown cas_select='{cas_select}'. "
                         f"Valid options: 'energy', 'impurity', 'ao_character'")
 
-    selected = sorted(sorted(frontier, key=lambda i: -weights[i])[:ncas])
+    ranked = sorted(frontier, key=lambda i: -weights[i])
+    _warn_if_ambiguous_boundary(ranked, weights, ncas, cas_select)
+    selected = sorted(ranked[:ncas])
     mc.mo_coeff = mc.sort_mo(selected, base=0)
     return selected
+
+
+def _warn_if_ambiguous_boundary(ranked, weights, ncas, cas_select):
+    if len(ranked) <= ncas:
+        return
+    score_in  = weights[ranked[ncas - 1]]
+    score_out = weights[ranked[ncas]]
+    if score_in < 1e-10:
+        return
+    gap_rel = (score_in - score_out) / score_in
+    if gap_rel < 0.05:
+        print(f"WARNING: cas_select='{cas_select}' selection boundary is ambiguous — "
+              f"orbital {ranked[ncas-1]} (score={score_in:.4f}) vs orbital {ranked[ncas]} "
+              f"(score={score_out:.4f}), gap={gap_rel:.1%}. "
+              f"Consider increasing ncas by 1 or verifying the active space manually.")
 
 
 def _ao_character_weights(emb_mo, ao2eo, ao_mol_dumps, ao_labels):
