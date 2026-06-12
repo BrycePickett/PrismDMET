@@ -132,10 +132,8 @@ def solve_uks(const, oei, fock, tei, norb, nel, nimp, dm_guess,
 
     mf = pyscf_dft.UKS(mol_spin)
     mf.xc = xc
-    _has_canonical_guess = isinstance(dm_guess, np.ndarray) and dm_guess.ndim == 3
-    _effective_shift = max(level_shift, 0.2) if _has_canonical_guess else level_shift
-    if _effective_shift != 0.0:
-        mf.level_shift = _effective_shift
+    if level_shift != 0.0:
+        mf.level_shift = level_shift
     if use_density_fit:
         mf = mf.density_fit(auxbasis=df_auxbasis)
     mf.get_hcore = lambda *args: h_ao_a

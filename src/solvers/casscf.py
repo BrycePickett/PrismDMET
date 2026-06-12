@@ -1,10 +1,4 @@
-'''
-CASSCF solver for QC-dmet.
-
-Solves the dmet impurity problem at the CASSCF level using PySCF's mcscf module.
-Supports single-state and state-averaged CASSCF, warm restart via mo_guess/ci_guess,
-and open-shell environments via oei_s spin-potential injection.
-'''
+'''CASSCF solver for DMET embedding clusters using PySCF's mcscf module.'''
 
 import numpy as np
 from pyscf import ao2mo, gto, scf, mcscf
@@ -19,60 +13,14 @@ def solve(const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
           frozen=None,
           mo_guess=None, ci_guess=None,
           oei_s=None, spin=None,
+          cas_select='energy', ao_labels=None, ao2eo=None, ao_mol_dumps=None,
           **casscf_kwargs):
-    '''
-    Solve a dmet impurity problem at the CASSCF level.
-
-    Parameters
-    ----------
-    const        : float
-    oei          : ndarray (norb, norb)
-    fock         : ndarray (norb, norb)
-    tei          : ndarray (norb, norb, norb, norb)
-    norb         : int – total number of embedding orbitals (impurity + bath)
-    nel          : int – total number of electrons (must be even for RHF ref.)
-    nimp         : int – number of impurity orbitals (first nimp of norb)
-    dm_guess_rhf   : ndarray – RHF density matrix initial guess
-    ncas         : int – number of active orbitals.  Defaults to norb (full space).
-    nelecas      : int – number of active electrons.  Defaults to nel (full space).
-    chempot_imp  : float – chemical potential on impurity block
-    printoutput  : bool
-    sa_nstates   : int – number of states for state-averaged CASSCF (default 1 = SS)
-    sa_weights   : list of float – weights for SA; uniform if None
-    frozen       : list or None – orbital indices to freeze (passed to CASSCF)
-    mo_guess     : ndarray or None – MO coefficients from a previous iteration
-                   (warm restart).  If provided, these are used instead of the
-                   RHF canonical MOs as the initial CASSCF orbital guess.
-    ci_guess     : ndarray or None – CI vector(s) from a previous iteration.
-    oei_s        : ndarray (norb, norb) or None – spin-dependent one-electron
-                   potential for open-shell environments.  When provided, the
-                   CASSCF object is wrapped to inject spin-gradient corrections.
-    **casscf_kwargs : extra keyword arguments set on the mcscf.CASSCF object
-                     (e.g. max_cycle=200, conv_tol=1e-9, fcisolver=...)
-
-    Returns
-    -------
-    impurity_energy : float
-    pyscf_rdm1      : ndarray – 1-RDM in local orbital basis (for dmet loop)
-    cas_results    : dict – {
-        'e_tot'     : float or ndarray   (SS: total energy; SA: weighted avg)
-        'e_states'  : ndarray or None    (SA only: individual state energies)
-        'ncas'      : int
-        'nelecas'   : int
-        'nstates'   : int
-        'weights'   : ndarray
-        'ci'        : CASSCF CI vector(s)
-        'mo_coeff'  : ndarray – converged MO coefficients (for caching)
-    }
-    '''
-    # Default: full active space (equivalent to FCI within the embedding space)
+    '''Solve a DMET impurity problem at the CASSCF level. Returns (impurity_energy, rdm1, cas_results).'''
     if ncas is None:
         ncas = norb
     if nelecas is None:
         nelecas = nel
 
-    # Auto-detect spin: if nel is odd (or caller passes spin > 0) use ROHF reference.
-    # This guarantees a qualitatively correct orbital guess for open-shell CASSCF.
     _spin = spin if spin is not None else (nel % 2)
     _use_rohf = (_spin != 0)
 
@@ -92,7 +40,7 @@ def solve(const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
         assert len(sa_weights) == sa_nstates, \
             "casscf::solve: len(sa_weights) must equal sa_nstates"
         sa_weights = np.array(sa_weights, dtype=float)
-        sa_weights /= sa_weights.sum()   # normalise
+        sa_weights /= sa_weights.sum()   # normalize
     else:
         sa_weights = np.array([1.0])
 
@@ -123,7 +71,8 @@ def solve(const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
         mf.scf(dm_guess_rhf)
         dm_loc = np.dot(np.dot(mf.mo_coeff, np.diag(mf.mo_occ)), mf.mo_coeff.T)
         if not mf.converged:
-            mf = mf.newton()
+            mf.max_cycle = 300
+            mf.diis_space = 12
             mf.scf(dm_loc)
             dm_loc = np.dot(np.dot(mf.mo_coeff, np.diag(mf.mo_occ)), mf.mo_coeff.T)
 
@@ -142,18 +91,33 @@ def solve(const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
         for key, val in casscf_kwargs.items():
             setattr(mc, key, val)
 
+        # For ROHF+oei_s, swap the base FCI solver before state_average_ so the
+        # SA wrapper inherits direct_uhf.FCI instead of direct_spin1.FCI.
+        # direct_spin1.FCI cannot accept the [h1e_a, h1e_b] list that
+        # fix_casscf_for_nonsinglet_env injects; direct_uhf.FCI handles it.
+        if _use_rohf and oei_s is not None and not np.all(np.abs(oei_s) < 1e-8):
+            _uhf_fci = pyscf_fci.direct_uhf.FCI()
+            _uhf_fci.verbose = mc.fcisolver.verbose
+            mc.fcisolver = _uhf_fci
+
         if sa_nstates > 1:
             mc = mcscf.state_average_(mc, weights=sa_weights.tolist())
 
         if oei_s is not None:
             from .qcsolver_utils import fix_casscf_for_nonsinglet_env
-            if _use_rohf and not np.all(np.abs(oei_s) < 1e-8):
-                # direct_spin1.FCI cannot accept [h1e_a, h1e_b] list that
-                # fix_casscf_for_nonsinglet_env injects; direct_uhf.FCI handles it
-                _uhf_fci = pyscf_fci.direct_uhf.FCI()
-                _uhf_fci.verbose = mc.fcisolver.verbose
-                mc.fcisolver = _uhf_fci
             mc = fix_casscf_for_nonsinglet_env(mc, oei_s)
+
+        # Skip selection when a warm-restart MO guess is supplied: mc.kernel(mo_guess)
+        # would overwrite the reordered mo_coeff anyway.
+        selected_orbs = None
+        if cas_select != 'energy' and mo_guess is None:
+            from .qcsolver_utils import select_cas_orbitals
+            selected_orbs = select_cas_orbitals(
+                mc, cas_select, ncas, nimp, norb,
+                ao2eo=ao2eo, ao_mol_dumps=ao_mol_dumps, ao_labels=ao_labels)
+            if printoutput:
+                print(f"casscf::solve : CAS selection by {cas_select}, "
+                      f"selected {ncas} orbitals: {selected_orbs}")
 
         _mo0 = mo_guess if mo_guess is not None else None
         _ci0 = ci_guess if ci_guess is not None else None
@@ -161,7 +125,7 @@ def solve(const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
 
         ncore = mc.ncore
         if _use_rohf:
-            _nelecas_fci = ((nelecas + 1) // 2, nelecas // 2)
+            _nelecas_fci = ((nelecas + _spin) // 2, (nelecas - _spin) // 2)
             _used_uhf_fci = oei_s is not None and not np.all(np.abs(oei_s) < 1e-8)
             ci_solver_base = (pyscf_fci.direct_uhf.FCI() if _used_uhf_fci
                               else pyscf_fci.direct_spin1.FCI())
@@ -222,8 +186,6 @@ def solve(const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
         pyscf_rdm2 = np.einsum('ck,abkl->abcl', C, pyscf_rdm2)
         pyscf_rdm2 = np.einsum('dl,abcl->abcd', C, pyscf_rdm2)
 
-        # -----------
-        # dmet impurity energy (half-projector formula)
         impurity_energy = (
             const
             + 0.25  * np.einsum('ij,ij->', pyscf_rdm1[:nimp,:],     fock[:nimp,:] + oei[:nimp,:])
@@ -244,37 +206,15 @@ def solve(const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
         'weights'  : sa_weights,
         'ci'       : mc.ci,
         'mo_coeff' : mc.mo_coeff,
+        'cas_select'    : cas_select,
+        'selected_orbs' : selected_orbs,
     }
 
     return impurity_energy, pyscf_rdm1, cas_results
 
 
-# ---------------------------------------------------------------------------
-# SolverDispatcher entry point
-# ---------------------------------------------------------------------------
-
 def execute(task):
-    """
-    SolverDispatcher-compatible wrapper for the CASSCF solver.
-
-    Unpacks the standardised task dict and calls solve(), which returns
-    a 3-tuple: (impurity_energy, pyscf_rdm1, cas_results).
-
-    The warm-restart cache (mo_guess, ci_guess) and the open-shell spin
-    potential (oei_s) are passed through transparently via the task dict.
-
-    Parameters
-    ----------
-    task : dict
-        Must contain: const, dmet_oei, dmet_fock, dmet_tei, norb, nel, nimp,
-        dm_guess_rhf, chempot_imp.
-        Optional: ncas, nelecas, sa_nstates, sa_weights, casscf_kwargs,
-        mo_guess, ci_guess, oei_s.
-
-    Returns
-    -------
-    (impurity_energy, pyscf_rdm1, cas_results) — same as solve().
-    """
+    """SolverDispatcher entry point for the CASSCF solver."""
     return solve(
         task['const'],
         task['dmet_oei'],
@@ -293,5 +233,9 @@ def execute(task):
         ci_guess=task.get('ci_guess'),
         oei_s=task.get('oei_s'),
         spin=task.get('spin'),
+        cas_select=task.get('cas_select', 'energy'),
+        ao_labels=task.get('ao_labels'),
+        ao2eo=task.get('ao2eo'),
+        ao_mol_dumps=task.get('ao_mol_dumps'),
         **task.get('casscf_kwargs', {}),
     )

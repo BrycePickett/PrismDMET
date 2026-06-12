@@ -36,7 +36,6 @@ solver = DMET(
     my_ints, fragments,
     is_translation_invariant=False,
     method='QD-NEVPT2',
-    mf_real=mf,
     ncas=6, nelecas=6,
     sa_nstates=n_states, sa_weights=None,
     casscf_kwargs={'conv_tol': 1e-11, 'conv_tol_grad': 1e-6},

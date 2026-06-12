@@ -40,7 +40,6 @@ my_dmet = DMET(
     my_ints, impurity_clusters,
     is_translation_invariant=False,
     method='NEVPT2',
-    mf_real=mf,
     sc_method='NONE',
     ncas=n_cas, nelecas=n_elecas,
     sa_nstates=1,

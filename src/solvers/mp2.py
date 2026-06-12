@@ -47,30 +47,22 @@ def solve( const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf, chempot_imp=0.0
         mf.get_ovlp = lambda *args: np.eye( norb )
         mf._eri = ao2mo.restore(8, tei, norb)
         mf.scf( dm_guess_rhf )
-        DMrhf = np.dot(np.dot( mf.mo_coeff, np.diag( mf.mo_occ )), mf.mo_coeff.T )
-        numPairs = nel // 2
 
-        # Get the MP2 solution
+        # Get the MP2 solution. PySCF's response densities include the HF
+        # reference, so E = Tr[h dm1] + 0.5*dm2.eri reproduces E(MP2) exactly.
         myMP2 = mp.MP2( mf )
         E_MP2, T_MP2 = myMP2.kernel()
-        OneRDM_mo = np.zeros( [norb, norb], dtype=float )
+        OneRDM_mo = myMP2.make_rdm1()
         TwoRDM_mo = myMP2.make_rdm2() # 2-RDM is stored in chemistry notation!
-
-        # Reconstruct HF reference contributions to the correlated RDMs
-        for orb1 in range(numPairs):
-            OneRDM_mo[orb1, orb1] += 2.0
-            for orb2 in range(numPairs):
-                TwoRDM_mo[orb1,orb1,orb2,orb2] += 4.0
-                TwoRDM_mo[orb1,orb2,orb1,orb2] -= 2.0
         one_rdm_loc = np.dot(mf.mo_coeff, np.dot( OneRDM_mo, mf.mo_coeff.T ))
         TwoRDM_loc = np.einsum('ai,ijkl->ajkl', mf.mo_coeff, TwoRDM_mo )
         TwoRDM_loc = np.einsum('bj,ajkl->abkl', mf.mo_coeff, TwoRDM_loc)
         TwoRDM_loc = np.einsum('ck,abkl->abcl', mf.mo_coeff, TwoRDM_loc)
         TwoRDM_loc = np.einsum('dl,abcl->abcd', mf.mo_coeff, TwoRDM_loc)
     
-    # To calculate the impurity energy, rescale the JK matrix with a factor 0.5 to avoid double counting: 0.5 * ( oei + fock ) = oei + 0.5 * JK
+    # Half-projector: 0.5*(oei + fock) avoids double-counting JK.
     impurity_energy = const
-    impurity_energy += 0.5 * np.einsum( 'ij,ij->', DMrhf[:nimp,:], oei[:nimp,:] + fock[:nimp,:] ) # To be consistent with the energy formula above, this should be the HF RDM !!!
+    impurity_energy += 0.5 * np.einsum( 'ij,ij->', one_rdm_loc[:nimp,:], oei[:nimp,:] + fock[:nimp,:] )
     impurity_energy += 0.125 * np.einsum( 'ijkl,ijkl->', TwoRDM_loc[:nimp,:,:,:], tei[:nimp,:,:,:] )
     impurity_energy += 0.125 * np.einsum( 'ijkl,ijkl->', TwoRDM_loc[:,:nimp,:,:], tei[:,:nimp,:,:] )
     impurity_energy += 0.125 * np.einsum( 'ijkl,ijkl->', TwoRDM_loc[:,:,:nimp,:], tei[:,:,:nimp,:] )
@@ -78,26 +70,8 @@ def solve( const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf, chempot_imp=0.0
     return ( impurity_energy, one_rdm_loc )
 
 
-# ---------------------------------------------------------------------------
-# SolverDispatcher entry point
-# ---------------------------------------------------------------------------
-
 def execute(task):
-    """
-    SolverDispatcher-compatible wrapper for the MP2 solver.
-
-    Unpacks the standardised task dict and calls solve().
-
-    Parameters
-    ----------
-    task : dict
-        Must contain: const, dmet_oei, dmet_fock, dmet_tei, norb, nel, nimp,
-        dm_guess_rhf, chempot_imp.
-
-    Returns
-    -------
-    (impurity_energy, one_rdm_loc) — same as solve().
-    """
+    """SolverDispatcher entry point for the MP2 solver."""
     return solve(
         task['const'],
         task['dmet_oei'],

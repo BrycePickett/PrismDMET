@@ -1,20 +1,4 @@
-"""
-QMMMCluster: structured output object from QMMMBuilder.
-
-Atom labeling strategy (critical for PySCF correctness):
-----------------------------------------------------------------
-Region 0 (QM atoms)    : stored as 'Cu0', 'O0' (suffix = region index)
-Region 1 (ECP atoms)   : stored as 'X-Cu1', 'X-O1' ('X-' prefix allows ECPs)
-Region 3 (Ghost atoms) : stored as 'ghost-Cu' (PySCF ghost syntax)
-Region 2 (MM charges)  : not in mol.atom; only in mm_coords/mm_charges
-
-For XYZ visualization, we maintain a 'display_element' alongside
-each atom so that structure viewers (VESTA, Avogadro, etc.) see
-chemically meaningful symbols:
-    ghost-Cu  -> 'X'
-    X-Cu1     -> 'Th'
-    O0 / Cu0  -> 'Cu' / 'O'
-"""
+"""QMMMCluster: structured output object from QMMMBuilder."""
 
 from __future__ import annotations
 
@@ -41,25 +25,18 @@ _VIS_LABELS = {
 }
 
 
+def _parse_pyscf_label(label: str) -> Tuple[str, int]:
+    """Recover (element, region) from a PySCF label: 'X-Cu1'→ECP, 'ghost-Cu'→ghost, 'Cu0'→QM."""
+    if label.startswith('X-'):
+        return label[2:].rstrip('0123456789'), REGION_ECP
+    if label.startswith('ghost-'):
+        return label[len('ghost-'):].rstrip('0123456789'), REGION_GHOST
+    return label.rstrip('0123456789'), REGION_QM
+
+
 @dataclass
 class AtomRecord:
-    """
-    Lightweight container for one atom in the cluster.
-
-    Attributes
-    ----------
-    element : str
-        True element symbol (e.g. 'Cu', 'O').
-    coords : np.ndarray  shape (3,)
-        Cartesian position in Angstrom.
-    charge : float
-        Point-charge value assigned to this atom (0.0 for QM atoms).
-    region : int
-        One of REGION_QM, REGION_ECP, REGION_MM, REGION_GHOST.
-    pyscf_label : str
-        The label that will appear in mol.atom (e.g. 'Cu0', 'X-Cu1',
-        'ghost-Cu').  Set by QMMMCluster at build time.
-    """
+    """Lightweight container for one atom in the cluster (element, coords, charge, region, pyscf_label)."""
     element:     str
     coords:      np.ndarray
     charge:      float
@@ -68,33 +45,7 @@ class AtomRecord:
 
 
 class QMMMCluster:
-    """
-    Structured result from QMMMBuilder.
-
-    The cluster is split into four named groups that map directly onto
-    the workflow in PySCF:
-
-      .qm_atoms     → mol.atom  (region 0)
-      .ecp_atoms    → mol.atom  (region 1, with ECPs in mol.ecp)
-      .ghost_atoms  → mol.atom  (region 3, ghost basis, no nuclear charge)
-      .mm_coords    → np.ndarray passed to pyscf.qmmm.mm_charge()
-      .mm_charges   → np.ndarray passed to pyscf.qmmm.mm_charge()
-
-    The ECP coords / charges are ALSO added to mm_coords / mm_charges so
-    that PySCF's QM/MM driver sees a complete electrostatic environment
-    (matching Michael's approach exactly).
-
-    Parameters
-    ----------
-    atoms : list of AtomRecord
-        Full ordered list of all atoms (all regions).
-    qm_charge : float
-        Net charge of the QM region.
-    qm_spin : int
-        2 * S for the QM region (0 = closed-shell).
-    material_name : str
-        Label passed through to file headers.
-    """
+    """Structured result from QMMMBuilder with QM/ECP/ghost/MM atom views and PySCF interface helpers."""
 
     def __init__(
         self,
@@ -108,9 +59,33 @@ class QMMMCluster:
         self.qm_spin       = qm_spin
         self.material_name = material_name
 
-    # ------------------------------------------------------------------
-    # Filtered atom views
-    # ------------------------------------------------------------------
+    @classmethod
+    def from_xyz(
+        cls,
+        filename: str,
+        qm_charge: float = 0.0,
+        qm_spin: int = 0,
+        material_name: str = '',
+    ) -> 'QMMMCluster':
+        """Build a QMMMCluster from a PySCF-labeled XYZ file (inverse of to_xyz(mode='pyscf'))."""
+        path = Path(filename).expanduser()
+        atoms: List[AtomRecord] = []
+        with open(path) as f:
+            lines = f.readlines()
+        for line in lines[2:]:
+            parts = line.split()
+            if len(parts) < 4:
+                continue
+            label = parts[0]
+            coords = np.array([float(c) for c in parts[1:4]], dtype=float)
+            charge = float(parts[4]) if len(parts) >= 5 else 0.0
+            element, region = _parse_pyscf_label(label)
+            atoms.append(AtomRecord(
+                element=element, coords=coords,
+                charge=charge, region=region, pyscf_label=label,
+            ))
+        return cls(atoms, qm_charge=qm_charge, qm_spin=qm_spin,
+                   material_name=material_name)
 
     @property
     def qm_atoms(self) -> List[AtomRecord]:
@@ -132,17 +107,9 @@ class QMMMCluster:
     def all_atoms(self) -> List[AtomRecord]:
         return list(self._atoms)
 
-    # ------------------------------------------------------------------
-    # Electrostatics arrays (ECP + MM combined, matching Michael's output)
-    # ------------------------------------------------------------------
-
     @property
     def mm_coords(self) -> np.ndarray:
-        """
-        Cartesian coords (Å) of the entire classical environment:
-        ECP atoms first, then MM point charges — exactly matching the
-        ``coords`` list in the PySCF scripts that Michael's code generates.
-        """
+        """Cartesian coords (Å) of the classical environment (ECP first, then MM)."""
         classical = [a for a in self._atoms
                      if a.region in (REGION_ECP, REGION_MM)]
         if not classical:
@@ -151,29 +118,15 @@ class QMMMCluster:
 
     @property
     def mm_charges(self) -> np.ndarray:
-        """
-        Corresponding charges for mm_coords (same ordering).
-        """
+        """Charges corresponding to mm_coords (same ordering)."""
         classical = [a for a in self._atoms
                      if a.region in (REGION_ECP, REGION_MM)]
         if not classical:
             return np.empty((0,))
         return np.array([a.charge for a in classical])
 
-    # ------------------------------------------------------------------
-    # PySCF mol.atom list
-    # ------------------------------------------------------------------
-
     def to_pyscf_mol_atom(self) -> List[Tuple[str, Tuple[float, float, float]]]:
-        """
-        Return a list suitable for ``mol.atom`` covering all atoms that
-        require a basis set: QM (region 0), ECP boundary (region 1),
-        and ghost atoms (region 3).
-
-        Example
-        -------
-        >>> mol.atom = cluster.to_pyscf_mol_atom()
-        """
+        """Return a mol.atom list for all basis-carrying atoms (QM, ECP, ghost)."""
         mol_atoms = []
         for a in self._atoms:
             if a.region in (REGION_QM, REGION_ECP, REGION_GHOST):
@@ -183,20 +136,7 @@ class QMMMCluster:
         return mol_atoms
 
     def ecp_dict(self, ecp_library: dict) -> dict:
-        """
-        Return a ``mol.ecp`` dictionary for all ECP boundary atoms.
-
-        Parameters
-        ----------
-        ecp_library : dict
-            Mapping from element symbol to raw ECP string,
-            e.g. from ``qmmm.ecp_library.ECP_LIBRARY``.
-
-        Example
-        -------
-        >>> from prismdmet.qmmm import ECP_LIBRARY
-        >>> mol.ecp = cluster.ecp_dict(ECP_LIBRARY)
-        """
+        """Return a mol.ecp dict for all ECP boundary atoms using the provided element→ECP-string library."""
         import pyscf.gto as gto
         ecp = {}
         for a in self.ecp_atoms:
@@ -208,29 +148,7 @@ class QMMMCluster:
 
     def basis_dict(self, qm_basis: str = 'def2-svp',
                    ghost_basis: Optional[dict] = None) -> dict:
-        """
-        Return a ``mol.basis`` dictionary.
-
-        - QM atoms  (e.g. 'Cu0'):    assigned *qm_basis* by name.
-        - Ghost atoms (e.g. 'ghost-Cu'): basis loaded explicitly from the
-          parent element using ``pyscf.gto.basis.load(qm_basis, element)``
-          because PySCF does not always infer it from the 'ghost-X' label.
-        - ECP atoms (e.g. 'X-Cu1'): assigned an EMPTY basis ``{}`` so
-          PySCF does not warn 'Basis not found'.  These atoms are nelec=0
-          repulsion-only — they carry a mol.ecp entry but NO basis functions.
-
-        Parameters
-        ----------
-        qm_basis : str
-            Basis set name for QM and ghost atoms (e.g. 'def2-svp').
-        ghost_basis : dict, optional
-            Override mapping {'ghost-Cu': <basis>}.  If None, borrows
-            *qm_basis* from the parent element automatically.
-
-        Example
-        -------
-        >>> mol.basis = cluster.basis_dict('def2-svp')
-        """
+        """Return a mol.basis dict: QM and ghost atoms get qm_basis; ECP atoms get no basis functions."""
         import pyscf.gto as gto
         basis = {}
         # QM atoms — load by name; PySCF resolves via element suffix
@@ -255,22 +173,7 @@ class QMMMCluster:
         return basis
 
     def auxbasis_dict(self, library='cu2o_jkfit') -> dict:
-        """
-        Return a mol.auxbasis dictionary for density fitting.
-
-        Covers all QM and ghost atoms; ECP boundary atoms are excluded
-        (they carry no basis functions).
-
-        Parameters
-        ----------
-        library : str
-            Auxbasis library to use. Currently only 'cu2o_jkfit' is
-            supported (def2-universal-jkfit valence-only, GTH-compatible).
-
-        Example
-        -------
-        >>> mf.with_df.auxbasis = cluster.auxbasis_dict()
-        """
+        """Return a mol.auxbasis dict for QM and ghost atoms from the named library."""
         from .auxbasis_library import cu2o_jkfit
         _loaders = {'cu2o_jkfit': cu2o_jkfit}
         if library not in _loaders:
@@ -284,10 +187,6 @@ class QMMMCluster:
                 auxbasis[lbl] = loader(a.element)
         return auxbasis
 
-    # ------------------------------------------------------------------
-    # XYZ file export
-    # ------------------------------------------------------------------
-
     def to_xyz(
         self,
         filename: str,
@@ -296,29 +195,7 @@ class QMMMCluster:
         include_charges: bool = False,
         overwrite: bool = True,
     ) -> None:
-        """
-        Write the cluster to an XYZ file.
-
-        Parameters
-        ----------
-        filename : str
-            Output file path.
-        region : str
-            'full'    — all four regions.
-            'qm'      — QM atoms only.
-            'ecp'     — ECP boundary atoms only.
-            'mm'      — MM point charges only.
-            'qm_ghost'— QM + ghost atoms.
-        mode : str
-            'visual'  — raw element labels (e.g. 'Cu', 'O').
-            'pyscf'   — PySCF labels (e.g. 'Cu0', 'X-Cu1', 'ghost-Cu').
-                        Useful for debugging mol.atom.
-        include_charges : bool
-            If True, append the point charge as a 5th column (produces
-            a .qxyz-style file readable by Molden/Chemcraft).
-        overwrite : bool
-            Silently overwrite existing files.
-        """
+        """Write the cluster to an XYZ file; region selects subset, mode controls label style."""
         filepath = Path(filename).expanduser()
         if not overwrite and filepath.exists():
             raise FileExistsError(f"File '{filepath}' already exists.")
@@ -333,8 +210,8 @@ class QMMMCluster:
         if region not in region_map:
             raise ValueError(f"region must be one of {list(region_map.keys())}")
             
-        if mode not in ('visual', 'pyscf'):
-            raise ValueError("mode must be 'visual' or 'pyscf'")
+        if mode not in ('visual', 'pyscf', 'highlight'):
+            raise ValueError("mode must be 'visual', 'pyscf', or 'highlight'")
 
         selected = [a for a in self._atoms if a.region in region_map[region]]
 
@@ -347,6 +224,9 @@ class QMMMCluster:
             for a in selected:
                 if mode == 'pyscf':
                     label = a.pyscf_label
+                elif mode == 'highlight':
+                    vis   = _VIS_LABELS[a.region]
+                    label = vis if vis else a.element
                 else:
                     label = a.element
                 x, y, z = a.coords
@@ -354,10 +234,6 @@ class QMMMCluster:
                 if include_charges:
                     row += f'  {a.charge:12.8f}'
                 f.write(row + '\n')
-
-    # ------------------------------------------------------------------
-    # Quick summary
-    # ------------------------------------------------------------------
 
     def summary(self) -> str:
         lines = [
@@ -371,6 +247,52 @@ class QMMMCluster:
             f'  MM total Q : {self.mm_charges.sum():+.6f}',
         ]
         return '\n'.join(lines)
+
+    def find_indices(
+        self,
+        mol_atom: list,
+        region: str = 'qm',
+        use_slices: bool = False,
+        precision: int = 8,
+    ) -> list:
+        """Return indices of region atoms within a mol.atom list, matched by coordinate."""
+        _region_map = {
+            'qm': REGION_QM, 'ecp': REGION_ECP,
+            'mm': REGION_MM, 'ghost': REGION_GHOST,
+        }
+        if region == 'all':
+            selected = self._atoms
+        elif region in _region_map:
+            selected = [a for a in self._atoms if a.region == _region_map[region]]
+        else:
+            raise ValueError(
+                f"region must be one of {list(_region_map) + ['all']}"
+            )
+
+        ref_map = {
+            tuple(round(float(c), precision) for c in coords): i
+            for i, (_label, coords) in enumerate(mol_atom)
+        }
+        indices = []
+        for a in selected:
+            key = tuple(round(float(c), precision) for c in a.coords)
+            if key in ref_map:
+                indices.append(ref_map[key])
+        indices.sort()
+
+        if not use_slices or not indices:
+            return indices
+
+        result = []
+        start = prev = indices[0]
+        for idx in indices[1:]:
+            if idx == prev + 1:
+                prev = idx
+            else:
+                result.append(slice(start, prev + 1) if start != prev else start)
+                start = prev = idx
+        result.append(slice(start, prev + 1) if start != prev else start)
+        return result
 
     def __repr__(self) -> str:
         return (

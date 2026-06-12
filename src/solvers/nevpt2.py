@@ -1,81 +1,92 @@
-'''
-NEVPT2 solver for QC-dmet.
-
-Runs CASSCF followed by strongly-contracted NEVPT2 using PySCF's mrpt.NEVPT.
-Supports single-state (nstates=1) and multi-state (nstates > 1) calculations.
-
-For multi-state runs, the correct procedure is:
-    1. SA-CASSCF to get optimized orbitals.
-    2. Multi-root CASCI with those MOs.
-    3. Per-state SC-NEVPT2 via mrpt.NEVPT(mc_casci, root=i).
-
-This solver operates on the real physical molecule (mf_real) because PySCF's
-NEVPT2 requires actual mol/mf/mc objects. It is oneshot-dmet only.
-'''
+'''NEVPT2 solver for DMET embedding clusters (SA-CASSCF + per-state SC-NEVPT2, one-shot only).'''
 
 import numpy as np
-from pyscf import gto, scf, mcscf, mrpt
+from pyscf import ao2mo, fci as pyscf_fci, gto, scf, mcscf, mrpt
 from ..utils import silent_stdout, nullcontext
 
 _eV = 27.21138602
 
 
-def solve(mf_real, ncas, nelecas,
+def solve(const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
+          ncas, nelecas,
           nstates=1, sa_weights=None,
-          root=0,
-          casscf_kwargs=None,
-          nevpt2_kwargs=None,
-          mo_guess=None,
+          chempot_imp=0.0,
+          casscf_kwargs=None, nevpt2_kwargs=None,
+          spin=None, oei_s=None,
+          cas_select='energy', ao_labels=None, ao2eo=None, ao_mol_dumps=None,
           printoutput=True):
-    '''
-    Run CASSCF + NEVPT2 on the real physical molecule.
-
-    For a single ground-state calculation (nstates=1), the standard
-    CASSCF → NEVPT2 pipeline is used.
-
-    For excited states (nstates > 1), the correct multi-step procedure is:
-        1. SA-CASSCF with nstates states to get optimized MOs.
-        2. Multi-root CASCI with those MOs (nroots = nstates).
-        3. Per-state SC-NEVPT2 via mrpt.NEVPT(mc_casci, root=i).
-
-    Parameters
-    ----------
-    mf_real       : pyscf.scf.hf.RHF  – converged RHF on the real molecule
-    ncas          : int  – number of active orbitals
-    nelecas       : int  – number of active electrons
-    nstates       : int  – number of states (1 = single-state; >1 = multi-state)
-    sa_weights    : list of float or None  – SA weights (uniform if None)
-    root          : int  – which state to return as impurity_energy (0 = GS)
-    casscf_kwargs : dict – extra attributes set on the CASSCF object
-    nevpt2_kwargs : dict – extra attributes set on each mrpt.NEVPT object
-    printoutput   : bool
-
-    Returns
-    -------
-    e_tot      : ndarray  – total NEVPT2 energy per state (Ha)
-    e_corr     : ndarray  – NEVPT2 correlation energy per state (Ha)
-    mc         : mcscf object  – the CASCI/CASSCF object used for NEVPT2
-    nevpt_objs : list of mrpt.NEVPT  – one per state
-    '''
+    '''Run CASSCF + NEVPT2 on the DMET embedding cluster. Returns (e_tot, e_corr, mc, nevpt_objs).'''
     casscf_kwargs = casscf_kwargs or {}
     nevpt2_kwargs = nevpt2_kwargs or {}
+
+    _spin = spin if spin is not None else (nel % 2)
+    _use_rohf = (_spin != 0)
+
+    fock_copy = fock.copy()
+    if chempot_imp != 0.0:
+        for orb in range(nimp):
+            fock_copy[orb, orb] -= chempot_imp
 
     ctx = silent_stdout() if not printoutput else nullcontext()
 
     with ctx:
+        mol = gto.Mole()
+        mol.build(verbose=0)
+        mol.atom.append(('C', (0, 0, 0)))
+        mol.nelectron = nel
+        mol.spin = _spin
+        mol.incore_anyway = True
+
+        mf = scf.ROHF(mol) if _use_rohf else scf.RHF(mol)
+        mf.get_hcore = lambda *args: fock_copy
+        mf.get_ovlp  = lambda *args: np.eye(norb)
+        mf._eri      = ao2mo.restore(8, tei, norb)
+        mf.scf(dm_guess_rhf)
+        if not mf.converged:
+            mf.max_cycle = 300
+            mf.diis_space = 12
+            mf.scf(mf.make_rdm1())
+        if _use_rohf:
+            print(f"nevpt2::solve : embedded ROHF (spin={_spin}, nel={nel}, norb={norb})")
+
         if nstates == 1:
-            mc = mcscf.CASSCF(mf_real, ncas, nelecas)
+            mc = mcscf.CASSCF(mf, ncas, nelecas)
             mc.verbose = 5 if printoutput else 0
             for key, val in casscf_kwargs.items():
                 setattr(mc, key, val)
-            mc.kernel(mo_guess)
 
-            print(f"\nnevpt2::solve : CASSCF energy = {mc.e_tot:.10f} Ha")
+            if _use_rohf and oei_s is not None and not np.all(np.abs(oei_s) < 1e-8):
+                _uhf_fci = pyscf_fci.direct_uhf.FCI()
+                _uhf_fci.verbose = mc.fcisolver.verbose
+                mc.fcisolver = _uhf_fci
+            if oei_s is not None:
+                from .qcsolver_utils import fix_casscf_for_nonsinglet_env
+                mc = fix_casscf_for_nonsinglet_env(mc, oei_s)
+
+            if cas_select != 'energy':
+                from .qcsolver_utils import select_cas_orbitals
+                selected_orbs = select_cas_orbitals(
+                    mc, cas_select, ncas, nimp, norb,
+                    ao2eo=ao2eo, ao_mol_dumps=ao_mol_dumps, ao_labels=ao_labels)
+                if printoutput:
+                    print(f"nevpt2::solve : CAS selection by {cas_select}, "
+                          f"selected {ncas} orbitals: {selected_orbs}")
+
+            mc.kernel()
+
+            print(f"\nnevpt2::solve : embedded CASSCF energy = {mc.e_tot:.10f} Ha")
 
             nevpt_obj = mrpt.NEVPT(mc, root=0)
             nevpt_obj.verbose = 5 if printoutput else 0
             for key, val in nevpt2_kwargs.items():
                 setattr(nevpt_obj, key, val)
+            # mrpt.NEVPT.kernel() calls self.canonicalize(..., cas_natorb=True), which
+            # invokes mc.cas_natorb() → orth.orth_ao(mc.mol, 'meta_lowdin') → fails on
+            # the dummy mol (no real AO basis). Override to skip the natorb step; Fock
+            # diagonalization still canonicalizes inactive/external orbitals correctly.
+            _mc_ref = mc
+            nevpt_obj.canonicalize = lambda mo, ci, eris=None, sort=False, cas_natorb=True, casdm1=None, verbose=None: \
+                _mc_ref.canonicalize(mo, ci, eris, sort, False, casdm1, verbose)
             e_c = nevpt_obj.kernel()
 
             e_tot  = np.array([nevpt_obj.e_tot])
@@ -88,40 +99,71 @@ def solve(mf_real, ncas, nelecas,
             sa_weights = np.array(sa_weights, dtype=float)
             sa_weights /= sa_weights.sum()
 
-            # Step 1: SA-CASSCF for optimized orbitals
-            mc_sa = mcscf.CASSCF(mf_real, ncas, nelecas)
+            mc_sa = mcscf.CASSCF(mf, ncas, nelecas)
+            # Swap base FCI solver BEFORE state_average_ so the SA wrapper inherits it.
+            # direct_spin1.FCI cannot accept [h1e_a, h1e_b]; direct_uhf.FCI handles it.
+            if _use_rohf and oei_s is not None and not np.all(np.abs(oei_s) < 1e-8):
+                _uhf_fci = pyscf_fci.direct_uhf.FCI()
+                _uhf_fci.verbose = mc_sa.fcisolver.verbose
+                mc_sa.fcisolver = _uhf_fci
             mc_sa = mcscf.state_average_(mc_sa, weights=sa_weights.tolist())
             mc_sa.verbose = 5 if printoutput else 0
             for key, val in casscf_kwargs.items():
                 setattr(mc_sa, key, val)
-            mc_sa.kernel(mo_guess)
+            if oei_s is not None:
+                from .qcsolver_utils import fix_casscf_for_nonsinglet_env
+                mc_sa = fix_casscf_for_nonsinglet_env(mc_sa, oei_s)
+
+            if cas_select != 'energy':
+                from .qcsolver_utils import select_cas_orbitals
+                selected_orbs = select_cas_orbitals(
+                    mc_sa, cas_select, ncas, nimp, norb,
+                    ao2eo=ao2eo, ao_mol_dumps=ao_mol_dumps, ao_labels=ao_labels)
+                if printoutput:
+                    print(f"nevpt2::solve : CAS selection by {cas_select} (SA), "
+                          f"selected {ncas} orbitals: {selected_orbs}")
+
+            mc_sa.kernel()
             sa_mo = mc_sa.mo_coeff
 
-            print(f"\nnevpt2::solve : SA-CASSCF ({nstates} states) done.")
+            print(f"\nnevpt2::solve : embedded SA-CASSCF ({nstates} states) done.")
             for i, e in enumerate(mc_sa.e_states):
                 print(f"  State {i}: {e:.10f} Ha  (weight={sa_weights[i]:.4f})")
 
-            # Step 2: Multi-root CASCI with SA-CASSCF MOs
-            mc = mcscf.CASCI(mf_real, ncas, nelecas)
-            mc.verbose = 5 if printoutput else 0
+            mc = mcscf.CASCI(mf, ncas, nelecas)
+            mc.verbose = 4 if printoutput else 0
             mc.fcisolver.nroots = nstates
+
+            if oei_s is not None:
+                from .qcsolver_utils import fix_casscf_for_nonsinglet_env
+                if _use_rohf and not np.all(np.abs(oei_s) < 1e-8):
+                    _uhf_fci = pyscf_fci.direct_uhf.FCI()
+                    _uhf_fci.verbose = mc.fcisolver.verbose
+                    mc.fcisolver = _uhf_fci
+                    mc.fcisolver.nroots = nstates
+                mc = fix_casscf_for_nonsinglet_env(mc, oei_s)
+
             mc.kernel(sa_mo)
 
             print(f"\nnevpt2::solve : Multi-root CASCI energies:")
             for i, e in enumerate(mc.e_tot):
                 print(f"  State {i}: {e:.10f} Ha")
 
-            # Step 3: Per-state NEVPT2
             e_tot  = np.zeros(nstates)
             e_corr = np.zeros(nstates)
             nevpt_objs = []
+            _mc_ref = mc
             for i in range(nstates):
                 nevpt_i = mrpt.NEVPT(mc, root=i)
                 nevpt_i.verbose = 5 if printoutput else 0
                 for key, val in nevpt2_kwargs.items():
                     setattr(nevpt_i, key, val)
+                nevpt_i.canonicalize = lambda mo, ci, eris=None, sort=False, cas_natorb=True, casdm1=None, verbose=None: \
+                    _mc_ref.canonicalize(mo, ci, eris, sort, False, casdm1, verbose)
                 e_c_i = nevpt_i.kernel()
-                e_tot[i]  = nevpt_i.e_tot
+                # mc.e_tot is the full multi-root CASCI array; nevpt_i.e_tot would
+                # broadcast (e_corr + array). Take the scalar total for root i.
+                e_tot[i]  = mc.e_tot[i] + e_c_i
                 e_corr[i] = e_c_i
                 nevpt_objs.append(nevpt_i)
 
@@ -135,80 +177,34 @@ def solve(mf_real, ncas, nelecas,
     return e_tot, e_corr, mc, nevpt_objs
 
 
-# ---------------------------------------------------------------------------
-# mf_real reconstruction helper (parallel-worker path)
-# ---------------------------------------------------------------------------
-
-def _reconstruct_mf_from_task(task):
-    """
-    Reconstruct a minimal PySCF RHF object from serialized task dict arrays.
-
-    Because PySCF Mole and SCF objects cannot be pickled across process
-    boundaries, dmet.doexact() serializes the physical MF state as:
-        task['mol_dumps']   : str   - from pyscf.gto.Mole.dumps()
-        task['mf_mo_coeff'] : ndarray
-        task['mf_mo_energy']: ndarray
-        task['mf_mo_occ']   : ndarray
-        task['mf_e_tot']    : float
-
-    The returned object can be passed directly into solve() as mf_real.
-    No SCF iterations are re-run.
-    """
-    import pyscf.gto
-    import pyscf.scf
-
-    mol = pyscf.gto.Mole.loads(task['mol_dumps'])
-    mol.build(verbose=0)
-
-    mf = pyscf.scf.ROHF(mol) if mol.spin != 0 else pyscf.scf.RHF(mol)
-    # Inject pre-computed MO state — no SCF cycles run.
-    mf.mo_coeff  = task['mf_mo_coeff']
-    mf.mo_energy = task['mf_mo_energy']
-    mf.mo_occ    = task['mf_mo_occ']
-    mf.e_tot     = task['mf_e_tot']
-    return mf
-
-
-# ---------------------------------------------------------------------------
-# SolverDispatcher entry point
-# ---------------------------------------------------------------------------
-
 def execute(task):
-    """
-    SolverDispatcher entry point for the NEVPT2 solver.
-
-    Supports two transport modes for the physical SCF object:
-
-    Serialized path (parallel): task carries mol_dumps, mf_mo_coeff,
-        mf_mo_energy, mf_mo_occ, mf_e_tot. A fresh mf is reconstructed.
-    Live-object path (sequential): task['mf_real'] is the live PySCF RHF
-        object. Used when called from the main process directly.
-
-    The serialized path is chosen when 'mol_dumps' is present in the task dict.
-    """
-    # ------------------------------------------------------------------
-    # Resolve mf_real via either the serialized or live-object protocol.
-    # ------------------------------------------------------------------
-    if 'mol_dumps' in task:
-        # Mode 1: reconstruct from serialized arrays (parallel-safe).
-        mf_real = _reconstruct_mf_from_task(task)
-    else:
-        # Mode 2: live object passed directly (sequential / legacy path).
-        mf_real = task['mf_real']
-
+    """SolverDispatcher entry point for the embedded NEVPT2 solver."""
     e_tot, e_corr, mc, nevpt_objs = solve(
-        mf_real,
+        task['const'],
+        task['dmet_oei'],
+        task['dmet_fock'],
+        task['dmet_tei'],
+        task['norb'],
+        task['nel'],
+        task['nimp'],
+        task.get('dm_guess_rhf'),
         ncas=task.get('ncas'),
         nelecas=task.get('nelecas'),
         nstates=task.get('sa_nstates', 1),
         sa_weights=task.get('sa_weights'),
+        chempot_imp=task.get('chempot_imp', 0.0),
         casscf_kwargs=task.get('casscf_kwargs', {}),
         nevpt2_kwargs=task.get('nevpt2_kwargs', {}),
-        mo_guess=task.get('mo_guess'),
+        spin=task.get('spin'),
+        oei_s=task.get('oei_s'),
+        cas_select=task.get('cas_select', 'energy'),
+        ao_labels=task.get('ao_labels'),
+        ao2eo=task.get('ao2eo'),
+        ao_mol_dumps=task.get('ao_mol_dumps'),
     )
 
-    # Extract the 1-RDM for the dmet self-consistency loop.
-    # Use the NEVPT2 object's relaxed 1-RDM if available; fall back to CASSCF.
+    # 1-RDM (cluster orbital basis) for the dmet driver: prefer the NEVPT2
+    # relaxed density if available, else the CASSCF/CASCI density.
     nevpt_gs = nevpt_objs[0]
     if hasattr(nevpt_gs, 'onerdm') and nevpt_gs.onerdm is not None:
         rdm1 = nevpt_gs.onerdm

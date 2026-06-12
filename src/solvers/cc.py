@@ -31,7 +31,7 @@ def solve( const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
            eom_nroots=3,
            use_density_fit=False, df_auxbasis=None ):
     assert energytype in _VALID_ETYPES, \
-        f"cc::solve: unrecognised energytype='{energytype}'. Valid: {_VALID_ETYPES}"
+        f"cc::solve: unrecognized energytype='{energytype}'. Valid: {_VALID_ETYPES}"
 
     ctx = silent_stdout() if not printoutput else nullcontext()
 
@@ -56,7 +56,9 @@ def solve( const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
         mf.scf(dm_guess_rhf)
         dm_loc = np.dot(np.dot(mf.mo_coeff, np.diag(mf.mo_occ)), mf.mo_coeff.T)
         if not mf.converged:
-            mf = mf.newton()
+            # Newton/SOSCF rebuilds _eri from the dummy mol and crashes; retry plain SCF.
+            mf.max_cycle = 300
+            mf.diis_space = 12
             mf.scf(dm_loc)
             dm_loc = np.dot(np.dot(mf.mo_coeff, np.diag(mf.mo_occ)), mf.mo_coeff.T)
 
@@ -65,6 +67,8 @@ def solve( const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
         e_corr, t1, t2 = ccsolver.ccsd()
         e_rhf  = mf.e_tot
         e_ccsd = e_rhf + e_corr
+        _t1_norm = np.linalg.norm(t1) / np.sqrt(ccsolver.nocc)
+        print(f"cc::solve : T1 norm = {_t1_norm:.4f}  (>0.02: moderate MR; >0.05: strong MR)")
 
         if energytype == 'CASCI':
             ccsolver.solve_lambda()

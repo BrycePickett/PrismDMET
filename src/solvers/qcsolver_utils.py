@@ -1,103 +1,117 @@
-'''
-    Utility functions for QC-dmet active-space solvers.
-
-    Provides orbital projection tools for warm-restarting CASSCF across
-    dmet self-consistency iterations, preventing root collapse when the
-    u-matrix changes the embedding Hamiltonian.
-
-    Adapted from mrh.my_dmet.pyscf_casscf (Hung Pham / Matthew Hermes)
-    for the QC-dmet framework.
-
-    Key function
-    ------------
-    project_amo_manually : project active-space MOs from the previous
-        iteration onto the current embedding basis, producing a stable
-        initial guess for CASSCF that tracks the same electronic state.
-'''
+'''Utility functions for QC-dmet active-space solvers. Adapted from mrh.my_dmet.pyscf_casscf.'''
 
 import numpy as np
 
 
+def select_cas_orbitals(mc, cas_select, ncas, nimp, norb,
+                        ao2eo=None, ao_mol_dumps=None, ao_labels=None):
+    '''Pick the CAS active orbitals and reorder mc.mo_coeff so they occupy the active window.
+
+    cas_select:
+      'energy'       - no reordering (default PySCF energy ordering).
+      'impurity'     - rank frontier MOs by impurity localization weight and take the ncas largest.
+      'ao_character' - rank MOs by projection onto ao_labels; falls back to 'impurity' if
+                       ao_labels or required parameters are missing.
+
+    Returns the selected orbital index list (1-based PySCF convention via base=0 sort_mo),
+    or None when cas_select == 'energy'.
+    '''
+    if cas_select == 'energy':
+        return None
+
+    C = mc.mo_coeff
+    if C.ndim == 3:
+        C = C[0] + C[1]
+
+    if cas_select == 'impurity':
+        weights = np.sum(np.abs(C[:nimp, :]) ** 2, axis=0)
+        frontier = range(mc.ncore, norb)
+    elif cas_select == 'ao_character':
+        # Validate all required parameters for ao_character mode
+        if ao_labels is None or ao2eo is None or ao_mol_dumps is None:
+            print(f"WARNING: cas_select='ao_character' but ao_labels/ao2eo/ao_mol_dumps not fully provided. "
+                  f"Falling back to 'impurity' localization selection.")
+            weights = np.sum(np.abs(C[:nimp, :]) ** 2, axis=0)
+            frontier = range(mc.ncore, norb)
+        else:
+            try:
+                weights = _ao_character_weights(C, ao2eo, ao_mol_dumps, ao_labels)
+                frontier = range(norb)
+            except (ValueError, KeyError) as e:
+                print(f"WARNING: ao_character selection failed ({e}). "
+                      f"Falling back to 'impurity' localization selection.")
+                weights = np.sum(np.abs(C[:nimp, :]) ** 2, axis=0)
+                frontier = range(mc.ncore, norb)
+    else:
+        raise ValueError(f"select_cas_orbitals: unknown cas_select='{cas_select}'. "
+                        f"Valid options: 'energy', 'impurity', 'ao_character'")
+
+    selected = sorted(sorted(frontier, key=lambda i: -weights[i])[:ncas])
+    mc.mo_coeff = mc.sort_mo(selected, base=0)
+    return selected
+
+
+def _ao_character_weights(emb_mo, ao2eo, ao_mol_dumps, ao_labels):
+    '''Projection of each embedded MO onto the named AO labels (mrh getorbindex / mo_comps style).
+
+    Uses plain Lowdin orthogonalization (pre_orth_ao=None) instead of pyscf's mo_comps, whose
+    default meta-lowdin ANO reference fails on GTH/ECP/ghost-atom systems.
+
+    Raises ValueError if ao_labels do not match any AO or if ao2eo/ao_mol_dumps are invalid.
+    '''
+    from pyscf import gto
+    from pyscf.lo.orth import lowdin
+
+    # Validate inputs
+    if ao_mol_dumps is None:
+        raise ValueError("ao_character selection: ao_mol_dumps is None")
+    if ao2eo is None:
+        raise ValueError("ao_character selection: ao2eo is None")
+    if ao_labels is None or len(ao_labels) == 0:
+        raise ValueError("ao_character selection: ao_labels is None or empty")
+
+    ao_mol = gto.loads(ao_mol_dumps)
+    ao_mo  = ao2eo @ emb_mo                       # embedded MOs in AO basis
+    s      = ao_mol.intor_symmetric('int1e_ovlp')
+    idx    = ao_mol.search_ao_label(ao_labels)
+    if len(idx) == 0:
+        raise ValueError(f"ao_character selection: no AOs match labels {ao_labels}. "
+                        f"Available AO labels in system: {ao_mol.ao_labels()}")
+    c_orth = lowdin(s)
+    mo1    = c_orth[:, idx].T @ s @ ao_mo
+    return np.einsum('ki,ki->i', mo1, mo1)
+
+
 def project_amo_manually(old_mo_coeff, ncas, ncore, new_fock, norb):
-    '''
-    Re-order and project old CASSCF MOs onto a new embedding basis so that
-    the active space is preserved across u-matrix updates.
-
-    Given the MO coefficient matrix from a *previous* CASSCF solve, this
-    function:
-      1. Extracts the old active MOs (columns ncore : ncore+ncas).
-      2. Builds a projector onto that active subspace and diagonalises it
-         to find the "most active-like" directions in the current basis.
-      3. Sorts the inactive (core + virtual) orbitals by the Fock matrix
-         eigenvalues so the CASSCF macro-iterations start from a
-         physically sensible ordering.
-      4. Applies a sign convention so that CI vector overlaps remain
-         positive (avoids spurious phase flips).
-
-    Parameters
-    ----------
-    old_mo_coeff : ndarray (norb, norb)
-        MO coefficients from the previous CASSCF solve, in the local
-        dmet orbital basis.
-    ncas : int
-        Number of active orbitals.
-    ncore : int
-        Number of core (doubly-occupied, frozen) orbitals.
-    new_fock : ndarray (norb, norb)
-        Current Fock matrix in the local dmet orbital basis (with the
-        new u-matrix applied).  Used only to order inactive orbitals.
-    norb : int
-        Total number of embedding orbitals (impurity + bath).
-
-    Returns
-    -------
-    new_mo : ndarray (norb, norb)
-        Re-ordered MO coefficients suitable as an initial guess for
-        mcscf.CASSCF.kernel(new_mo).  The columns are ordered:
-        [core | active | virtual].
-    fidelity : ndarray (ncas,)
-        Eigenvalues of the projector restricted to the active subspace.
-        Values close to 1.0 mean the old active orbital survived the
-        basis change intact; values << 1 indicate that the active space
-        has shifted significantly.
-    '''
+    '''Project old CASSCF active MOs onto the current embedding basis. Returns (new_mo, fidelity); fidelity near 1 means active space survived intact.'''
     assert old_mo_coeff.shape == (norb, norb), \
         f"project_amo_manually: expected old_mo_coeff shape ({norb},{norb}), got {old_mo_coeff.shape}"
     nocc = ncore + ncas
 
-    # --- Extract old active MOs ---
-    old_amo = old_mo_coeff[:, ncore:nocc]          # (norb, ncas)
+    old_amo = old_mo_coeff[:, ncore:nocc]
 
-    # --- Build projector onto old active space and diagonalise ---
-    # P = old_amo @ old_amo^T is the projector.
-    # Diagonalise in the full space to get the ncas directions with
-    # eigenvalue closest to 1.
-    proj = old_amo @ old_amo.T                     # (norb, norb)
+    proj = old_amo @ old_amo.T
     evals, evecs = np.linalg.eigh(proj)
-    # eigh returns ascending; we want the *largest* eigenvalues first
     idx = evals.argsort()[::-1]
     evals = evals[idx]
     evecs = evecs[:, idx]
 
-    new_amo = evecs[:, :ncas].copy()               # most "active-like"
-    new_imo = evecs[:, ncas:].copy()               # inactive complement
+    new_amo = evecs[:, :ncas].copy()
+    new_imo = evecs[:, ncas:].copy()
     fidelity = evals[:ncas].copy()
 
-    # --- Sign convention: align each new AMO with the old AMO ---
-    overlap = new_amo.T @ old_amo                  # (ncas, ncas)
+    # Align sign of each new AMO with the old to avoid CI vector phase flips.
+    overlap = new_amo.T @ old_amo
     for i in range(ncas):
         if overlap[i, i] < 0:
             new_amo[:, i] *= -1
 
-    # --- Sort inactive orbitals by Fock eigenvalues ---
     fock_imo = new_imo.T @ new_fock @ new_imo
     imo_evals, imo_evecs = np.linalg.eigh(fock_imo)
     new_imo = new_imo @ imo_evecs
-    # Split into core (lowest) and virtual (highest)
     new_cmo = new_imo[:, :ncore]
     new_vmo = new_imo[:, ncore:]
 
-    # --- Assemble [core | active | virtual] ---
     new_mo = np.concatenate([new_cmo, new_amo, new_vmo], axis=1)
 
     print(f"qcsolver_utils::project_amo : fidelity = {fidelity}")
@@ -105,37 +119,7 @@ def project_amo_manually(old_mo_coeff, ncas, ncore, new_fock, norb):
 
 
 def fix_casscf_for_nonsinglet_env(mc, h1e_s):
-    '''
-    Wrap a PySCF CASSCF object so that it correctly minimizes in the
-    presence of a spin-dependent one-electron potential (open-shell
-    environment).
-
-    This is the QC-dmet adaptation of mrh.my_dmet.pyscf_casscf.
-    fix_my_CASSCF_for_nonsinglet_env.  It intercepts:
-
-        * fcisolver.kernel  — splits h1e into [h1e+h1e_s, h1e-h1e_s]
-        * fcisolver.make_rdm12 — caches the spin-density matrix
-        * mc.casci — re-projects h1e_s into the current active space
-        * mc.update_casdm — re-projects h1e_s after micro-rotation u
-        * mc.solve_approx_ci — stacks the two-component h1
-        * mc.gen_g_hop — adds the spin-potential orbital gradient and
-          Hessian contributions
-
-    Parameters
-    ----------
-    mc : mcscf.CASSCF
-        A fully initialized (but not yet solved) PySCF CASSCF object.
-    h1e_s : ndarray (norb, norb) or None
-        The spin-dependent one-electron potential in the local embedding
-        basis:  h1e_s = (h_alpha - h_beta) / 2.
-        If None or all zeros, ``mc`` is returned unchanged.
-
-    Returns
-    -------
-    mc_fixed : CASSCF-like
-        A modified CASSCF object whose .kernel() will correctly account
-        for the open-shell environment.
-    '''
+    '''Wrap a CASSCF object to inject spin-dependent 1e potential h1e_s = 0.5*(h_alpha - h_beta) (mrh-style).'''
     from pyscf import lib
 
     if h1e_s is None or np.all(np.abs(h1e_s) < 1e-8):
@@ -148,9 +132,6 @@ def fix_casscf_for_nonsinglet_env(mc, h1e_s):
     h1e_s_amou = h1e_s_amo.copy()
     last_cached_sdm = np.zeros_like(h1e_s_amo)
 
-    # ------------------------------------------------------------------
-    # Wrapped FCI solver
-    # ------------------------------------------------------------------
     class FixedFCI(mc.fcisolver.__class__):
 
         def __init__(self, base_fci):
@@ -168,9 +149,6 @@ def fix_casscf_for_nonsinglet_env(mc, h1e_s):
             last_cached_sdm[:, :] = dm1.sdm[:, :]
             return dm1, dm2
 
-    # ------------------------------------------------------------------
-    # Wrapped CASSCF driver
-    # ------------------------------------------------------------------
     class FixedCASSCF(mc.__class__):
 
         def __init__(self, base_mc):
