@@ -107,6 +107,7 @@ class LocalIntegrals:
             self.TI_OK  = False
         if self._which == 'iao':
             assert self.Norbs == self.mol.nao_nr(), "iao requires full active space"
+            # ao2loc is non-deterministic when BLAS swaps near-degenerate HOMO/LUMO; use num_threads(N) before mf.kernel() through LocalIntegrals to suppress (not guaranteed for arbitrarily tight gaps).
             self.ao2loc = iao_helper.localize_iao(self.mol, the_mf)
             if ao_rotation is not None:
                 self.ao2loc = np.dot(self.ao2loc, ao_rotation.T)
