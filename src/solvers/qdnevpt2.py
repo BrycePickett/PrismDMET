@@ -1,9 +1,32 @@
 '''SA-CASSCF + QD-NEVPT2 solver for DMET embedding clusters via Prism; one-shot only, sa_nstates >= 2.'''
 
+import hashlib
 import numpy as np
 from pyscf import ao2mo, gto, scf, mcscf
 from pyscf import fci as pyscf_fci
 from ..utils import silent_stdout, nullcontext
+
+
+def _fp(arr):
+    """Short, order-stable hash of an array for cross-run reproducibility checks."""
+    if arr is None:
+        return 'None'
+    return hashlib.md5(np.ascontiguousarray(arr, dtype=np.float64).tobytes()).hexdigest()[:12]
+
+
+def _emit_fingerprints(fock_copy, dm_guess_rhf, mf):
+    """Print gauge-invariant fingerprints of the embedding inputs and ROHF solution.
+
+    fock/dm_guess fingerprint the solver inputs (must match across runs); the ROHF
+    density and orbital-energy fingerprints capture which SCF basin was reached
+    (gauge-invariant, so benign sign/phase flips do not perturb them).
+    """
+    norb = fock_copy.shape[0]
+    print(f"qdnevpt2::FINGERPRINT fock={_fp(fock_copy)} dm_guess={_fp(dm_guess_rhf)}")
+    print(f"qdnevpt2::FINGERPRINT rohf_converged={mf.converged} "
+          f"rohf_e={mf.e_tot:.10f} dens={_fp(mf.make_rdm1())} mo_e={_fp(mf.mo_energy)}")
+    _head = np.round(np.asarray(mf.mo_energy).ravel()[:min(norb, 16)], 5).tolist()
+    print(f"qdnevpt2::FINGERPRINT mo_energy[head]={_head}")
 
 
 def _check_prism():
@@ -75,6 +98,7 @@ def solve(const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
         mf.get_hcore = lambda *args: fock_copy
         mf.get_ovlp  = lambda *args: np.eye(norb)
         mf._eri      = ao2mo.restore(8, tei, norb)
+        mf.verbose   = 4 if printoutput else 0
         mf.scf(dm_guess_rhf)
         if not mf.converged:
             mf.max_cycle = 300
@@ -82,6 +106,12 @@ def solve(const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
             mf.scf(mf.make_rdm1())
         if _use_rohf:
             print(f"qdnevpt2::solve : embedded ROHF (spin={_spin}, nel={nel}, norb={norb})")
+
+        # Reproducibility fingerprints: gauge-invariant hashes of the embedding
+        # inputs and the converged ROHF solution. Compare across runs to localize
+        # any divergence (inputs vs ROHF basin vs CAS seed). See _fp below.
+        if printoutput:
+            _emit_fingerprints(fock_copy, dm_guess_rhf, mf)
 
         mc = mcscf.CASSCF(mf, ncas, nelecas)
         # Must swap FCI solver before state_average_; direct_uhf.FCI required for spin-asymmetric [h1e_a, h1e_b].
@@ -106,6 +136,14 @@ def solve(const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
             if printoutput:
                 print(f"qdnevpt2::solve : CAS selection by {cas_select}, "
                       f"selected {ncas} orbitals: {selected_orbs}")
+
+        # Fingerprint the active-space projector handed to CASSCF. This is the
+        # gauge-invariant "CAS seed"; if it matches across runs but the result
+        # does not, the divergence is inside the CASSCF optimizer, not the seed.
+        if printoutput:
+            _ncore = mc.ncore
+            _amo = mc.mo_coeff[:, _ncore:_ncore + ncas]
+            print(f"qdnevpt2::FINGERPRINT cas_seed_proj={_fp(_amo @ _amo.T)}")
 
         mc.kernel()
 
