@@ -138,6 +138,20 @@ class LocalIntegrals:
         print(f"localintegrals::FINGERPRINT fullFOCKao={_fp(self.fullFOCKao)} "
               f"ao2loc={_fp(self.ao2loc)} activeFOCK={_fp(self.activeFOCK)} "
               f"mo_energy={_fp(the_mf.mo_energy)} mo_coeff={_fp(the_mf.mo_coeff)}")
+        # TEMPORARY DIAGNOSTIC: raw frontier eigenvalues at full precision so an A/A
+        # diff measures the actual Fock-build noise magnitude, not just a hash flip.
+        _e = the_mf.mo_energy
+        _o = the_mf.mo_occ
+        _es = [_e] if _e.ndim == 1 else list(_e)
+        _os = [_o] if _o.ndim == 1 else list(_o)
+        for _s, (_ei, _oi) in enumerate(zip(_es, _os)):
+            _occ = np.where(_oi > 0)[0]
+            _vir = np.where(_oi == 0)[0]
+            if len(_occ) and len(_vir):
+                _h, _l = _occ[-1], _vir[0]
+                _win = _ei[max(0, _h - 2):_l + 3]
+                print(f"localintegrals::FRONTIER spin={_s} gap={_ei[_l] - _ei[_h]:.6e} "
+                      f"window={np.array2string(_win, precision=12, floatmode='maxprec')}")
         if self.Norbs <= 150:
             self.ERIinMEM  = True
             self.activeERI = ao2mo.outcore.full_iofree(self.mol, self.ao2loc, compact=False).reshape(
