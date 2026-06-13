@@ -134,8 +134,10 @@ class LocalIntegrals:
         # matrix is bit-identical across runs). fullFOCKao = is the mean field
         # deterministic; ao2loc = is localization deterministic; activeFOCK = is
         # the projected Fock that seeds _build_1rdm deterministic.
+        # mo_energy vs mo_coeff: if mo_energy diverges the Fock build is non-deterministic; if only mo_coeff diverges eigh is reassigning a near-degenerate block.
         print(f"localintegrals::FINGERPRINT fullFOCKao={_fp(self.fullFOCKao)} "
-              f"ao2loc={_fp(self.ao2loc)} activeFOCK={_fp(self.activeFOCK)}")
+              f"ao2loc={_fp(self.ao2loc)} activeFOCK={_fp(self.activeFOCK)} "
+              f"mo_energy={_fp(the_mf.mo_energy)} mo_coeff={_fp(the_mf.mo_coeff)}")
         if self.Norbs <= 150:
             self.ERIinMEM  = True
             self.activeERI = ao2mo.outcore.full_iofree(self.mol, self.ao2loc, compact=False).reshape(
