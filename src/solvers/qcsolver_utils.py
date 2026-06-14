@@ -49,6 +49,8 @@ def select_cas_orbitals(mc, cas_select, ncas, nimp, norb,
     ranked = sorted(frontier, key=lambda i: -weights[i])
     _warn_if_ambiguous_boundary(ranked, weights, ncas, cas_select)
     selected = sorted(ranked[:ncas])
+    _scf = getattr(mc, '_scf', None)
+    _warn_if_degenerate_boundary(selected, getattr(_scf, 'mo_energy', None))
     mc.mo_coeff = mc.sort_mo(selected, base=0)
     return selected
 
@@ -66,6 +68,31 @@ def _warn_if_ambiguous_boundary(ranked, weights, ncas, cas_select):
               f"orbital {ranked[ncas-1]} (score={score_in:.4f}) vs orbital {ranked[ncas]} "
               f"(score={score_out:.4f}), gap={gap_rel:.1%}. "
               f"Consider increasing ncas by 1 or verifying the active space manually.")
+
+
+def _warn_if_degenerate_boundary(selected, mo_energy, tol=1e-3):
+    '''Warn when a selected orbital is near-degenerate in energy with an excluded one.
+
+    Splitting a degenerate manifold across the active/inactive boundary leaves the
+    CASSCF seed span rotation-ambiguous: an infinitesimal mean-field perturbation
+    rotates the manifold and CASSCF converges to a different solution. Prints the
+    offending pairs so the active space can be widened to close the manifold.
+    '''
+    if mo_energy is None:
+        return
+    e = np.asarray(mo_energy)
+    if e.ndim == 2:
+        e = e.mean(axis=0)
+    sel = set(selected)
+    for i in selected:
+        for j in range(len(e)):
+            if j in sel:
+                continue
+            if abs(e[i] - e[j]) < tol:
+                print(f"WARNING: active orbital {i} (E={e[i]:.6f}) is near-degenerate with "
+                      f"excluded orbital {j} (E={e[j]:.6f}, dE={abs(e[i]-e[j]):.2e} Ha); the "
+                      f"active-space boundary splits a degenerate manifold and the CASSCF seed "
+                      f"is rotation-ambiguous. Widen the active space to include orbital {j}.")
 
 
 def _ao_character_weights(emb_mo, ao2eo, ao_mol_dumps, ao_labels):
