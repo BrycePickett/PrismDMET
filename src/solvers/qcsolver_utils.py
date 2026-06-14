@@ -95,6 +95,45 @@ def _warn_if_degenerate_boundary(selected, mo_energy, tol=1e-3):
                       f"is rotation-ambiguous. Widen the active space to include orbital {j}.")
 
 
+def close_degenerate_manifolds(selected, mo_energy, tol=1e-3):
+    '''Expand the selected active orbitals to whole near-degenerate manifolds.
+
+    Orbitals are grouped into manifolds by energy: a new manifold starts wherever
+    consecutive sorted energies differ by at least tol. Any manifold containing a
+    selected orbital is included in full, so the active span is invariant to
+    rotation within the manifold (which is what removes the seed ambiguity).
+    Returns the expanded sorted index list.
+    '''
+    e = np.asarray(mo_energy)
+    if e.ndim == 2:
+        e = e.mean(axis=0)
+    order = np.argsort(e, kind='stable')
+    manifolds = []
+    current = [int(order[0])]
+    for k in range(1, len(order)):
+        if e[order[k]] - e[order[k - 1]] < tol:
+            current.append(int(order[k]))
+        else:
+            manifolds.append(current)
+            current = [int(order[k])]
+    manifolds.append(current)
+
+    sel = set(int(i) for i in selected)
+    closed = set(sel)
+    for manifold in manifolds:
+        if sel.intersection(manifold):
+            closed.update(manifold)
+    return sorted(closed)
+
+
+def cas_electron_delta(added_orbs, mo_occ):
+    '''Electrons brought in by added active orbitals (rounded total occupation).'''
+    occ = np.asarray(mo_occ)
+    if occ.ndim == 2:
+        occ = occ[0] + occ[1]
+    return int(round(sum(float(occ[a]) for a in added_orbs)))
+
+
 def _ao_character_weights(emb_mo, ao2eo, ao_mol_dumps, ao_labels):
     '''Projection of each embedded MO onto the named AO labels (mrh getorbindex / mo_comps style).
 
