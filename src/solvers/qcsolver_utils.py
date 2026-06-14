@@ -134,6 +134,34 @@ def cas_electron_delta(added_orbs, mo_occ):
     return int(round(sum(float(occ[a]) for a in added_orbs)))
 
 
+def plan_cas_active_space(mf, cas_select, ncas, nelecas, nimp, norb,
+                          ao2eo=None, ao_mol_dumps=None, ao_labels=None,
+                          close_degeneracy=True):
+    '''Rank the active orbitals, then close any split near-degenerate manifold.
+
+    Returns (selected, ncas, nelecas) to build the CASSCF object with, then sort_mo.
+    Ranking reuses select_cas_orbitals on a throwaway CASSCF (no kernel run); closure
+    grows ncas/nelecas so the active span is invariant to within-manifold rotation.
+    selected is None for cas_select == 'energy'.
+    '''
+    from pyscf import mcscf
+    mc = mcscf.CASSCF(mf, ncas, nelecas)
+    selected = select_cas_orbitals(mc, cas_select, ncas, nimp, norb,
+                                   ao2eo=ao2eo, ao_mol_dumps=ao_mol_dumps, ao_labels=ao_labels)
+    if selected is None or not close_degeneracy:
+        return selected, ncas, nelecas
+
+    closed = close_degenerate_manifolds(selected, mf.mo_energy)
+    added = sorted(set(closed) - set(selected))
+    if added:
+        d = cas_electron_delta(added, mf.mo_occ)
+        print(f"qcsolver_utils: active boundary split a degenerate manifold; added orbitals "
+              f"{added} (+{d} e-) to close it. ncas {ncas}->{len(closed)}, "
+              f"nelecas {nelecas}->{nelecas + d}.")
+        ncas, nelecas, selected = len(closed), nelecas + d, closed
+    return selected, ncas, nelecas
+
+
 def _ao_character_weights(emb_mo, ao2eo, ao_mol_dumps, ao_labels):
     '''Projection of each embedded MO onto the named AO labels (mrh getorbindex / mo_comps style).
 

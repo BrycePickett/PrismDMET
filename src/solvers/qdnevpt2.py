@@ -117,6 +117,11 @@ def solve(const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
         if printoutput:
             _emit_fingerprints(fock_copy, dm_guess_rhf, mf)  # TEMPORARY DIAGNOSTIC
 
+        from .qcsolver_utils import plan_cas_active_space
+        selected_orbs, ncas, nelecas = plan_cas_active_space(
+            mf, cas_select, ncas, nelecas, nimp, norb,
+            ao2eo=ao2eo, ao_mol_dumps=ao_mol_dumps, ao_labels=ao_labels)
+
         mc = mcscf.CASSCF(mf, ncas, nelecas)
         # Must swap FCI solver before state_average_; direct_uhf.FCI required for spin-asymmetric [h1e_a, h1e_b].
         if _use_rohf and oei_s is not None and not np.all(np.abs(oei_s) < 1e-8):
@@ -132,11 +137,8 @@ def solve(const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
             from .qcsolver_utils import fix_casscf_for_nonsinglet_env
             mc = fix_casscf_for_nonsinglet_env(mc, oei_s)
 
-        if cas_select != 'energy':
-            from .qcsolver_utils import select_cas_orbitals
-            selected_orbs = select_cas_orbitals(
-                mc, cas_select, ncas, nimp, norb,
-                ao2eo=ao2eo, ao_mol_dumps=ao_mol_dumps, ao_labels=ao_labels)
+        if selected_orbs is not None:
+            mc.mo_coeff = mc.sort_mo(selected_orbs, base=0)
             if printoutput:
                 print(f"qdnevpt2::solve : CAS selection by {cas_select}, "
                       f"selected {ncas} orbitals: {selected_orbs}")

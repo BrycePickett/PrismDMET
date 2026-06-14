@@ -50,6 +50,13 @@ def solve(const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
             print(f"nevpt2::solve : embedded ROHF (spin={_spin}, nel={nel}, norb={norb})")
 
         if nstates == 1:
+            selected_orbs = None
+            if cas_select != 'energy':
+                from .qcsolver_utils import plan_cas_active_space
+                selected_orbs, ncas, nelecas = plan_cas_active_space(
+                    mf, cas_select, ncas, nelecas, nimp, norb,
+                    ao2eo=ao2eo, ao_mol_dumps=ao_mol_dumps, ao_labels=ao_labels)
+
             mc = mcscf.CASSCF(mf, ncas, nelecas)
             mc.verbose = 5 if printoutput else 0
             for key, val in casscf_kwargs.items():
@@ -63,11 +70,8 @@ def solve(const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
                 from .qcsolver_utils import fix_casscf_for_nonsinglet_env
                 mc = fix_casscf_for_nonsinglet_env(mc, oei_s)
 
-            if cas_select != 'energy':
-                from .qcsolver_utils import select_cas_orbitals
-                selected_orbs = select_cas_orbitals(
-                    mc, cas_select, ncas, nimp, norb,
-                    ao2eo=ao2eo, ao_mol_dumps=ao_mol_dumps, ao_labels=ao_labels)
+            if selected_orbs is not None:
+                mc.mo_coeff = mc.sort_mo(selected_orbs, base=0)
                 if printoutput:
                     print(f"nevpt2::solve : CAS selection by {cas_select}, "
                           f"selected {ncas} orbitals: {selected_orbs}")
@@ -99,6 +103,13 @@ def solve(const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
             sa_weights = np.array(sa_weights, dtype=float)
             sa_weights /= sa_weights.sum()
 
+            selected_orbs = None
+            if cas_select != 'energy':
+                from .qcsolver_utils import plan_cas_active_space
+                selected_orbs, ncas, nelecas = plan_cas_active_space(
+                    mf, cas_select, ncas, nelecas, nimp, norb,
+                    ao2eo=ao2eo, ao_mol_dumps=ao_mol_dumps, ao_labels=ao_labels)
+
             mc_sa = mcscf.CASSCF(mf, ncas, nelecas)
             # Swap base FCI solver BEFORE state_average_ so the SA wrapper inherits it.
             # direct_spin1.FCI cannot accept [h1e_a, h1e_b]; direct_uhf.FCI handles it.
@@ -114,11 +125,8 @@ def solve(const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
                 from .qcsolver_utils import fix_casscf_for_nonsinglet_env
                 mc_sa = fix_casscf_for_nonsinglet_env(mc_sa, oei_s)
 
-            if cas_select != 'energy':
-                from .qcsolver_utils import select_cas_orbitals
-                selected_orbs = select_cas_orbitals(
-                    mc_sa, cas_select, ncas, nimp, norb,
-                    ao2eo=ao2eo, ao_mol_dumps=ao_mol_dumps, ao_labels=ao_labels)
+            if selected_orbs is not None:
+                mc_sa.mo_coeff = mc_sa.sort_mo(selected_orbs, base=0)
                 if printoutput:
                     print(f"nevpt2::solve : CAS selection by {cas_select} (SA), "
                           f"selected {ncas} orbitals: {selected_orbs}")

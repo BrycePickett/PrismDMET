@@ -84,6 +84,15 @@ def solve(const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
         eigvals.sort()
         print("casscf::solve : RHF homo-lumo gap =", eigvals[numPairs] - eigvals[numPairs - 1])
 
+        # Skip selection when a warm-restart MO guess is supplied: mc.kernel(mo_guess)
+        # would overwrite the reordered mo_coeff anyway.
+        selected_orbs = None
+        if cas_select != 'energy' and mo_guess is None:
+            from .qcsolver_utils import plan_cas_active_space
+            selected_orbs, ncas, nelecas = plan_cas_active_space(
+                mf, cas_select, ncas, nelecas, nimp, norb,
+                ao2eo=ao2eo, ao_mol_dumps=ao_mol_dumps, ao_labels=ao_labels)
+
         mc = mcscf.CASSCF(mf, ncas, nelecas)
         mc.verbose = 5 if printoutput else 0
         if frozen is not None:
@@ -107,14 +116,8 @@ def solve(const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
             from .qcsolver_utils import fix_casscf_for_nonsinglet_env
             mc = fix_casscf_for_nonsinglet_env(mc, oei_s)
 
-        # Skip selection when a warm-restart MO guess is supplied: mc.kernel(mo_guess)
-        # would overwrite the reordered mo_coeff anyway.
-        selected_orbs = None
-        if cas_select != 'energy' and mo_guess is None:
-            from .qcsolver_utils import select_cas_orbitals
-            selected_orbs = select_cas_orbitals(
-                mc, cas_select, ncas, nimp, norb,
-                ao2eo=ao2eo, ao_mol_dumps=ao_mol_dumps, ao_labels=ao_labels)
+        if selected_orbs is not None:
+            mc.mo_coeff = mc.sort_mo(selected_orbs, base=0)
             if printoutput:
                 print(f"casscf::solve : CAS selection by {cas_select}, "
                       f"selected {ncas} orbitals: {selected_orbs}")
