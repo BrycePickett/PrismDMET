@@ -136,20 +136,25 @@ def cas_electron_delta(added_orbs, mo_occ):
 
 def plan_cas_active_space(mf, cas_select, ncas, nelecas, nimp, norb,
                           ao2eo=None, ao_mol_dumps=None, ao_labels=None,
-                          close_degeneracy=True):
-    '''Rank the active orbitals, then close any split near-degenerate manifold.
+                          close_degeneracy=True, natorb_occ_thresh=0.02):
+    '''Decide the CAS active space. Returns (selected, ncas, nelecas, mo_coeff).
 
-    Returns (selected, ncas, nelecas) to build the CASSCF object with, then sort_mo.
-    Ranking reuses select_cas_orbitals on a throwaway CASSCF (no kernel run); closure
-    grows ncas/nelecas so the active span is invariant to within-manifold rotation.
-    selected is None for cas_select == 'energy'.
+    Index modes ('impurity'/'ao_character'): mo_coeff is None and the caller does
+    mc.sort_mo(selected); near-degenerate manifolds touching the selection are closed.
+    'natorb': selected is None and the caller sets mc.mo_coeff = mo_coeff directly; the
+    active space is the fractionally occupied CASCI natural orbitals (character-free,
+    rotation-invariant; ncas/nelecas are derived). 'energy': all three extras are None.
     '''
+    if cas_select == 'natorb':
+        mo_coeff, ncas, nelecas = natorb_active_space(mf, ncas, occ_thresh=natorb_occ_thresh)
+        return None, ncas, nelecas, mo_coeff
+
     from pyscf import mcscf
     mc = mcscf.CASSCF(mf, ncas, nelecas)
     selected = select_cas_orbitals(mc, cas_select, ncas, nimp, norb,
                                    ao2eo=ao2eo, ao_mol_dumps=ao_mol_dumps, ao_labels=ao_labels)
     if selected is None or not close_degeneracy:
-        return selected, ncas, nelecas
+        return selected, ncas, nelecas, None
 
     closed = close_degenerate_manifolds(selected, mf.mo_energy)
     added = sorted(set(closed) - set(selected))
@@ -177,7 +182,66 @@ def plan_cas_active_space(mf, cas_select, ncas, nelecas, nimp, norb,
             except (ValueError, KeyError):
                 pass
         ncas, nelecas, selected = len(closed), nelecas + d, closed
-    return selected, ncas, nelecas
+    return selected, ncas, nelecas, None
+
+
+def natorb_active_space(mf, n_superset, occ_thresh=0.02, deg_tol=1e-3):
+    '''Character-free active space from CASCI natural-orbital occupations.
+
+    Builds a deterministic superset (n_superset orbitals around the Fermi level,
+    snapped out to complete degenerate manifolds), runs a ground-state CASCI on it,
+    and keeps the natural orbitals with fractional occupation (occ_thresh < n < 2 -
+    occ_thresh) as the active space. Character-free and invariant to within-manifold
+    rotation; n_superset is a methodological parameter (converge it). Returns
+    (mo_coeff, ncas, nelecas) with the active NOs in the [ncore, ncore+ncas) window.
+    '''
+    from pyscf import mcscf
+    C = np.asarray(mf.mo_coeff)
+    if C.ndim == 3:
+        raise NotImplementedError("natorb selection expects a single set of orbitals (RHF/ROHF reference).")
+    mo_e = np.asarray(mf.mo_energy)
+    occ = np.asarray(mf.mo_occ)
+    norb = C.shape[1]
+    nocc = int(np.sum(occ > 0))
+
+    half = max(1, int(n_superset) // 2)
+    lo, hi = max(0, nocc - half), min(norb, nocc + half)
+    while lo > 0 and (mo_e[lo] - mo_e[lo - 1]) < deg_tol:
+        lo -= 1
+    while hi < norb and (mo_e[hi] - mo_e[hi - 1]) < deg_tol:
+        hi += 1
+    ncas_s = hi - lo
+    win = occ[lo:hi]
+    na = int(np.sum(np.rint(win) >= 1))   # alpha occupied in window
+    nb = int(np.sum(np.rint(win) >= 2))   # beta (doubly) occupied in window
+
+    mc = mcscf.CASCI(mf, ncas_s, (na, nb))
+    mc.fcisolver.conv_tol = 1e-10
+    mc.verbose = 0
+    mc.kernel()
+
+    dm1 = mc.fcisolver.make_rdm1(mc.ci, ncas_s, mc.nelecas)
+    no_occ, u = np.linalg.eigh(dm1)
+    order = np.argsort(no_occ)[::-1]
+    no_occ, u = no_occ[order], u[:, order]
+    cas_no = mc.mo_coeff[:, mc.ncore:mc.ncore + ncas_s] @ u
+
+    is_core = no_occ >= 2 - occ_thresh
+    is_act  = (no_occ > occ_thresh) & (no_occ < 2 - occ_thresh)
+    if not np.any(is_act):
+        raise ValueError(
+            f"natorb_active_space: no fractionally occupied NOs in the CAS({na+nb},{ncas_s}) "
+            f"superset (occupations {np.round(no_occ, 3).tolist()}). Increase n_superset.")
+
+    mo = C.copy()
+    mo[:, lo:hi] = np.hstack([cas_no[:, is_core], cas_no[:, is_act], cas_no[:, ~is_core & ~is_act]])
+    ncore = lo + int(np.sum(is_core))
+    ncas = int(np.sum(is_act))
+    nelecas = int(round(float(np.sum(no_occ[is_act]))))
+    print(f"qcsolver_utils: natorb CAS from CASCI({na + nb},{ncas_s}) superset -> "
+          f"CAS({nelecas},{ncas}); active NO occupations "
+          f"{np.round(no_occ[is_act], 4).tolist()}.")
+    return mo, ncas, nelecas
 
 
 def _ao_character_weights(emb_mo, ao2eo, ao_mol_dumps, ao_labels):

@@ -51,9 +51,10 @@ def solve(const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
 
         if nstates == 1:
             selected_orbs = None
+            mo_natorb = None
             if cas_select != 'energy':
                 from .qcsolver_utils import plan_cas_active_space
-                selected_orbs, ncas, nelecas = plan_cas_active_space(
+                selected_orbs, ncas, nelecas, mo_natorb = plan_cas_active_space(
                     mf, cas_select, ncas, nelecas, nimp, norb,
                     ao2eo=ao2eo, ao_mol_dumps=ao_mol_dumps, ao_labels=ao_labels)
 
@@ -70,7 +71,11 @@ def solve(const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
                 from .qcsolver_utils import fix_casscf_for_nonsinglet_env
                 mc = fix_casscf_for_nonsinglet_env(mc, oei_s)
 
-            if selected_orbs is not None:
+            if mo_natorb is not None:
+                mc.mo_coeff = mo_natorb
+                if printoutput:
+                    print(f"nevpt2::solve : CAS selection by {cas_select}, CAS({nelecas},{ncas})")
+            elif selected_orbs is not None:
                 mc.mo_coeff = mc.sort_mo(selected_orbs, base=0)
                 if printoutput:
                     print(f"nevpt2::solve : CAS selection by {cas_select}, "
@@ -104,9 +109,10 @@ def solve(const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
             sa_weights /= sa_weights.sum()
 
             selected_orbs = None
+            mo_natorb = None
             if cas_select != 'energy':
                 from .qcsolver_utils import plan_cas_active_space
-                selected_orbs, ncas, nelecas = plan_cas_active_space(
+                selected_orbs, ncas, nelecas, mo_natorb = plan_cas_active_space(
                     mf, cas_select, ncas, nelecas, nimp, norb,
                     ao2eo=ao2eo, ao_mol_dumps=ao_mol_dumps, ao_labels=ao_labels)
 
@@ -125,7 +131,11 @@ def solve(const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
                 from .qcsolver_utils import fix_casscf_for_nonsinglet_env
                 mc_sa = fix_casscf_for_nonsinglet_env(mc_sa, oei_s)
 
-            if selected_orbs is not None:
+            if mo_natorb is not None:
+                mc_sa.mo_coeff = mo_natorb
+                if printoutput:
+                    print(f"nevpt2::solve : CAS selection by {cas_select} (SA), CAS({nelecas},{ncas})")
+            elif selected_orbs is not None:
                 mc_sa.mo_coeff = mc_sa.sort_mo(selected_orbs, base=0)
                 if printoutput:
                     print(f"nevpt2::solve : CAS selection by {cas_select} (SA), "

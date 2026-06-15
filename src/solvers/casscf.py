@@ -87,9 +87,10 @@ def solve(const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
         # Skip selection when a warm-restart MO guess is supplied: mc.kernel(mo_guess)
         # would overwrite the reordered mo_coeff anyway.
         selected_orbs = None
+        mo_natorb = None
         if cas_select != 'energy' and mo_guess is None:
             from .qcsolver_utils import plan_cas_active_space
-            selected_orbs, ncas, nelecas = plan_cas_active_space(
+            selected_orbs, ncas, nelecas, mo_natorb = plan_cas_active_space(
                 mf, cas_select, ncas, nelecas, nimp, norb,
                 ao2eo=ao2eo, ao_mol_dumps=ao_mol_dumps, ao_labels=ao_labels)
 
@@ -116,7 +117,11 @@ def solve(const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
             from .qcsolver_utils import fix_casscf_for_nonsinglet_env
             mc = fix_casscf_for_nonsinglet_env(mc, oei_s)
 
-        if selected_orbs is not None:
+        if mo_natorb is not None:
+            mc.mo_coeff = mo_natorb
+            if printoutput:
+                print(f"casscf::solve : CAS selection by {cas_select}, CAS({nelecas},{ncas})")
+        elif selected_orbs is not None:
             mc.mo_coeff = mc.sort_mo(selected_orbs, base=0)
             if printoutput:
                 print(f"casscf::solve : CAS selection by {cas_select}, "
