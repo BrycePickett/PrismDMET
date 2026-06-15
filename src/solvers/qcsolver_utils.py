@@ -155,9 +155,27 @@ def plan_cas_active_space(mf, cas_select, ncas, nelecas, nimp, norb,
     added = sorted(set(closed) - set(selected))
     if added:
         d = cas_electron_delta(added, mf.mo_occ)
+        if (mf.mol.nelectron - (nelecas + d)) % 2 != 0:
+            raise ValueError(
+                f"plan_cas_active_space: closing the degenerate manifold adds an odd "
+                f"electron count (+{d} e- from orbitals {added}), leaving (nel - nelecas) "
+                f"odd so the frozen core cannot be closed-shell — a singly-occupied orbital "
+                f"was pulled into the active space. Set ncas/nelecas manually for this system."
+            )
         print(f"qcsolver_utils: active boundary split a degenerate manifold; added orbitals "
               f"{added} (+{d} e-) to close it. ncas {ncas}->{len(closed)}, "
               f"nelecas {nelecas}->{nelecas + d}.")
+        # Characterize added orbitals so the active-space change can be verified, not assumed.
+        if cas_select == 'ao_character' and ao2eo is not None and ao_mol_dumps is not None and ao_labels:
+            try:
+                C = mf.mo_coeff if np.asarray(mf.mo_coeff).ndim == 2 else mf.mo_coeff[0] + mf.mo_coeff[1]
+                w = _ao_character_weights(C, ao2eo, ao_mol_dumps, ao_labels)
+                w_added = {i: round(float(w[i]), 4) for i in added}
+                w_sel_min = min(float(w[i]) for i in selected)
+                print(f"qcsolver_utils: added-orbital target-AO character {w_added} vs min "
+                      f"selected {w_sel_min:.4f} — verify the added orbitals carry the intended character.")
+            except (ValueError, KeyError):
+                pass
         ncas, nelecas, selected = len(closed), nelecas + d, closed
     return selected, ncas, nelecas
 
