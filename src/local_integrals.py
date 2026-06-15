@@ -8,17 +8,6 @@ from . import iao_helper
 import numpy as np
 
 
-# ===== TEMPORARY DIAGNOSTIC =====================================================
-# Localization instrumentation for the QD-NEVPT2 non-reproducibility bug. These
-# hashes bracket the bath-construction pipeline (mean-field Fock -> localization
-# -> projected Fock) so an A/A run shows exactly which stage first diverges.
-# Grep "TEMPORARY DIAGNOSTIC" / "FINGERPRINT" to remove all of it.
-import hashlib as _hashlib
-def _fp(arr):
-    return _hashlib.md5(np.ascontiguousarray(arr, dtype=np.float64).tobytes()).hexdigest()[:12]
-# ===== END TEMPORARY DIAGNOSTIC =================================================
-
-
 class LocalIntegrals:
 
     def __init__(self, the_mf, active_orbs, localizationtype,
@@ -130,28 +119,6 @@ class LocalIntegrals:
         self.activeCONST = the_mf.energy_nuc() + np.einsum('ij,ij->', self.frozenOEIao - 0.5 * self.frozenJKao, self.frozenDMao)
         self.activeOEI   = np.dot(np.dot(self.ao2loc.T, self.frozenOEIao), self.ao2loc)
         self.activeFOCK  = np.dot(np.dot(self.ao2loc.T, self.fullFOCKao), self.ao2loc)
-        # TEMPORARY DIAGNOSTIC: full-array hashes (the bare norm cannot prove a
-        # matrix is bit-identical across runs). fullFOCKao = is the mean field
-        # deterministic; ao2loc = is localization deterministic; activeFOCK = is
-        # the projected Fock that seeds _build_1rdm deterministic.
-        # mo_energy vs mo_coeff: if mo_energy diverges the Fock build is non-deterministic; if only mo_coeff diverges eigh is reassigning a near-degenerate block.
-        print(f"localintegrals::FINGERPRINT fullFOCKao={_fp(self.fullFOCKao)} "
-              f"ao2loc={_fp(self.ao2loc)} activeFOCK={_fp(self.activeFOCK)} "
-              f"mo_energy={_fp(the_mf.mo_energy)} mo_coeff={_fp(the_mf.mo_coeff)}")
-        # TEMPORARY DIAGNOSTIC: raw frontier eigenvalues at full precision so an A/A
-        # diff measures the actual Fock-build noise magnitude, not just a hash flip.
-        _e = the_mf.mo_energy
-        _o = the_mf.mo_occ
-        _es = [_e] if _e.ndim == 1 else list(_e)
-        _os = [_o] if _o.ndim == 1 else list(_o)
-        for _s, (_ei, _oi) in enumerate(zip(_es, _os)):
-            _occ = np.where(_oi > 0)[0]
-            _vir = np.where(_oi == 0)[0]
-            if len(_occ) and len(_vir):
-                _h, _l = _occ[-1], _vir[0]
-                _win = _ei[max(0, _h - 2):_l + 3]
-                print(f"localintegrals::FRONTIER spin={_s} gap={_ei[_l] - _ei[_h]:.6e} "
-                      f"window={np.array2string(_win, precision=12, floatmode='maxprec')}")
         if self.Norbs <= 150:
             self.ERIinMEM  = True
             self.activeERI = ao2mo.outcore.full_iofree(self.mol, self.ao2loc, compact=False).reshape(
