@@ -27,7 +27,7 @@ class DMET:
                   print_u=True, print_rdm=True, eom_nroots=3,
                   eom_type='EE-Singlet', eom_koopmans=False, eom_kwargs=None,
                   ncas=None, nelecas=None, sa_nstates=1, sa_weights=None,
-                  casscf_kwargs=None,
+                  casscf_kwargs=None, dmrg_kwargs=None,
                   mf_real=None, qdnevpt2_kwargs=None, nevpt2_kwargs=None,
                   use_symmetry=False, symmetry_map=None,
                   parallel=False, max_workers=None, bath_tol=1e-13,
@@ -82,6 +82,8 @@ class DMET:
         self.cas_select    = cas_select
         self.ao_labels     = ao_labels
         self.cas_results   = []   # populated by doexact() when method='CASSCF'
+        self.dmrg_kwargs   = dmrg_kwargs or {}
+        self.dmrg_results  = []   # populated by doexact() when method='DMRG'
         self.mf_real       = mf_real
         self.qdnevpt2_kwargs   = qdnevpt2_kwargs or {}
         self.qdnevpt2_results  = []  # populated by doexact() when method='QD-NEVPT2'
@@ -285,6 +287,7 @@ class DMET:
         self.cas_results      = []
         self.qdnevpt2_results = []
         self.nevpt2_results   = []
+        self.dmrg_results     = []
         if self.do_det and self.do_det_NO:
             self.NOvecs = []
             self.NOdiag = []
@@ -426,6 +429,7 @@ class DMET:
                 'ao_mol_dumps'  : self.ints.mol.dumps() if self.cas_select == 'ao_character' else None,
                 'ao2eo'         : (self.ints.ao2loc @ loc_2_dmet[:, :norb_in_imp]) if self.cas_select == 'ao_character' else None,
                 'casscf_kwargs' : self.casscf_kwargs,
+                'dmrg_kwargs'   : self.dmrg_kwargs,
                 'mo_guess'      : _mo_guess,
                 'oei_s'         : _dmet_oei_s,
                 'nevpt2_kwargs' : self.nevpt2_kwargs,
@@ -508,6 +512,8 @@ class DMET:
                 self.qdnevpt2_results.append(res['qdnevpt2_res'])
             if 'nevpt2_res' in res:
                 self.nevpt2_results.append(res['nevpt2_res'])
+            if 'dmrg_res' in res:
+                self.dmrg_results.append(res['dmrg_res'])
             if 'dft_res' in res:
                 self.dft_results.append(res['dft_res'])
 
@@ -622,6 +628,7 @@ class DMET:
             'ao_mol_dumps'  : self.ints.mol.dumps() if self.cas_select == 'ao_character' else None,
             'ao2eo'         : (self.ints.ao2loc @ loc_2_dmet[:, :norb_in_imp]) if self.cas_select == 'ao_character' else None,
             'casscf_kwargs' : self.casscf_kwargs,
+            'dmrg_kwargs'   : self.dmrg_kwargs,
             'mo_guess'      : _mo_guess_cas,
             'ci_guess'      : _ci_guess_cas,
             'oei_s'         : oei_s,

@@ -120,8 +120,9 @@ class SolverDispatcher:
     @staticmethod
     def _run_dmrg(task):
         from . import block2
-        energy, rdm1 = block2.execute(task)
-        return {'counter': task['counter'], 'energy': energy, 'rdm1': rdm1}
+        energy, rdm1, dmrg_res = block2.execute(task)
+        return {'counter': task['counter'], 'energy': energy,
+                'rdm1': rdm1, 'dmrg_res': dmrg_res}
 
     @staticmethod
     def _run_cc(task):
