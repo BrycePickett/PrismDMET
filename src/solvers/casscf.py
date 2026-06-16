@@ -14,6 +14,7 @@ def solve(const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
           mo_guess=None, ci_guess=None,
           oei_s=None, spin=None,
           cas_select='energy', ao_labels=None, ao2eo=None, ao_mol_dumps=None,
+          natorb_kwargs=None,
           **casscf_kwargs):
     '''Solve a DMET impurity problem at the CASSCF level. Returns (impurity_energy, rdm1, cas_results).'''
     if ncas is None:
@@ -92,7 +93,8 @@ def solve(const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
             from .qcsolver_utils import plan_cas_active_space
             selected_orbs, ncas, nelecas, mo_natorb = plan_cas_active_space(
                 mf, cas_select, ncas, nelecas, nimp, norb,
-                ao2eo=ao2eo, ao_mol_dumps=ao_mol_dumps, ao_labels=ao_labels)
+                ao2eo=ao2eo, ao_mol_dumps=ao_mol_dumps, ao_labels=ao_labels,
+                natorb_kwargs=natorb_kwargs)
 
         mc = mcscf.CASSCF(mf, ncas, nelecas)
         mc.verbose = 5 if printoutput else 0
@@ -245,5 +247,6 @@ def execute(task):
         ao_labels=task.get('ao_labels'),
         ao2eo=task.get('ao2eo'),
         ao_mol_dumps=task.get('ao_mol_dumps'),
+        natorb_kwargs=task.get('natorb_kwargs'),
         **task.get('casscf_kwargs', {}),
     )

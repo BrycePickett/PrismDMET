@@ -14,6 +14,7 @@ def solve(const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
           casscf_kwargs=None, nevpt2_kwargs=None,
           spin=None, oei_s=None,
           cas_select='energy', ao_labels=None, ao2eo=None, ao_mol_dumps=None,
+          natorb_kwargs=None,
           printoutput=True):
     '''Run CASSCF + NEVPT2 on the DMET embedding cluster. Returns (e_tot, e_corr, mc, nevpt_objs).'''
     casscf_kwargs = casscf_kwargs or {}
@@ -56,7 +57,8 @@ def solve(const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
                 from .qcsolver_utils import plan_cas_active_space
                 selected_orbs, ncas, nelecas, mo_natorb = plan_cas_active_space(
                     mf, cas_select, ncas, nelecas, nimp, norb,
-                    ao2eo=ao2eo, ao_mol_dumps=ao_mol_dumps, ao_labels=ao_labels)
+                    ao2eo=ao2eo, ao_mol_dumps=ao_mol_dumps, ao_labels=ao_labels,
+                    natorb_kwargs=natorb_kwargs)
 
             mc = mcscf.CASSCF(mf, ncas, nelecas)
             mc.verbose = 5 if printoutput else 0
@@ -114,7 +116,8 @@ def solve(const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
                 from .qcsolver_utils import plan_cas_active_space
                 selected_orbs, ncas, nelecas, mo_natorb = plan_cas_active_space(
                     mf, cas_select, ncas, nelecas, nimp, norb,
-                    ao2eo=ao2eo, ao_mol_dumps=ao_mol_dumps, ao_labels=ao_labels)
+                    ao2eo=ao2eo, ao_mol_dumps=ao_mol_dumps, ao_labels=ao_labels,
+                    natorb_kwargs=natorb_kwargs)
 
             mc_sa = mcscf.CASSCF(mf, ncas, nelecas)
             # Swap base FCI solver BEFORE state_average_ so the SA wrapper inherits it.
@@ -219,6 +222,7 @@ def execute(task):
         ao_labels=task.get('ao_labels'),
         ao2eo=task.get('ao2eo'),
         ao_mol_dumps=task.get('ao_mol_dumps'),
+        natorb_kwargs=task.get('natorb_kwargs'),
     )
 
     # 1-RDM (cluster orbital basis) for the dmet driver: prefer the NEVPT2
