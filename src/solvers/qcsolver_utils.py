@@ -136,7 +136,8 @@ def cas_electron_delta(added_orbs, mo_occ):
 
 def plan_cas_active_space(mf, cas_select, ncas, nelecas, nimp, norb,
                           ao2eo=None, ao_mol_dumps=None, ao_labels=None,
-                          close_degeneracy=True, natorb_occ_thresh=0.02):
+                          close_degeneracy=True, natorb_occ_thresh=0.02,
+                          natorb_max_superset=None):
     '''Decide the CAS active space. Returns (selected, ncas, nelecas, mo_coeff).
 
     Index modes ('impurity'/'ao_character'): mo_coeff is None and the caller does
@@ -146,7 +147,8 @@ def plan_cas_active_space(mf, cas_select, ncas, nelecas, nimp, norb,
     rotation-invariant; ncas/nelecas are derived). 'energy': all three extras are None.
     '''
     if cas_select == 'natorb':
-        mo_coeff, ncas, nelecas = natorb_active_space(mf, ncas, occ_thresh=natorb_occ_thresh)
+        mo_coeff, ncas, nelecas = natorb_active_space(
+            mf, ncas, occ_thresh=natorb_occ_thresh, max_superset=natorb_max_superset)
         return None, ncas, nelecas, mo_coeff
 
     from pyscf import mcscf
@@ -185,7 +187,7 @@ def plan_cas_active_space(mf, cas_select, ncas, nelecas, nimp, norb,
     return selected, ncas, nelecas, None
 
 
-def natorb_active_space(mf, n_superset, occ_thresh=0.02, deg_tol=1e-3):
+def natorb_active_space(mf, n_superset, occ_thresh=0.02, deg_tol=1e-3, max_superset=None):
     '''Character-free active space from CASCI natural-orbital occupations.
 
     Builds a deterministic superset (n_superset orbitals around the Fermi level,
@@ -194,6 +196,9 @@ def natorb_active_space(mf, n_superset, occ_thresh=0.02, deg_tol=1e-3):
     occ_thresh) as the active space. Character-free and invariant to within-manifold
     rotation; n_superset is a methodological parameter (converge it). Returns
     (mo_coeff, ncas, nelecas) with the active NOs in the [ncore, ncore+ncas) window.
+
+    max_superset, if set, raises if manifold snapping inflates the superset past it
+    (a dense Fermi-level manifold can push the exact CASCI past the tractable limit).
     '''
     from pyscf import mcscf
     C = np.asarray(mf.mo_coeff)
@@ -211,9 +216,25 @@ def natorb_active_space(mf, n_superset, occ_thresh=0.02, deg_tol=1e-3):
     while hi < norb and (mo_e[hi] - mo_e[hi - 1]) < deg_tol:
         hi += 1
     ncas_s = hi - lo
+    if max_superset is not None and ncas_s > max_superset:
+        raise ValueError(
+            f"natorb_active_space: manifold snapping inflated the superset to {ncas_s} "
+            f"orbitals (window [{lo}, {hi})), exceeding max_superset={max_superset}. A dense "
+            f"near-degenerate manifold at the Fermi level pushed the exact CASCI past the "
+            f"tractable/QD-NEVPT2 limit. Lower n_superset, raise max_superset (exact-CASCI "
+            f"cost grows ~factorially), or use a cheaper selector (locality_window / MP2 pre-screen)."
+        )
     win = occ[lo:hi]
     na = int(np.sum(np.rint(win) >= 1))   # alpha occupied in window
     nb = int(np.sum(np.rint(win) >= 2))   # beta (doubly) occupied in window
+
+    # Report superset size and FCI cost before the (possibly multi-hour) CASCI; flush
+    # so the line reaches a buffered SLURM log even if the CASCI then hangs.
+    from math import comb
+    fci_dim = comb(ncas_s, na) * comb(ncas_s, nb)
+    print(f"qcsolver_utils: natorb superset window [{lo}, {hi}) = {ncas_s} orbitals, "
+          f"CASCI({na + nb},{ncas_s}), FCI dim ~{fci_dim:.2e} dets - starting CASCI...",
+          flush=True)
 
     mc = mcscf.CASCI(mf, ncas_s, (na, nb))
     mc.fcisolver.conv_tol = 1e-10
