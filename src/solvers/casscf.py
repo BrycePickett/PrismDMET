@@ -14,7 +14,7 @@ def solve(const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
           mo_guess=None, ci_guess=None,
           oei_s=None, spin=None,
           cas_select='energy', ao_labels=None, ao2eo=None, ao_mol_dumps=None,
-          avas_threshold=0.2,
+          avas_threshold=0.2, embed_level_shift=0.0,
           **casscf_kwargs):
     '''Solve a DMET impurity problem at the CASSCF level. Returns (impurity_energy, rdm1, cas_results).'''
     if ncas is None:
@@ -69,6 +69,8 @@ def solve(const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
         mf.get_hcore = lambda *args: fock_copy
         mf.get_ovlp  = lambda *args: np.eye(norb)
         mf._eri      = ao2mo.restore(8, tei, norb)
+        # Level shift opens the near-degenerate trap gap for a deterministic embedded SCF.
+        mf.level_shift = embed_level_shift
         mf.scf(dm_guess_rhf)
         dm_loc = np.dot(np.dot(mf.mo_coeff, np.diag(mf.mo_occ)), mf.mo_coeff.T)
         if not mf.converged:
@@ -248,5 +250,6 @@ def execute(task):
         ao2eo=task.get('ao2eo'),
         ao_mol_dumps=task.get('ao_mol_dumps'),
         avas_threshold=task.get('avas_threshold', 0.2),
+        embed_level_shift=task.get('embed_level_shift', 0.0),
         **task.get('casscf_kwargs', {}),
     )

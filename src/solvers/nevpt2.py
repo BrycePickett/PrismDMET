@@ -14,7 +14,7 @@ def solve(const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
           casscf_kwargs=None, nevpt2_kwargs=None,
           spin=None, oei_s=None,
           cas_select='energy', ao_labels=None, ao2eo=None, ao_mol_dumps=None,
-          avas_threshold=0.2,
+          avas_threshold=0.2, embed_level_shift=0.0,
           printoutput=True):
     '''Run CASSCF + NEVPT2 on the DMET embedding cluster. Returns (e_tot, e_corr, mc, nevpt_objs).'''
     casscf_kwargs = casscf_kwargs or {}
@@ -42,6 +42,8 @@ def solve(const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
         mf.get_hcore = lambda *args: fock_copy
         mf.get_ovlp  = lambda *args: np.eye(norb)
         mf._eri      = ao2mo.restore(8, tei, norb)
+        # Level shift opens the near-degenerate trap gap for a deterministic embedded SCF.
+        mf.level_shift = embed_level_shift
         mf.scf(dm_guess_rhf)
         if not mf.converged:
             mf.max_cycle = 300
@@ -223,6 +225,7 @@ def execute(task):
         ao2eo=task.get('ao2eo'),
         ao_mol_dumps=task.get('ao_mol_dumps'),
         avas_threshold=task.get('avas_threshold', 0.2),
+        embed_level_shift=task.get('embed_level_shift', 0.0),
     )
 
     # 1-RDM (cluster orbital basis) for the dmet driver: prefer the NEVPT2

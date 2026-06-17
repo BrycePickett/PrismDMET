@@ -33,7 +33,7 @@ def solve(const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
           spin=None,
           oei_s=None,
           cas_select='energy', ao_labels=None, ao2eo=None, ao_mol_dumps=None,
-          avas_threshold=0.2,
+          avas_threshold=0.2, embed_level_shift=0.0,
           printoutput=True):
     '''Run SA-CASSCF + QD-NEVPT2 via Prism on the DMET embedding cluster. Returns (e_tot, e_corr, None, mc, nevpt_obj).'''
     _check_prism()
@@ -78,6 +78,9 @@ def solve(const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
         mf._eri      = ao2mo.restore(8, tei, norb)
         # Make the embedded ROHF as visible as the CASSCF below (mc.verbose). Kept.
         mf.verbose   = 4 if printoutput else 0
+        # Level shift opens the near-degenerate trap gap so the embedded SCF lands in one
+        # basin deterministically rather than tipping on 16-thread BLAS noise (default 0 = off).
+        mf.level_shift = embed_level_shift
         mf.scf(dm_guess_rhf)
         if not mf.converged:
             mf.max_cycle = 300
@@ -188,6 +191,7 @@ def execute(task):
         ao2eo=task.get('ao2eo'),
         ao_mol_dumps=task.get('ao_mol_dumps'),
         avas_threshold=task.get('avas_threshold', 0.2),
+        embed_level_shift=task.get('embed_level_shift', 0.0),
     )
 
     rdm1 = mc.make_rdm1()
