@@ -56,7 +56,8 @@ def solve(const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
                 from .qcsolver_utils import plan_cas_active_space
                 selected_orbs, ncas, nelecas, mo_natorb = plan_cas_active_space(
                     mf, cas_select, ncas, nelecas, nimp, norb,
-                    ao2eo=ao2eo, ao_mol_dumps=ao_mol_dumps, ao_labels=ao_labels)
+                    ao2eo=ao2eo, ao_mol_dumps=ao_mol_dumps, ao_labels=ao_labels,
+                    sa_nstates=1)
 
             mc = mcscf.CASSCF(mf, ncas, nelecas)
             mc.verbose = 5 if printoutput else 0
@@ -114,7 +115,8 @@ def solve(const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
                 from .qcsolver_utils import plan_cas_active_space
                 selected_orbs, ncas, nelecas, mo_natorb = plan_cas_active_space(
                     mf, cas_select, ncas, nelecas, nimp, norb,
-                    ao2eo=ao2eo, ao_mol_dumps=ao_mol_dumps, ao_labels=ao_labels)
+                    ao2eo=ao2eo, ao_mol_dumps=ao_mol_dumps, ao_labels=ao_labels,
+                    sa_nstates=nstates)
 
             mc_sa = mcscf.CASSCF(mf, ncas, nelecas)
             # Swap base FCI solver BEFORE state_average_ so the SA wrapper inherits it.

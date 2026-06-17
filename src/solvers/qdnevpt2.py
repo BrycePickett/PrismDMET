@@ -88,7 +88,8 @@ def solve(const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
         from .qcsolver_utils import plan_cas_active_space
         selected_orbs, ncas, nelecas, mo_natorb = plan_cas_active_space(
             mf, cas_select, ncas, nelecas, nimp, norb,
-            ao2eo=ao2eo, ao_mol_dumps=ao_mol_dumps, ao_labels=ao_labels)
+            ao2eo=ao2eo, ao_mol_dumps=ao_mol_dumps, ao_labels=ao_labels,
+            sa_nstates=sa_nstates)
 
         mc = mcscf.CASSCF(mf, ncas, nelecas)
         # Must swap FCI solver before state_average_; direct_uhf.FCI required for spin-asymmetric [h1e_a, h1e_b].

@@ -137,7 +137,7 @@ def cas_electron_delta(added_orbs, mo_occ):
 def plan_cas_active_space(mf, cas_select, ncas, nelecas, nimp, norb,
                           ao2eo=None, ao_mol_dumps=None, ao_labels=None,
                           close_degeneracy=True, natorb_occ_thresh=0.02,
-                          natorb_max_superset=None):
+                          natorb_max_superset=None, sa_nstates=1):
     '''Decide the CAS active space. Returns (selected, ncas, nelecas, mo_coeff).
 
     Index modes ('impurity'/'ao_character'): mo_coeff is None and the caller does
@@ -148,7 +148,8 @@ def plan_cas_active_space(mf, cas_select, ncas, nelecas, nimp, norb,
     '''
     if cas_select == 'natorb':
         mo_coeff, ncas, nelecas = natorb_active_space(
-            mf, ncas, occ_thresh=natorb_occ_thresh, max_superset=natorb_max_superset)
+            mf, ncas, occ_thresh=natorb_occ_thresh, max_superset=natorb_max_superset,
+            sa_nstates=sa_nstates)
         return None, ncas, nelecas, mo_coeff
 
     from pyscf import mcscf
@@ -187,20 +188,27 @@ def plan_cas_active_space(mf, cas_select, ncas, nelecas, nimp, norb,
     return selected, ncas, nelecas, None
 
 
-def natorb_active_space(mf, n_superset, occ_thresh=0.02, deg_tol=1e-3, max_superset=None):
+def natorb_active_space(mf, n_superset, occ_thresh=0.02, deg_tol=1e-3, max_superset=None,
+                        sa_nstates=1):
     '''Character-free active space from CASCI natural-orbital occupations.
 
     Builds a deterministic superset (n_superset orbitals around the Fermi level,
-    snapped out to complete degenerate manifolds), runs a ground-state CASCI on it,
-    and keeps the natural orbitals with fractional occupation (occ_thresh < n < 2 -
-    occ_thresh) as the active space. Character-free and invariant to within-manifold
-    rotation; n_superset is a methodological parameter (converge it). Returns
-    (mo_coeff, ncas, nelecas) with the active NOs in the [ncore, ncore+ncas) window.
+    snapped out to complete degenerate manifolds), runs a CASCI on it, and keeps the
+    natural orbitals with fractional occupation (occ_thresh < n < 2 - occ_thresh) as
+    the active space. Character-free and invariant to within-manifold rotation;
+    n_superset is a methodological parameter (converge it). Returns (mo_coeff, ncas,
+    nelecas) with the active NOs in the [ncore, ncore+ncas) window.
+
+    sa_nstates > 1 selects on the equal-weight state-averaged density over that many
+    CASCI roots (CISNO-style): a ground-state density is blind to orbitals that are
+    integer-occupied in the GS but define an excitation, so a state-averaged target
+    needs a state-averaged selection density.
 
     max_superset, if set, raises if manifold snapping inflates the superset past it
     (a dense Fermi-level manifold can push the exact CASCI past the tractable limit).
     '''
     from pyscf import mcscf
+    from math import comb
     C = np.asarray(mf.mo_coeff)
     if C.ndim == 3:
         raise NotImplementedError("natorb selection expects a single set of orbitals (RHF/ROHF reference).")
@@ -230,18 +238,25 @@ def natorb_active_space(mf, n_superset, occ_thresh=0.02, deg_tol=1e-3, max_super
 
     # Report superset size and FCI cost before the (possibly multi-hour) CASCI; flush
     # so the line reaches a buffered SLURM log even if the CASCI then hangs.
-    from math import comb
     fci_dim = comb(ncas_s, na) * comb(ncas_s, nb)
     print(f"qcsolver_utils: natorb superset window [{lo}, {hi}) = {ncas_s} orbitals, "
-          f"CASCI({na + nb},{ncas_s}), FCI dim ~{fci_dim:.2e} dets - starting CASCI...",
-          flush=True)
+          f"CASCI({na + nb},{ncas_s}) x {sa_nstates} root(s), FCI dim ~{fci_dim:.2e} dets "
+          f"- starting CASCI...", flush=True)
 
     mc = mcscf.CASCI(mf, ncas_s, (na, nb))
     mc.fcisolver.conv_tol = 1e-10
     mc.verbose = 0
+    if sa_nstates > 1:
+        mc.fcisolver.nroots = sa_nstates
     mc.kernel()
 
-    dm1 = mc.fcisolver.make_rdm1(mc.ci, ncas_s, mc.nelecas)
+    # State-averaged selection density when targeting >1 state (CISNO-style); equal
+    # weights so every target state's orbitals register in the selection.
+    if sa_nstates > 1:
+        dm1 = sum(mc.fcisolver.make_rdm1(civec, ncas_s, mc.nelecas)
+                  for civec in mc.ci) / sa_nstates
+    else:
+        dm1 = mc.fcisolver.make_rdm1(mc.ci, ncas_s, mc.nelecas)
     no_occ, u = np.linalg.eigh(dm1)
     order = np.argsort(no_occ)[::-1]
     no_occ, u = no_occ[order], u[:, order]
@@ -259,6 +274,20 @@ def natorb_active_space(mf, n_superset, occ_thresh=0.02, deg_tol=1e-3, max_super
     ncore = lo + int(np.sum(is_core))
     ncas = int(np.sum(is_act))
     nelecas = int(round(float(np.sum(no_occ[is_act]))))
+
+    if sa_nstates > 1:
+        spin = int(mf.mol.spin)
+        na_sel, nb_sel = (nelecas + spin) // 2, (nelecas - spin) // 2
+        if comb(ncas, na_sel) * comb(ncas, nb_sel) < sa_nstates:
+            raise ValueError(
+                f"natorb_active_space: selected CAS({nelecas},{ncas}) supports fewer than "
+                f"sa_nstates={sa_nstates} states, so a state-averaged solver cannot build that "
+                f"many roots (this is the CAS(1,1) IndexError failure mode). The natorb density "
+                f"found little multireference character in this window; widen n_superset, loosen "
+                f"occ_thresh, or use a selector that targets the trap orbitals directly "
+                f"(locality_window / ao_character)."
+            )
+
     print(f"qcsolver_utils: natorb CAS from CASCI({na + nb},{ncas_s}) superset -> "
           f"CAS({nelecas},{ncas}); active NO occupations "
           f"{np.round(no_occ[is_act], 4).tolist()}.")
