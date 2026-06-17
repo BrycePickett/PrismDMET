@@ -137,7 +137,7 @@ def cas_electron_delta(added_orbs, mo_occ):
 def plan_cas_active_space(mf, cas_select, ncas, nelecas, nimp, norb,
                           ao2eo=None, ao_mol_dumps=None, ao_labels=None,
                           close_degeneracy=True, natorb_occ_thresh=0.02,
-                          natorb_max_superset=None, sa_nstates=1):
+                          natorb_max_superset=None, sa_nstates=1, avas_threshold=0.2):
     '''Decide the CAS active space. Returns (selected, ncas, nelecas, mo_coeff).
 
     Index modes ('impurity'/'ao_character'): mo_coeff is None and the caller does
@@ -150,6 +150,11 @@ def plan_cas_active_space(mf, cas_select, ncas, nelecas, nimp, norb,
         mo_coeff, ncas, nelecas = natorb_active_space(
             mf, ncas, occ_thresh=natorb_occ_thresh, max_superset=natorb_max_superset,
             sa_nstates=sa_nstates)
+        return None, ncas, nelecas, mo_coeff
+
+    if cas_select == 'avas':
+        mo_coeff, ncas, nelecas = avas_active_space(
+            mf, ao2eo, ao_mol_dumps, ao_labels, threshold=avas_threshold)
         return None, ncas, nelecas, mo_coeff
 
     from pyscf import mcscf
@@ -291,6 +296,90 @@ def natorb_active_space(mf, n_superset, occ_thresh=0.02, deg_tol=1e-3, max_super
     print(f"qcsolver_utils: natorb CAS from CASCI({na + nb},{ncas_s}) superset -> "
           f"CAS({nelecas},{ncas}); active NO occupations "
           f"{np.round(no_occ[is_act], 4).tolist()}.")
+    return mo, ncas, nelecas
+
+
+def avas_active_space(mf, ao2eo, ao_mol_dumps, ao_labels, threshold=0.2,
+                      openshell_option=None, canonicalize=True, deg_tol=1e-3):
+    '''AVAS active space (arXiv:1701.07862) in the DMET embedding basis.
+
+    Projects embedded MOs onto the named real AOs (reached via ao2eo) and rotates the
+    occupied/virtual blocks to span that projection; the active space is the orbitals
+    whose projector eigenvalue exceeds threshold. Rotation-invariant within a
+    degenerate block by construction. Mirrors pyscf.mcscf.avas using the named AOs of
+    the real basis as the reference (equivalent to pyscf avas with minao set to the
+    molecule's own basis), since minao fails on Cu/O/ghost+ECP. openshell_option
+    defaults to 3 (SOMOs always active) for ROHF, 2 for closed-shell. Returns
+    (mo_coeff, ncas, nelecas) ordered [core, active, virtual].
+    '''
+    from pyscf import gto
+    import scipy.linalg
+
+    C = np.asarray(mf.mo_coeff)
+    if C.ndim == 3:
+        raise NotImplementedError("avas selection expects a single set of orbitals (RHF/ROHF reference).")
+    if ao2eo is None or ao_mol_dumps is None or not ao_labels:
+        raise ValueError("avas selection requires ao2eo, ao_mol_dumps, and ao_labels.")
+    occ = np.asarray(mf.mo_occ)
+    mo_e = np.asarray(mf.mo_energy)
+    spin = int(mf.mol.spin)
+    nocc = int(np.count_nonzero(occ != 0))
+    if openshell_option is None:
+        openshell_option = 3 if spin != 0 else 2
+
+    # MO-space projector onto the named AOs (PySCF avas non-IAO construction).
+    ao_mol = gto.loads(ao_mol_dumps)
+    s = ao_mol.intor_symmetric('int1e_ovlp')
+    idx = ao_mol.search_ao_label(ao_labels)
+    if len(idx) == 0:
+        raise ValueError(f"avas: no AOs match labels {ao_labels}. Available: {ao_mol.ao_labels()}")
+    M = ao2eo @ C
+    s2, s21 = s[idx][:, idx], s[idx] @ M
+    sa = s21.T @ scipy.linalg.solve(s2, s21, assume_a='pos')
+
+    # Residual reproducibility risk: AVAS partitions occ/vir by occupation; a manifold
+    # straddling the Fermi level can move an orbital between blocks if occupation flips.
+    if 0 < nocc < len(mo_e) and abs(mo_e[nocc] - mo_e[nocc - 1]) < deg_tol:
+        print(f"WARNING: avas: near-degenerate manifold straddles the occ/vir boundary "
+              f"(E[{nocc-1}]={mo_e[nocc-1]:.6f}, E[{nocc}]={mo_e[nocc]:.6f}, "
+              f"dE={abs(mo_e[nocc]-mo_e[nocc-1]):.2e} Ha); an occupation flip here can move an "
+              f"orbital between AVAS blocks and break reproducibility — verify the A/A result.")
+
+    if openshell_option == 2:
+        docc = nocc
+    elif openshell_option == 3:
+        docc = nocc - spin
+    else:
+        raise ValueError(f"avas: unknown openshell_option {openshell_option} (use 2 or 3).")
+
+    wocc, uo = np.linalg.eigh(sa[:docc, :docc])
+    nelecas = mf.mol.nelectron - int((wocc < threshold).sum()) * 2
+    mocore  = C[:, :docc] @ uo[:, wocc < threshold]
+    mocas_o = C[:, :docc] @ uo[:, wocc >= threshold]
+
+    wvir, uv = np.linalg.eigh(sa[nocc:, nocc:])
+    mocas_v = C[:, nocc:] @ uv[:, wvir >= threshold]
+    movir   = C[:, nocc:] @ uv[:, wvir < threshold]
+
+    if openshell_option == 3:
+        mocas = np.hstack([mocas_o, C[:, docc:nocc], mocas_v])
+    else:
+        mocas = np.hstack([mocas_o, mocas_v])
+
+    if canonicalize:
+        fock_emb = (C * mo_e) @ C.T   # embedding overlap is identity
+        def canon(block):
+            if block.shape[1] == 0:
+                return block
+            _, u = np.linalg.eigh(block.T @ fock_emb @ block)
+            return block @ u
+        mocore, mocas, movir = canon(mocore), canon(mocas), canon(movir)
+
+    mo = np.hstack([mocore, mocas, movir])
+    ncas = mocas.shape[1]
+    print(f"qcsolver_utils: avas (option {openshell_option}, threshold {threshold}) -> "
+          f"CAS({nelecas},{ncas}); occ eig {np.round(np.sort(wocc)[::-1], 3).tolist()}, "
+          f"vir eig {np.round(np.sort(wvir)[::-1], 3).tolist()}.")
     return mo, ncas, nelecas
 
 
