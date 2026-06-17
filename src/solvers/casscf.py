@@ -78,6 +78,18 @@ def solve(const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
             mf.diis_space = 12
             mf.scf(dm_loc)
             dm_loc = np.dot(np.dot(mf.mo_coeff, np.diag(mf.mo_occ)), mf.mo_coeff.T)
+        if embed_level_shift != 0.0:
+            # Confirm the shifted fixed point is also a stationary point of the real
+            # (unshifted) Hamiltonian: reconverge with the shift removed and use that as
+            # the actual reference; if it moves, the shift masked rather than fixed the
+            # instability.
+            e_shifted = mf.e_tot
+            mf.level_shift = 0.0
+            mf.scf(dm_loc)
+            dm_loc = np.dot(np.dot(mf.mo_coeff, np.diag(mf.mo_occ)), mf.mo_coeff.T)
+            print(f"casscf::solve : level-shift verification: E(shift={embed_level_shift})="
+                  f"{e_shifted:.10f}  E(shift removed, reconverged)={mf.e_tot:.10f}  "
+                  f"dE={abs(mf.e_tot - e_shifted):.2e} Ha")
 
         numPairs = nel // 2
         fock_loc = (fock_copy

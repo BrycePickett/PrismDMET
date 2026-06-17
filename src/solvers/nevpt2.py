@@ -49,6 +49,17 @@ def solve(const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
             mf.max_cycle = 300
             mf.diis_space = 12
             mf.scf(mf.make_rdm1())
+        if embed_level_shift != 0.0:
+            # Confirm the shifted fixed point is also a stationary point of the real
+            # (unshifted) Hamiltonian: reconverge with the shift removed and use that as
+            # the actual reference; if it moves, the shift masked rather than fixed the
+            # instability.
+            e_shifted = mf.e_tot
+            mf.level_shift = 0.0
+            mf.scf(mf.make_rdm1())
+            print(f"nevpt2::solve : level-shift verification: E(shift={embed_level_shift})="
+                  f"{e_shifted:.10f}  E(shift removed, reconverged)={mf.e_tot:.10f}  "
+                  f"dE={abs(mf.e_tot - e_shifted):.2e} Ha")
         if _use_rohf:
             print(f"nevpt2::solve : embedded ROHF (spin={_spin}, nel={nel}, norb={norb})")
 
