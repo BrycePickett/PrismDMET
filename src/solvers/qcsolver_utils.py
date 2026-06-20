@@ -202,25 +202,29 @@ def plan_cas_active_space(mf, cas_select, ncas, nelecas, nimp, norb,
     return selected, ncas, nelecas, None
 
 
+def canonicalize_degenerate_active_nos(cas_no, act_idx, no_occ, F_emb, deg_tol=1e-3):
+    '''Pin degenerate active-NO orientation; modifies cas_no in place. See cas_determinism_fix_plan.md (Part A).'''
+    act_cols = cas_no[:, act_idx].copy()
+    occ_vals = no_occ[act_idx]
+    i = 0
+    while i < len(act_idx):
+        j = i + 1
+        while j < len(act_idx) and abs(occ_vals[j] - occ_vals[i]) < deg_tol:
+            j += 1
+        if j - i > 1:
+            blk = act_cols[:, i:j]
+            _, U = np.linalg.eigh(blk.T @ F_emb @ blk)
+            act_cols[:, i:j] = blk @ U
+        i = j
+    for c in range(act_cols.shape[1]):
+        if act_cols[np.argmax(np.abs(act_cols[:, c])), c] < 0:
+            act_cols[:, c] *= -1
+    cas_no[:, act_idx] = act_cols
+
+
 def natorb_active_space(mf, n_superset, occ_thresh=0.02, deg_tol=1e-3, max_superset=None,
                         sa_nstates=1):
-    '''Character-free active space from CASCI natural-orbital occupations.
-
-    Builds a deterministic superset (n_superset orbitals around the Fermi level,
-    snapped out to complete degenerate manifolds), runs a CASCI on it, and keeps the
-    natural orbitals with fractional occupation (occ_thresh < n < 2 - occ_thresh) as
-    the active space. Character-free and invariant to within-manifold rotation;
-    n_superset is a methodological parameter (converge it). Returns (mo_coeff, ncas,
-    nelecas) with the active NOs in the [ncore, ncore+ncas) window.
-
-    sa_nstates > 1 selects on the equal-weight state-averaged density over that many
-    CASCI roots (CISNO-style): a ground-state density is blind to orbitals that are
-    integer-occupied in the GS but define an excitation, so a state-averaged target
-    needs a state-averaged selection density.
-
-    max_superset, if set, raises if manifold snapping inflates the superset past it
-    (a dense Fermi-level manifold can push the exact CASCI past the tractable limit).
-    '''
+    '''Active space from CASCI natural-orbital occupations. See natorb_cas_select.md.'''
     from pyscf import mcscf
     from math import comb
     C = np.asarray(mf.mo_coeff)
@@ -250,8 +254,7 @@ def natorb_active_space(mf, n_superset, occ_thresh=0.02, deg_tol=1e-3, max_super
     na = int(np.sum(np.rint(win) >= 1))   # alpha occupied in window
     nb = int(np.sum(np.rint(win) >= 2))   # beta (doubly) occupied in window
 
-    # Report superset size and FCI cost before the (possibly multi-hour) CASCI; flush
-    # so the line reaches a buffered SLURM log even if the CASCI then hangs.
+    # Report superset size and FCI cost before the (possibly multi-hour) CASCI.
     fci_dim = comb(ncas_s, na) * comb(ncas_s, nb)
     print(f"qcsolver_utils: natorb superset window [{lo}, {hi}) = {ncas_s} orbitals, "
           f"CASCI({na + nb},{ncas_s}) x {sa_nstates} root(s), FCI dim ~{fci_dim:.2e} dets "
@@ -264,8 +267,7 @@ def natorb_active_space(mf, n_superset, occ_thresh=0.02, deg_tol=1e-3, max_super
         mc.fcisolver.nroots = sa_nstates
     mc.kernel()
 
-    # State-averaged selection density when targeting >1 state (CISNO-style); equal
-    # weights so every target state's orbitals register in the selection.
+    # State-averaged selection density when targeting >1 state (CISNO-style).
     if sa_nstates > 1:
         dm1 = sum(mc.fcisolver.make_rdm1(civec, ncas_s, mc.nelecas)
                   for civec in mc.ci) / sa_nstates
@@ -283,30 +285,11 @@ def natorb_active_space(mf, n_superset, occ_thresh=0.02, deg_tol=1e-3, max_super
             f"natorb_active_space: no fractionally occupied NOs in the CAS({na+nb},{ncas_s}) "
             f"superset (occupations {np.round(no_occ, 3).tolist()}). Increase n_superset.")
 
-    # Canonicalize within each degenerate group of active NOs (Part A determinism fix).
-    # eigh of the 1-RDM returns eigenvectors defined up to an arbitrary rotation within each
-    # degenerate eigenspace; BLAS noise (~1e-9) can rotate an exactly degenerate pair by O(100°).
-    # Diagonalizing the embedded Fock restricted to each degenerate group pins a unique, physically
-    # motivated orientation that is stable to float64-level perturbations.
+    # Part A determinism fix: pin degenerate active-NO orientation (cas_determinism_fix_plan.md).
     F_emb = (mf.mo_coeff * mf.mo_energy) @ mf.mo_coeff.T
     act_idx = np.where(is_act)[0]
     if len(act_idx) > 1:
-        act_cols = cas_no[:, act_idx].copy()
-        act_occ_vals = no_occ[act_idx]
-        i = 0
-        while i < len(act_idx):
-            j = i + 1
-            while j < len(act_idx) and abs(act_occ_vals[j] - act_occ_vals[i]) < deg_tol:
-                j += 1
-            if j - i > 1:
-                blk = act_cols[:, i:j]
-                _, U = np.linalg.eigh(blk.T @ F_emb @ blk)
-                act_cols[:, i:j] = blk @ U
-            i = j
-        for c in range(act_cols.shape[1]):
-            if act_cols[np.argmax(np.abs(act_cols[:, c])), c] < 0:
-                act_cols[:, c] *= -1
-        cas_no[:, act_idx] = act_cols
+        canonicalize_degenerate_active_nos(cas_no, act_idx, no_occ, F_emb, deg_tol)
 
     mo = C.copy()
     mo[:, lo:hi] = np.hstack([cas_no[:, is_core], cas_no[:, is_act], cas_no[:, ~is_core & ~is_act]])
@@ -335,21 +318,7 @@ def natorb_active_space(mf, n_superset, occ_thresh=0.02, deg_tol=1e-3, max_super
 
 def spade_active_space(mf, nimp, gap_tol=0.3, n_fallback=16, occ_thresh=0.02,
                        deg_tol=1e-3, sa_nstates=1, max_superset=None):
-    '''SPADE-like active space from impurity-projection weight gap detection.
-
-    Ranks all embedded MOs by their impurity projection weight w[j]=||C[:nimp,j]||^2,
-    finds the largest relative gap in the sorted weight spectrum to determine the
-    superset size automatically, runs CASCI on that superset, and selects active NOs
-    by fractional occupation. Applies Part A degenerate-NO Fock canonicalization.
-
-    Adapted from: Kolodzeiski & Stein, J. Chem. Theory Comput. 19, 6643 (2023).
-    In DMET the impurity AO block (first nimp rows of C) is the natural projection
-    target; no SVD or user-specified AO labels are needed.
-
-    gap_tol:    minimum relative gap (w[k]-w[k+1])/w[k] to call it a partition.
-                Lower this if the spectrum is smooth (no clean jump).
-    n_fallback: superset size when gap detection fails (like natorb's n_superset).
-    '''
+    '''SPADE active space from impurity-projection weight gaps. See spade_active_space_plan.md.'''
     from pyscf import mcscf
     from math import comb
 
@@ -459,24 +428,9 @@ def spade_active_space(mf, nimp, gap_tol=0.3, n_fallback=16, occ_thresh=0.02,
             f"Lower gap_tol or raise n_fallback to widen the superset.")
 
     # Stage 4: Part A Fock canonicalization within degenerate active-NO groups.
-    F_emb        = (mf.mo_coeff * mf.mo_energy) @ mf.mo_coeff.T
-    act_idx      = np.where(is_act)[0]
-    act_cols     = cas_no[:, act_idx].copy()
-    act_occ_vals = no_occ[act_idx]
-    i = 0
-    while i < len(act_idx):
-        j = i + 1
-        while j < len(act_idx) and abs(act_occ_vals[j] - act_occ_vals[i]) < deg_tol:
-            j += 1
-        if j - i > 1:
-            blk = act_cols[:, i:j]
-            _, U = np.linalg.eigh(blk.T @ F_emb @ blk)
-            act_cols[:, i:j] = blk @ U
-        i = j
-    for c in range(act_cols.shape[1]):
-        if act_cols[np.argmax(np.abs(act_cols[:, c])), c] < 0:
-            act_cols[:, c] *= -1
-    cas_no[:, act_idx] = act_cols
+    F_emb   = (mf.mo_coeff * mf.mo_energy) @ mf.mo_coeff.T
+    act_idx = np.where(is_act)[0]
+    canonicalize_degenerate_active_nos(cas_no, act_idx, no_occ, F_emb, deg_tol)
 
     # Stage 5: assemble final MO matrix.
     mo = C_spade.copy()
@@ -502,17 +456,7 @@ def spade_active_space(mf, nimp, gap_tol=0.3, n_fallback=16, occ_thresh=0.02,
 
 
 def multiseed_casscf(mc, mo_seed, deg_tol=1e-3, angles=(0, 30, 60, 90)):
-    '''Run CASSCF from deterministic rotated seeds; return mc at the lowest-energy solution.
-
-    Detects degenerate active-orbital pairs via a single CASCI on mo_seed, generates
-    rotated seeds at the given angles (degrees), runs CASSCF from each, and keeps the
-    lowest SA-energy (or total-energy for single-state) solution. Reproducible because
-    seeds are deterministic angles and the argmin is deterministic.
-
-    Targets the confirmed PySCF CASSCF basin-hopping problem (GitHub issues #912, #1033):
-    the lowest-SA-energy solution is the variationally correct one. If no degenerate pairs
-    are found, falls through to a single mc.kernel(mo_seed) call.
-    '''
+    '''Run CASSCF from deterministic rotated seeds; keep the lowest-energy solution. See cas_determinism_fix_plan.md (Part B).'''
     from pyscf import mcscf as _mcscf
 
     ncore = mc.ncore
@@ -571,17 +515,7 @@ def multiseed_casscf(mc, mo_seed, deg_tol=1e-3, angles=(0, 30, 60, 90)):
 
 def avas_active_space(mf, ao2eo, ao_mol_dumps, ao_labels, threshold=0.2,
                       openshell_option=None, canonicalize=True, deg_tol=1e-3):
-    '''AVAS active space (arXiv:1701.07862) in the DMET embedding basis.
-
-    Projects embedded MOs onto the named real AOs (reached via ao2eo) and rotates the
-    occupied/virtual blocks to span that projection; the active space is the orbitals
-    whose projector eigenvalue exceeds threshold. Rotation-invariant within a
-    degenerate block by construction. Mirrors pyscf.mcscf.avas using the named AOs of
-    the real basis as the reference (equivalent to pyscf avas with minao set to the
-    molecule's own basis), since minao fails on Cu/O/ghost+ECP. openshell_option
-    defaults to 3 (SOMOs always active) for ROHF, 2 for closed-shell. Returns
-    (mo_coeff, ncas, nelecas) ordered [core, active, virtual].
-    '''
+    '''AVAS active space in the DMET embedding basis. See avas_cas_select_plan.md.'''
     from pyscf import gto
     import scipy.linalg
 
