@@ -137,7 +137,8 @@ def cas_electron_delta(added_orbs, mo_occ):
 def plan_cas_active_space(mf, cas_select, ncas, nelecas, nimp, norb,
                           ao2eo=None, ao_mol_dumps=None, ao_labels=None,
                           close_degeneracy=True, natorb_occ_thresh=0.02,
-                          natorb_max_superset=None, sa_nstates=1, avas_threshold=0.2):
+                          natorb_max_superset=None, sa_nstates=1, avas_threshold=0.2,
+                          spade_gap_tol=0.3, spade_n_fallback=16):
     '''Decide the CAS active space. Returns (selected, ncas, nelecas, mo_coeff).
 
     Index modes ('impurity'/'ao_character'): mo_coeff is None and the caller does
@@ -155,6 +156,14 @@ def plan_cas_active_space(mf, cas_select, ncas, nelecas, nimp, norb,
     if cas_select == 'avas':
         mo_coeff, ncas, nelecas = avas_active_space(
             mf, ao2eo, ao_mol_dumps, ao_labels, threshold=avas_threshold)
+        return None, ncas, nelecas, mo_coeff
+
+    if cas_select == 'spade':
+        mo_coeff, ncas, nelecas = spade_active_space(
+            mf, nimp,
+            gap_tol=spade_gap_tol, n_fallback=spade_n_fallback,
+            occ_thresh=natorb_occ_thresh, max_superset=natorb_max_superset,
+            sa_nstates=sa_nstates)
         return None, ncas, nelecas, mo_coeff
 
     from pyscf import mcscf
@@ -322,6 +331,174 @@ def natorb_active_space(mf, n_superset, occ_thresh=0.02, deg_tol=1e-3, max_super
           f"CAS({nelecas},{ncas}); active NO occupations "
           f"{np.round(no_occ[is_act], 4).tolist()}.")
     return mo, ncas, nelecas
+
+
+def spade_active_space(mf, nimp, gap_tol=0.3, n_fallback=16, occ_thresh=0.02,
+                       deg_tol=1e-3, sa_nstates=1, max_superset=None):
+    '''SPADE-like active space from impurity-projection weight gap detection.
+
+    Ranks all embedded MOs by their impurity projection weight w[j]=||C[:nimp,j]||^2,
+    finds the largest relative gap in the sorted weight spectrum to determine the
+    superset size automatically, runs CASCI on that superset, and selects active NOs
+    by fractional occupation. Applies Part A degenerate-NO Fock canonicalization.
+
+    Adapted from: Kolodzeiski & Stein, J. Chem. Theory Comput. 19, 6643 (2023).
+    In DMET the impurity AO block (first nimp rows of C) is the natural projection
+    target; no SVD or user-specified AO labels are needed.
+
+    gap_tol:    minimum relative gap (w[k]-w[k+1])/w[k] to call it a partition.
+                Lower this if the spectrum is smooth (no clean jump).
+    n_fallback: superset size when gap detection fails (like natorb's n_superset).
+    '''
+    from pyscf import mcscf
+    from math import comb
+
+    C    = np.asarray(mf.mo_coeff)
+    if C.ndim == 3:
+        raise NotImplementedError("spade selection expects a single set of orbitals (RHF/ROHF reference).")
+    occ  = np.asarray(mf.mo_occ)
+    mo_e = np.asarray(mf.mo_energy)
+    norb = C.shape[1]
+    n_total_el = int(round(float(np.sum(occ))))
+    spin = int(mf.mol.spin)
+
+    # Stage 1: impurity-projection weight and gap detection.
+    w     = np.sum(C[:nimp, :] ** 2, axis=0)       # (norb,) fraction on impurity AOs
+    order = np.argsort(w)[::-1]                    # most impurity-like first
+    w_s   = w[order]
+
+    sig  = np.where(w_s > occ_thresh)[0]
+    n_sig = len(sig)
+
+    if n_sig > 1:
+        g     = np.zeros(n_sig - 1)
+        for k in range(n_sig - 1):
+            if w_s[k] > 1e-10:
+                g[k] = (w_s[k] - w_s[k + 1]) / w_s[k]
+        k_best = int(np.argmax(g))
+        print(f"qcsolver_utils: spade weight spectrum "
+              f"(top {min(n_sig, 12)}/{norb} MOs): "
+              f"{np.round(w_s[:min(n_sig, 12)], 3).tolist()}  "
+              f"largest gap @ k={k_best}: rel={g[k_best]:.3f} "
+              f"(w: {w_s[k_best]:.3f} -> {w_s[k_best+1]:.3f})", flush=True)
+        if g[k_best] >= gap_tol:
+            n_spade = k_best + 1
+            print(f"qcsolver_utils: spade gap accepted: n_spade={n_spade}")
+        else:
+            print(f"qcsolver_utils: spade no gap >= {gap_tol:.2f}; "
+                  f"falling back to n_fallback={n_fallback}")
+            n_spade = min(n_fallback, norb)
+    else:
+        print(f"qcsolver_utils: spade: fewer than 2 MOs with w > {occ_thresh}; "
+              f"falling back to n_fallback={n_fallback}")
+        n_spade = min(n_fallback, norb)
+
+    # Stage 2: build superset, ensuring any SOMO is included.
+    spade_set = set(int(order[k]) for k in range(n_spade))
+    somo_forced = [j for j in range(norb) if 0 < occ[j] < 2 and j not in spade_set]
+    if somo_forced:
+        print(f"qcsolver_utils: spade: SOMO(s) {somo_forced} "
+              f"(w={[round(float(w[j]), 3) for j in somo_forced]}) "
+              f"not in superset; forcing inclusion.")
+        spade_set.update(somo_forced)
+        n_spade = len(spade_set)
+
+    if max_superset is not None and n_spade > max_superset:
+        raise ValueError(
+            f"spade_active_space: superset size {n_spade} exceeds "
+            f"max_superset={max_superset}. Raise gap_tol to shrink it.")
+
+    core_idx  = sorted([j for j in range(norb)
+                        if j not in spade_set and occ[j] >= 2 - 1e-6],
+                       key=lambda j: mo_e[j])
+    virt_idx  = sorted([j for j in range(norb)
+                        if j not in spade_set and occ[j] <  1e-6],
+                       key=lambda j: mo_e[j])
+    # Keep superset MOs in descending weight order for reproducibility.
+    spade_idx = sorted(spade_set, key=lambda j: -w[j])
+
+    n_core_el  = 2 * len(core_idx)
+    nelecas_s  = n_total_el - n_core_el
+    ncore_s    = len(core_idx)
+    na = (nelecas_s + spin) // 2
+    nb = (nelecas_s - spin) // 2
+
+    # Stage 3: CASCI on the superset.
+    fci_dim = comb(n_spade, na) * comb(n_spade, nb)
+    print(f"qcsolver_utils: spade CASCI({nelecas_s},{n_spade}) "
+          f"x {sa_nstates} root(s), FCI dim ~{fci_dim:.2e} - starting CASCI...",
+          flush=True)
+
+    C_spade = np.hstack([C[:, core_idx], C[:, spade_idx], C[:, virt_idx]])
+    mc = mcscf.CASCI(mf, n_spade, (na, nb))
+    mc.mo_coeff = C_spade
+    mc.fcisolver.conv_tol = 1e-10
+    mc.verbose = 0
+    if sa_nstates > 1:
+        mc.fcisolver.nroots = sa_nstates
+    mc.kernel()
+
+    if sa_nstates > 1:
+        dm1 = sum(mc.fcisolver.make_rdm1(ci, n_spade, mc.nelecas)
+                  for ci in mc.ci) / sa_nstates
+    else:
+        dm1 = mc.fcisolver.make_rdm1(mc.ci, n_spade, mc.nelecas)
+
+    no_occ, u  = np.linalg.eigh(dm1)
+    order_no   = np.argsort(no_occ)[::-1]
+    no_occ, u  = no_occ[order_no], u[:, order_no]
+    cas_no     = mc.mo_coeff[:, ncore_s:ncore_s + n_spade] @ u
+
+    is_core = no_occ >= 2 - occ_thresh
+    is_act  = (no_occ > occ_thresh) & (no_occ < 2 - occ_thresh)
+    if not np.any(is_act):
+        raise ValueError(
+            f"spade_active_space: no fractionally occupied NOs in the "
+            f"SPADE CAS({nelecas_s},{n_spade}) superset "
+            f"(occupations {np.round(no_occ, 3).tolist()}). "
+            f"Lower gap_tol or raise n_fallback to widen the superset.")
+
+    # Stage 4: Part A Fock canonicalization within degenerate active-NO groups.
+    F_emb        = (mf.mo_coeff * mf.mo_energy) @ mf.mo_coeff.T
+    act_idx      = np.where(is_act)[0]
+    act_cols     = cas_no[:, act_idx].copy()
+    act_occ_vals = no_occ[act_idx]
+    i = 0
+    while i < len(act_idx):
+        j = i + 1
+        while j < len(act_idx) and abs(act_occ_vals[j] - act_occ_vals[i]) < deg_tol:
+            j += 1
+        if j - i > 1:
+            blk = act_cols[:, i:j]
+            _, U = np.linalg.eigh(blk.T @ F_emb @ blk)
+            act_cols[:, i:j] = blk @ U
+        i = j
+    for c in range(act_cols.shape[1]):
+        if act_cols[np.argmax(np.abs(act_cols[:, c])), c] < 0:
+            act_cols[:, c] *= -1
+    cas_no[:, act_idx] = act_cols
+
+    # Stage 5: assemble final MO matrix.
+    mo = C_spade.copy()
+    mo[:, ncore_s:ncore_s + n_spade] = np.hstack(
+        [cas_no[:, is_core], cas_no[:, is_act], cas_no[:, ~is_core & ~is_act]])
+    ncore_out   = ncore_s + int(np.sum(is_core))
+    ncas_out    = int(np.sum(is_act))
+    nelecas_out = int(round(float(np.sum(no_occ[is_act]))))
+
+    if sa_nstates > 1:
+        na_sel = (nelecas_out + spin) // 2
+        nb_sel = (nelecas_out - spin) // 2
+        if comb(ncas_out, na_sel) * comb(ncas_out, nb_sel) < sa_nstates:
+            raise ValueError(
+                f"spade_active_space: selected CAS({nelecas_out},{ncas_out}) "
+                f"supports fewer than sa_nstates={sa_nstates} states. "
+                f"Lower gap_tol or raise n_fallback.")
+
+    print(f"qcsolver_utils: spade CAS from CASCI({nelecas_s},{n_spade}) -> "
+          f"CAS({nelecas_out},{ncas_out}); active NO occupations "
+          f"{np.round(no_occ[is_act], 4).tolist()}.")
+    return mo, ncas_out, nelecas_out
 
 
 def multiseed_casscf(mc, mo_seed, deg_tol=1e-3, angles=(0, 30, 60, 90)):

@@ -34,7 +34,8 @@ class DMET:
                   xc='pbe', level_shift=0.0, spin_polarized=False,
                   mm_coords=None, mm_charges=None,
                   include_spin_oei=False, cas_select='energy', ao_labels=None,
-                  avas_threshold=0.2, embed_level_shift=0.0, cas_multiseed=False ):
+                  avas_threshold=0.2, spade_gap_tol=0.3, spade_n_fallback=16,
+                  embed_level_shift=0.0, cas_multiseed=False ):
 
         if is_translation_invariant:
             assert the_ints.TI_OK
@@ -82,7 +83,9 @@ class DMET:
         self.casscf_kwargs = casscf_kwargs or {}
         self.cas_select    = cas_select
         self.ao_labels     = ao_labels
-        self.avas_threshold = avas_threshold
+        self.avas_threshold   = avas_threshold
+        self.spade_gap_tol    = spade_gap_tol
+        self.spade_n_fallback = spade_n_fallback
         self.embed_level_shift = embed_level_shift   # static level shift on the embedded post-HF ROHF/RHF reference
         self.cas_multiseed = cas_multiseed
         self.cas_results   = []   # populated by doexact() when method='CASSCF'
@@ -432,11 +435,13 @@ class DMET:
                 'ao_labels'     : self.ao_labels,
                 'ao_mol_dumps'  : self.ints.mol.dumps() if self.cas_select in ('ao_character', 'avas') else None,
                 'ao2eo'         : (self.ints.ao2loc @ loc_2_dmet[:, :norb_in_imp]) if self.cas_select in ('ao_character', 'avas') else None,
-                'avas_threshold': self.avas_threshold,
+                'avas_threshold'  : self.avas_threshold,
+                'spade_gap_tol'   : self.spade_gap_tol,
+                'spade_n_fallback': self.spade_n_fallback,
                 'embed_level_shift': self.embed_level_shift,
-                'cas_multiseed': self.cas_multiseed,
-                'casscf_kwargs' : self.casscf_kwargs,
-                'dmrg_kwargs'   : self.dmrg_kwargs,
+                'cas_multiseed'   : self.cas_multiseed,
+                'casscf_kwargs'   : self.casscf_kwargs,
+                'dmrg_kwargs'     : self.dmrg_kwargs,
                 'mo_guess'      : _mo_guess,
                 'oei_s'         : _dmet_oei_s,
                 'nevpt2_kwargs' : self.nevpt2_kwargs,
@@ -634,9 +639,11 @@ class DMET:
             'ao_labels'     : self.ao_labels,
             'ao_mol_dumps'  : self.ints.mol.dumps() if self.cas_select in ('ao_character', 'avas') else None,
             'ao2eo'         : (self.ints.ao2loc @ loc_2_dmet[:, :norb_in_imp]) if self.cas_select in ('ao_character', 'avas') else None,
-            'avas_threshold': self.avas_threshold,
+            'avas_threshold'  : self.avas_threshold,
+            'spade_gap_tol'   : self.spade_gap_tol,
+            'spade_n_fallback': self.spade_n_fallback,
             'embed_level_shift': self.embed_level_shift,
-            'casscf_kwargs' : self.casscf_kwargs,
+            'casscf_kwargs'   : self.casscf_kwargs,
             'dmrg_kwargs'   : self.dmrg_kwargs,
             'mo_guess'      : _mo_guess_cas,
             'ci_guess'      : _ci_guess_cas,

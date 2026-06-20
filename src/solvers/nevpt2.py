@@ -14,7 +14,8 @@ def solve(const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
           casscf_kwargs=None, nevpt2_kwargs=None,
           spin=None, oei_s=None,
           cas_select='energy', ao_labels=None, ao2eo=None, ao_mol_dumps=None,
-          avas_threshold=0.2, embed_level_shift=0.0, cas_multiseed=False,
+          avas_threshold=0.2, spade_gap_tol=0.3, spade_n_fallback=16,
+          embed_level_shift=0.0, cas_multiseed=False,
           printoutput=True):
     '''Run CASSCF + NEVPT2 on the DMET embedding cluster. Returns (e_tot, e_corr, mc, nevpt_objs).'''
     casscf_kwargs = casscf_kwargs or {}
@@ -71,7 +72,8 @@ def solve(const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
                 selected_orbs, ncas, nelecas, mo_natorb = plan_cas_active_space(
                     mf, cas_select, ncas, nelecas, nimp, norb,
                     ao2eo=ao2eo, ao_mol_dumps=ao_mol_dumps, ao_labels=ao_labels,
-                    sa_nstates=1, avas_threshold=avas_threshold)
+                    sa_nstates=1, avas_threshold=avas_threshold,
+                    spade_gap_tol=spade_gap_tol, spade_n_fallback=spade_n_fallback)
 
             mc = mcscf.CASSCF(mf, ncas, nelecas)
             mc.verbose = 5 if printoutput else 0
@@ -134,7 +136,8 @@ def solve(const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
                 selected_orbs, ncas, nelecas, mo_natorb = plan_cas_active_space(
                     mf, cas_select, ncas, nelecas, nimp, norb,
                     ao2eo=ao2eo, ao_mol_dumps=ao_mol_dumps, ao_labels=ao_labels,
-                    sa_nstates=nstates, avas_threshold=avas_threshold)
+                    sa_nstates=nstates, avas_threshold=avas_threshold,
+                    spade_gap_tol=spade_gap_tol, spade_n_fallback=spade_n_fallback)
 
             mc_sa = mcscf.CASSCF(mf, ncas, nelecas)
             # Swap base FCI solver BEFORE state_average_ so the SA wrapper inherits it.
@@ -244,6 +247,8 @@ def execute(task):
         ao2eo=task.get('ao2eo'),
         ao_mol_dumps=task.get('ao_mol_dumps'),
         avas_threshold=task.get('avas_threshold', 0.2),
+        spade_gap_tol=task.get('spade_gap_tol', 0.3),
+        spade_n_fallback=task.get('spade_n_fallback', 16),
         embed_level_shift=task.get('embed_level_shift', 0.0),
         cas_multiseed=task.get('cas_multiseed', False),
     )

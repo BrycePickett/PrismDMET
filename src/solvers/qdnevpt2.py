@@ -33,7 +33,8 @@ def solve(const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
           spin=None,
           oei_s=None,
           cas_select='energy', ao_labels=None, ao2eo=None, ao_mol_dumps=None,
-          avas_threshold=0.2, embed_level_shift=0.0, cas_multiseed=False,
+          avas_threshold=0.2, spade_gap_tol=0.3, spade_n_fallback=16,
+          embed_level_shift=0.0, cas_multiseed=False,
           printoutput=True):
     '''Run SA-CASSCF + QD-NEVPT2 via Prism on the DMET embedding cluster. Returns (e_tot, e_corr, None, mc, nevpt_obj).'''
     _check_prism()
@@ -105,7 +106,8 @@ def solve(const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
         selected_orbs, ncas, nelecas, mo_natorb = plan_cas_active_space(
             mf, cas_select, ncas, nelecas, nimp, norb,
             ao2eo=ao2eo, ao_mol_dumps=ao_mol_dumps, ao_labels=ao_labels,
-            sa_nstates=sa_nstates, avas_threshold=avas_threshold)
+            sa_nstates=sa_nstates, avas_threshold=avas_threshold,
+            spade_gap_tol=spade_gap_tol, spade_n_fallback=spade_n_fallback)
 
         mc = mcscf.CASSCF(mf, ncas, nelecas)
         # Must swap FCI solver before state_average_; direct_uhf.FCI required for spin-asymmetric [h1e_a, h1e_b].
@@ -207,6 +209,8 @@ def execute(task):
         ao2eo=task.get('ao2eo'),
         ao_mol_dumps=task.get('ao_mol_dumps'),
         avas_threshold=task.get('avas_threshold', 0.2),
+        spade_gap_tol=task.get('spade_gap_tol', 0.3),
+        spade_n_fallback=task.get('spade_n_fallback', 16),
         embed_level_shift=task.get('embed_level_shift', 0.0),
         cas_multiseed=task.get('cas_multiseed', False),
     )
