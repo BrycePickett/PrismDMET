@@ -60,7 +60,6 @@ def solve(const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
         pyscf_rdm2 = ccsolver.make_rdm2()
         pyscf_rdm1 = 0.5 * (pyscf_rdm1 + pyscf_rdm1.T)
 
-        # Rotate RDMs to local orbital basis
         C = mf.mo_coeff
         pyscf_rdm1 = np.dot(C, np.dot(pyscf_rdm1, C.T))
         pyscf_rdm2 = np.einsum('ai,ijkl->ajkl', C, pyscf_rdm2)
@@ -68,7 +67,6 @@ def solve(const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
         pyscf_rdm2 = np.einsum('ck,abkl->abcl', C, pyscf_rdm2)
         pyscf_rdm2 = np.einsum('dl,abcl->abcd', C, pyscf_rdm2)
 
-        # Ground-state impurity energy (dmet half-projector)
         impurity_energy = (
             const
             + 0.25  * np.einsum('ij,ij->', pyscf_rdm1[:nimp,:],     fock[:nimp,:] + oei[:nimp,:])
@@ -85,7 +83,6 @@ def solve(const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
             ccsolver, eom_type, nroots, koopmans, eom_kwargs
         )
 
-        # Normalize output (single root → list)
         if not hasattr(e_exc, '__len__'):
             e_exc   = np.array([e_exc])
             amplitudes = [amplitudes]

@@ -5,17 +5,7 @@ import numpy as np
 
 def select_cas_orbitals(mc, cas_select, ncas, nimp, norb,
                         ao2eo=None, ao_mol_dumps=None, ao_labels=None):
-    '''Pick the CAS active orbitals and reorder mc.mo_coeff so they occupy the active window.
-
-    cas_select:
-      'energy'       - no reordering (default PySCF energy ordering).
-      'impurity'     - rank frontier MOs by impurity localization weight and take the ncas largest.
-      'ao_character' - rank MOs by projection onto ao_labels; falls back to 'impurity' if
-                       ao_labels or required parameters are missing.
-
-    Returns the selected orbital index list (1-based PySCF convention via base=0 sort_mo),
-    or None when cas_select == 'energy'.
-    '''
+    '''Pick CAS active orbitals and reorder mc.mo_coeff to fill the active window.'''
     if cas_select == 'energy':
         return None
 
@@ -71,13 +61,7 @@ def _warn_if_ambiguous_boundary(ranked, weights, ncas, cas_select):
 
 
 def _warn_if_degenerate_boundary(selected, mo_energy, tol=1e-3):
-    '''Warn when a selected orbital is near-degenerate in energy with an excluded one.
-
-    Splitting a degenerate manifold across the active/inactive boundary leaves the
-    CASSCF seed span rotation-ambiguous: an infinitesimal mean-field perturbation
-    rotates the manifold and CASSCF converges to a different solution. Prints the
-    offending pairs so the active space can be widened to close the manifold.
-    '''
+    '''Warn when an active orbital is near-degenerate in energy with an excluded orbital.'''
     if mo_energy is None:
         return
     e = np.asarray(mo_energy)
@@ -96,14 +80,7 @@ def _warn_if_degenerate_boundary(selected, mo_energy, tol=1e-3):
 
 
 def close_degenerate_manifolds(selected, mo_energy, tol=1e-3):
-    '''Expand the selected active orbitals to whole near-degenerate manifolds.
-
-    Orbitals are grouped into manifolds by energy: a new manifold starts wherever
-    consecutive sorted energies differ by at least tol. Any manifold containing a
-    selected orbital is included in full, so the active span is invariant to
-    rotation within the manifold (which is what removes the seed ambiguity).
-    Returns the expanded sorted index list.
-    '''
+    '''Expand selected orbitals to include whole near-degenerate manifolds.'''
     e = np.asarray(mo_energy)
     if e.ndim == 2:
         e = e.mean(axis=0)
@@ -139,14 +116,7 @@ def plan_cas_active_space(mf, cas_select, ncas, nelecas, nimp, norb,
                           close_degeneracy=True, natorb_occ_thresh=0.02,
                           natorb_max_superset=None, sa_nstates=1, avas_threshold=0.2,
                           spade_gap_tol=0.3, spade_n_fallback=16):
-    '''Decide the CAS active space. Returns (selected, ncas, nelecas, mo_coeff).
-
-    Index modes ('impurity'/'ao_character'): mo_coeff is None and the caller does
-    mc.sort_mo(selected); near-degenerate manifolds touching the selection are closed.
-    'natorb': selected is None and the caller sets mc.mo_coeff = mo_coeff directly; the
-    active space is the fractionally occupied CASCI natural orbitals (character-free,
-    rotation-invariant; ncas/nelecas are derived). 'energy': all three extras are None.
-    '''
+    '''Decide the CAS active space; returns (selected, ncas, nelecas, mo_coeff). See cas_determinism_fix_plan.md.'''
     if cas_select == 'natorb':
         mo_coeff, ncas, nelecas = natorb_active_space(
             mf, ncas, occ_thresh=natorb_occ_thresh, max_superset=natorb_max_superset,
@@ -588,17 +558,10 @@ def avas_active_space(mf, ao2eo, ao_mol_dumps, ao_labels, threshold=0.2,
 
 
 def _ao_character_weights(emb_mo, ao2eo, ao_mol_dumps, ao_labels):
-    '''Projection of each embedded MO onto the named AO labels (mrh getorbindex / mo_comps style).
-
-    Uses plain Lowdin orthogonalization (pre_orth_ao=None) instead of pyscf's mo_comps, whose
-    default meta-lowdin ANO reference fails on GTH/ECP/ghost-atom systems.
-
-    Raises ValueError if ao_labels do not match any AO or if ao2eo/ao_mol_dumps are invalid.
-    '''
+    '''Projection of each embedded MO onto named AO labels; uses Lowdin (not meta-Lowdin) for GTH/ECP/ghost safety.'''
     from pyscf import gto
     from pyscf.lo.orth import lowdin
 
-    # Validate inputs
     if ao_mol_dumps is None:
         raise ValueError("ao_character selection: ao_mol_dumps is None")
     if ao2eo is None:
@@ -661,7 +624,6 @@ def fix_casscf_for_nonsinglet_env(mc, h1e_s):
     if h1e_s is None or np.all(np.abs(h1e_s) < 1e-8):
         return mc
 
-    # Initial projection into the active space
     amo = mc.mo_coeff[:, mc.ncore:mc.ncore + mc.ncas]
     amoH = amo.conj().T
     h1e_s_amo  = amoH @ h1e_s @ amo

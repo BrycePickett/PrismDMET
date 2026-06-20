@@ -4,12 +4,7 @@ from ..utils import silent_stdout, nullcontext
 
 def solve( const, oei, fock, tei, norb, nel, nimp, chempot_imp=0.0, printoutput=False,
            bond_dims=None, noises=None, thrds=None, n_sweeps=5, n_threads=None ):
-    """Solve the impurity problem with Block2 DMRG. Returns (impurity_energy, rdm1, dmrg_res).
-
-    bond_dims / noises / thrds default to length-n_sweeps schedules; n_threads follows
-    OMP_NUM_THREADS when not given. dmrg_res carries the final-sweep discarded weight and
-    the sweep schedule, for E vs. discarded-weight extrapolation to M -> infinity.
-    """
+    '''Solve the impurity problem with Block2 DMRG. Returns (impurity_energy, rdm1, dmrg_res).'''
 
     # Import block2 here so that QC-dmet can run without it if not using DMRG
     try:
@@ -49,7 +44,6 @@ def solve( const, oei, fock, tei, norb, nel, nimp, chempot_imp=0.0, printoutput=
                                  bond_dims=bond_dims, noises=noises,
                                  thrds=thrds, iprint=0)
 
-        # Final-sweep discarded weight (truncation error) for M-extrapolation.
         _dw = getattr(driver._dmrg, 'discarded_weights', None)
         discarded_weight = float(_dw[-1]) if _dw is not None and len(_dw) else None
 

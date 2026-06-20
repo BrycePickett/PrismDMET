@@ -25,7 +25,6 @@ def solve( const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf, chempot_imp=0.0
 
     ctx = silent_stdout() if not printoutput else nullcontext()
 
-    # Augment the fock operator with the chemical potential
     fock_copy = fock.copy()
     if (chempot_imp != 0.0):
         for orb in range(nimp):

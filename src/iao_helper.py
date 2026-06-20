@@ -38,12 +38,7 @@ def orthogonalize_iao( coeff, ovlp ):
     return coeff
     
 def _build_pmol_with_ghosts(mol, minao=None):
-    """Like reference_mol() but keeps ghost vacancy atoms (nonzero AO width).
-
-    The minimal reference basis defaults to PySCF's standard 'minao' for
-    all-electron molecules; GTH-pseudopotential molecules need a matching
-    valence-only reference since 'minao' includes core functions.
-    """
+    """Like reference_mol() but includes ghost vacancy atoms; auto-selects GTH basis for pseudopotential molecules."""
     import pyscf.gto
     if minao is None:
         minao = 'gth-szv-molopt-sr' if getattr(mol, 'pseudo', None) else 'minao'
