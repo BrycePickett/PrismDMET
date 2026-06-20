@@ -34,7 +34,7 @@ def solve(const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
           oei_s=None,
           cas_select='energy', ao_labels=None, ao2eo=None, ao_mol_dumps=None,
           avas_threshold=0.2, spade_gap_tol=0.3, spade_n_fallback=16,
-          embed_level_shift=0.0, cas_multiseed=False,
+          embed_level_shift=0.0, rohf_stability=False, cas_multiseed=False,
           printoutput=True):
     '''Run SA-CASSCF + QD-NEVPT2 via Prism on the DMET embedding cluster. Returns (e_tot, e_corr, None, mc, nevpt_obj).'''
     _check_prism()
@@ -99,6 +99,9 @@ def solve(const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
             print(f"qdnevpt2::solve : level-shift verification: E(shift={embed_level_shift})="
                   f"{e_shifted:.10f}  E(shift removed, reconverged)={mf.e_tot:.10f}  "
                   f"dE={abs(mf.e_tot - e_shifted):.2e} Ha")
+        if rohf_stability and _use_rohf:
+            from .qcsolver_utils import _stabilize_rohf
+            _stabilize_rohf(mf, tag='qdnevpt2::solve')
         if _use_rohf:
             print(f"qdnevpt2::solve : embedded ROHF (spin={_spin}, nel={nel}, norb={norb})")
 
@@ -212,6 +215,7 @@ def execute(task):
         spade_gap_tol=task.get('spade_gap_tol', 0.3),
         spade_n_fallback=task.get('spade_n_fallback', 16),
         embed_level_shift=task.get('embed_level_shift', 0.0),
+        rohf_stability=task.get('rohf_stability', False),
         cas_multiseed=task.get('cas_multiseed', False),
     )
 

@@ -35,7 +35,7 @@ class DMET:
                   mm_coords=None, mm_charges=None,
                   include_spin_oei=False, cas_select='energy', ao_labels=None,
                   avas_threshold=0.2, spade_gap_tol=0.3, spade_n_fallback=16,
-                  embed_level_shift=0.0, cas_multiseed=False ):
+                  embed_level_shift=0.0, rohf_stability=False, cas_multiseed=False ):
 
         if is_translation_invariant:
             assert the_ints.TI_OK
@@ -87,6 +87,7 @@ class DMET:
         self.spade_gap_tol    = spade_gap_tol
         self.spade_n_fallback = spade_n_fallback
         self.embed_level_shift = embed_level_shift   # static level shift on the embedded post-HF ROHF/RHF reference
+        self.rohf_stability = rohf_stability
         self.cas_multiseed = cas_multiseed
         self.cas_results   = []   # populated by doexact() when method='CASSCF'
         self.dmrg_kwargs   = dmrg_kwargs or {}
@@ -439,6 +440,7 @@ class DMET:
                 'spade_gap_tol'   : self.spade_gap_tol,
                 'spade_n_fallback': self.spade_n_fallback,
                 'embed_level_shift': self.embed_level_shift,
+                'rohf_stability'  : self.rohf_stability,
                 'cas_multiseed'   : self.cas_multiseed,
                 'casscf_kwargs'   : self.casscf_kwargs,
                 'dmrg_kwargs'     : self.dmrg_kwargs,
@@ -643,6 +645,7 @@ class DMET:
             'spade_gap_tol'   : self.spade_gap_tol,
             'spade_n_fallback': self.spade_n_fallback,
             'embed_level_shift': self.embed_level_shift,
+            'rohf_stability'  : self.rohf_stability,
             'casscf_kwargs'   : self.casscf_kwargs,
             'dmrg_kwargs'   : self.dmrg_kwargs,
             'mo_guess'      : _mo_guess_cas,

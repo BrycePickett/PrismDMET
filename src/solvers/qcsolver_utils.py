@@ -819,3 +819,21 @@ def fix_casscf_for_nonsinglet_env(mc, h1e_s):
             return g_orb, my_gorb_update, my_h_op, h_diag
 
     return FixedCASSCF(mc)
+
+
+def _stabilize_rohf(mf, max_iter=5, tag=''):
+    '''Follow ROHF internal instabilities and reconverge until stable. No-op for RHF.'''
+    from pyscf import scf as _scf
+    if not isinstance(mf, _scf.rohf.ROHF):
+        return
+    for i in range(max_iter):
+        mo_i, _, stable_i, _ = mf.stability(return_status=True)
+        if stable_i:
+            if i > 0:
+                print(f"{tag}: ROHF stable after {i} stability follow(s)  E={mf.e_tot:.10f}")
+            else:
+                print(f"{tag}: ROHF internally stable  E={mf.e_tot:.10f}")
+            return
+        print(f"{tag}: ROHF internal instability (iter {i+1}), reconverging along unstable mode")
+        mf.scf(mf.make_rdm1(mo_i, mf.mo_occ))
+    print(f"{tag}: WARNING: ROHF stability not reached after {max_iter} reconverges  E={mf.e_tot:.10f}")
