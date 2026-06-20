@@ -14,7 +14,7 @@ def solve(const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
           casscf_kwargs=None, nevpt2_kwargs=None,
           spin=None, oei_s=None,
           cas_select='energy', ao_labels=None, ao2eo=None, ao_mol_dumps=None,
-          avas_threshold=0.2, embed_level_shift=0.0,
+          avas_threshold=0.2, embed_level_shift=0.0, cas_multiseed=False,
           printoutput=True):
     '''Run CASSCF + NEVPT2 on the DMET embedding cluster. Returns (e_tot, e_corr, mc, nevpt_objs).'''
     casscf_kwargs = casscf_kwargs or {}
@@ -96,7 +96,11 @@ def solve(const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
                     print(f"nevpt2::solve : CAS selection by {cas_select}, "
                           f"selected {ncas} orbitals: {selected_orbs}")
 
-            mc.kernel()
+            if cas_multiseed:
+                from .qcsolver_utils import multiseed_casscf
+                multiseed_casscf(mc, mc.mo_coeff)
+            else:
+                mc.kernel()
 
             print(f"\nnevpt2::solve : embedded CASSCF energy = {mc.e_tot:.10f} Ha")
 
@@ -157,7 +161,11 @@ def solve(const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
                     print(f"nevpt2::solve : CAS selection by {cas_select} (SA), "
                           f"selected {ncas} orbitals: {selected_orbs}")
 
-            mc_sa.kernel()
+            if cas_multiseed:
+                from .qcsolver_utils import multiseed_casscf
+                multiseed_casscf(mc_sa, mc_sa.mo_coeff)
+            else:
+                mc_sa.kernel()
             sa_mo = mc_sa.mo_coeff
 
             print(f"\nnevpt2::solve : embedded SA-CASSCF ({nstates} states) done.")
@@ -237,6 +245,7 @@ def execute(task):
         ao_mol_dumps=task.get('ao_mol_dumps'),
         avas_threshold=task.get('avas_threshold', 0.2),
         embed_level_shift=task.get('embed_level_shift', 0.0),
+        cas_multiseed=task.get('cas_multiseed', False),
     )
 
     # 1-RDM (cluster orbital basis) for the dmet driver: prefer the NEVPT2

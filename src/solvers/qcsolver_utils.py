@@ -274,6 +274,31 @@ def natorb_active_space(mf, n_superset, occ_thresh=0.02, deg_tol=1e-3, max_super
             f"natorb_active_space: no fractionally occupied NOs in the CAS({na+nb},{ncas_s}) "
             f"superset (occupations {np.round(no_occ, 3).tolist()}). Increase n_superset.")
 
+    # Canonicalize within each degenerate group of active NOs (Part A determinism fix).
+    # eigh of the 1-RDM returns eigenvectors defined up to an arbitrary rotation within each
+    # degenerate eigenspace; BLAS noise (~1e-9) can rotate an exactly degenerate pair by O(100°).
+    # Diagonalizing the embedded Fock restricted to each degenerate group pins a unique, physically
+    # motivated orientation that is stable to float64-level perturbations.
+    F_emb = (mf.mo_coeff * mf.mo_energy) @ mf.mo_coeff.T
+    act_idx = np.where(is_act)[0]
+    if len(act_idx) > 1:
+        act_cols = cas_no[:, act_idx].copy()
+        act_occ_vals = no_occ[act_idx]
+        i = 0
+        while i < len(act_idx):
+            j = i + 1
+            while j < len(act_idx) and abs(act_occ_vals[j] - act_occ_vals[i]) < deg_tol:
+                j += 1
+            if j - i > 1:
+                blk = act_cols[:, i:j]
+                _, U = np.linalg.eigh(blk.T @ F_emb @ blk)
+                act_cols[:, i:j] = blk @ U
+            i = j
+        for c in range(act_cols.shape[1]):
+            if act_cols[np.argmax(np.abs(act_cols[:, c])), c] < 0:
+                act_cols[:, c] *= -1
+        cas_no[:, act_idx] = act_cols
+
     mo = C.copy()
     mo[:, lo:hi] = np.hstack([cas_no[:, is_core], cas_no[:, is_act], cas_no[:, ~is_core & ~is_act]])
     ncore = lo + int(np.sum(is_core))
@@ -297,6 +322,74 @@ def natorb_active_space(mf, n_superset, occ_thresh=0.02, deg_tol=1e-3, max_super
           f"CAS({nelecas},{ncas}); active NO occupations "
           f"{np.round(no_occ[is_act], 4).tolist()}.")
     return mo, ncas, nelecas
+
+
+def multiseed_casscf(mc, mo_seed, deg_tol=1e-3, angles=(0, 30, 60, 90)):
+    '''Run CASSCF from deterministic rotated seeds; return mc at the lowest-energy solution.
+
+    Detects degenerate active-orbital pairs via a single CASCI on mo_seed, generates
+    rotated seeds at the given angles (degrees), runs CASSCF from each, and keeps the
+    lowest SA-energy (or total-energy for single-state) solution. Reproducible because
+    seeds are deterministic angles and the argmin is deterministic.
+
+    Targets the confirmed PySCF CASSCF basin-hopping problem (GitHub issues #912, #1033):
+    the lowest-SA-energy solution is the variationally correct one. If no degenerate pairs
+    are found, falls through to a single mc.kernel(mo_seed) call.
+    '''
+    from pyscf import mcscf as _mcscf
+
+    ncore = mc.ncore
+    ncas  = mc.ncas
+    nelecas = mc.nelecas
+    nroots = len(mc.weights) if hasattr(mc, 'weights') else 1
+
+    # Single CASCI to measure active-NO occupations and detect degenerate pairs.
+    ci_det = _mcscf.CASCI(mc._scf, ncas, nelecas)
+    ci_det.verbose = 0
+    if nroots > 1:
+        ci_det.fcisolver.nroots = nroots
+    ci_det.kernel(mo_seed)
+    if nroots > 1 and isinstance(ci_det.ci, list):
+        dm1 = sum(ci_det.fcisolver.make_rdm1(ci, ncas, nelecas)
+                  for ci in ci_det.ci) / nroots
+    else:
+        dm1 = ci_det.fcisolver.make_rdm1(ci_det.ci, ncas, nelecas)
+    occ = np.sort(np.linalg.eigvalsh(dm1))[::-1]
+    deg_pairs = [(i, i + 1) for i in range(ncas - 1)
+                 if abs(occ[i] - occ[i + 1]) < deg_tol]
+
+    if not deg_pairs:
+        print(f"qcsolver_utils: multiseed_casscf: no degenerate active pairs "
+              f"(min occ gap={np.min(np.abs(np.diff(occ))):.2e}); single kernel call.")
+        mc.kernel(mo_seed)
+        return mc
+
+    print(f"qcsolver_utils: multiseed_casscf: {len(deg_pairs)} degenerate pair(s) "
+          f"{deg_pairs}; running {len(angles)} seeds.", flush=True)
+
+    best_e  = np.inf
+    best_mo = None
+
+    for angle in angles:
+        mo = mo_seed.copy()
+        th = np.deg2rad(angle)
+        c_r, s_r = np.cos(th), np.sin(th)
+        for i, j in deg_pairs:
+            col_i = mo[:, ncore + i].copy()
+            col_j = mo[:, ncore + j].copy()
+            mo[:, ncore + i] =  c_r * col_i + s_r * col_j
+            mo[:, ncore + j] = -s_r * col_i + c_r * col_j
+        mc.kernel(mo)
+        print(f"  seed {angle:3d}°: e_tot={mc.e_tot:.10f}  converged={mc.converged}")
+        if mc.e_tot < best_e:
+            best_e  = mc.e_tot
+            best_mo = mc.mo_coeff.copy()
+
+    # Re-run from the best seed so mc is fully consistent at that solution.
+    if abs(mc.e_tot - best_e) > 1e-10:
+        mc.kernel(best_mo)
+    print(f"qcsolver_utils: multiseed_casscf -> best SA-energy = {best_e:.10f} Ha")
+    return mc
 
 
 def avas_active_space(mf, ao2eo, ao_mol_dumps, ao_labels, threshold=0.2,

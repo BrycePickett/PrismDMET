@@ -14,7 +14,7 @@ def solve(const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
           mo_guess=None, ci_guess=None,
           oei_s=None, spin=None,
           cas_select='energy', ao_labels=None, ao2eo=None, ao_mol_dumps=None,
-          avas_threshold=0.2, embed_level_shift=0.0,
+          avas_threshold=0.2, embed_level_shift=0.0, cas_multiseed=False,
           **casscf_kwargs):
     '''Solve a DMET impurity problem at the CASSCF level. Returns (impurity_energy, rdm1, cas_results).'''
     if ncas is None:
@@ -145,7 +145,11 @@ def solve(const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
 
         _mo0 = mo_guess if mo_guess is not None else None
         _ci0 = ci_guess if ci_guess is not None else None
-        mc.kernel(_mo0, _ci0)
+        if cas_multiseed and _mo0 is None:
+            from .qcsolver_utils import multiseed_casscf
+            multiseed_casscf(mc, mc.mo_coeff)
+        else:
+            mc.kernel(_mo0, _ci0)
 
         ncore = mc.ncore
         if _use_rohf:
@@ -263,5 +267,6 @@ def execute(task):
         ao_mol_dumps=task.get('ao_mol_dumps'),
         avas_threshold=task.get('avas_threshold', 0.2),
         embed_level_shift=task.get('embed_level_shift', 0.0),
+        cas_multiseed=task.get('cas_multiseed', False),
         **task.get('casscf_kwargs', {}),
     )

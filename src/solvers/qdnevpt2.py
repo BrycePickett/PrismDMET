@@ -33,7 +33,7 @@ def solve(const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
           spin=None,
           oei_s=None,
           cas_select='energy', ao_labels=None, ao2eo=None, ao_mol_dumps=None,
-          avas_threshold=0.2, embed_level_shift=0.0,
+          avas_threshold=0.2, embed_level_shift=0.0, cas_multiseed=False,
           printoutput=True):
     '''Run SA-CASSCF + QD-NEVPT2 via Prism on the DMET embedding cluster. Returns (e_tot, e_corr, None, mc, nevpt_obj).'''
     _check_prism()
@@ -132,7 +132,11 @@ def solve(const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
                 print(f"qdnevpt2::solve : CAS selection by {cas_select}, "
                       f"selected {ncas} orbitals: {selected_orbs}")
 
-        mc.kernel()
+        if cas_multiseed:
+            from .qcsolver_utils import multiseed_casscf
+            multiseed_casscf(mc, mc.mo_coeff)
+        else:
+            mc.kernel()
 
         print(f"\nqdnevpt2::solve : embedded SA-CASSCF ({sa_nstates} states, "
               f"ncas={ncas}, nelecas={nelecas})")
@@ -204,6 +208,7 @@ def execute(task):
         ao_mol_dumps=task.get('ao_mol_dumps'),
         avas_threshold=task.get('avas_threshold', 0.2),
         embed_level_shift=task.get('embed_level_shift', 0.0),
+        cas_multiseed=task.get('cas_multiseed', False),
     )
 
     rdm1 = mc.make_rdm1()
