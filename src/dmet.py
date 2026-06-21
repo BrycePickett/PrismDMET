@@ -646,6 +646,7 @@ class DMET:
             'spade_n_fallback': self.spade_n_fallback,
             'embed_level_shift': self.embed_level_shift,
             'rohf_stability'  : self.rohf_stability,
+            'cas_multiseed'   : self.cas_multiseed,
             'casscf_kwargs'   : self.casscf_kwargs,
             'dmrg_kwargs'   : self.dmrg_kwargs,
             'mo_guess'      : _mo_guess_cas,
