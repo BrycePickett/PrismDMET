@@ -50,7 +50,10 @@ class FragmentBuilder:
 
         dmet_oei  = self._ints.dmet_oei( loc_2_dmet, norb_in_imp)
         dmet_fock = self._ints.dmet_fock(loc_2_dmet, norb_in_imp, core_1rdm_loc)
-        dmet_tei  = self._ints.dmet_tei( loc_2_dmet, norb_in_imp)
+        # DFT-in-DFT solvers work in the AO basis and never read the embedding
+        # ERI; skip the norb^4 build, which dominates memory and OOMs at large shells.
+        skip_tei = (not flag_rhf) and (not self._NI_hack) and self._method in ('RKS', 'UKS', 'ROKS')
+        dmet_tei  = None if skip_tei else self._ints.dmet_tei(loc_2_dmet, norb_in_imp)
 
         if self._NI_hack:
             dmet_tei[:, :, :, num_imp_orbs:] = 0.0
