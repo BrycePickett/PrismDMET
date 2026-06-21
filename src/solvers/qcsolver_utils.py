@@ -17,21 +17,15 @@ def select_cas_orbitals(mc, cas_select, ncas, nimp, norb,
         weights = np.sum(np.abs(C[:nimp, :]) ** 2, axis=0)
         frontier = range(mc.ncore, norb)
     elif cas_select == 'ao_character':
-        # Validate all required parameters for ao_character mode
+        # Raise rather than fall back: a silent switch to 'impurity' would hide a
+        # misspelled ao_labels behind a wrong active space. _ao_character_weights
+        # raises ValueError/KeyError with the available labels listed.
         if ao_labels is None or ao2eo is None or ao_mol_dumps is None:
-            print(f"WARNING: cas_select='ao_character' but ao_labels/ao2eo/ao_mol_dumps not fully provided. "
-                  f"Falling back to 'impurity' localization selection.")
-            weights = np.sum(np.abs(C[:nimp, :]) ** 2, axis=0)
-            frontier = range(mc.ncore, norb)
-        else:
-            try:
-                weights = _ao_character_weights(C, ao2eo, ao_mol_dumps, ao_labels)
-                frontier = range(norb)
-            except (ValueError, KeyError) as e:
-                print(f"WARNING: ao_character selection failed ({e}). "
-                      f"Falling back to 'impurity' localization selection.")
-                weights = np.sum(np.abs(C[:nimp, :]) ** 2, axis=0)
-                frontier = range(mc.ncore, norb)
+            raise ValueError(
+                "cas_select='ao_character' requires ao_labels, ao2eo, and ao_mol_dumps. "
+                "Provide all three or choose a different cas_select.")
+        weights = _ao_character_weights(C, ao2eo, ao_mol_dumps, ao_labels)
+        frontier = range(norb)
     else:
         raise ValueError(f"select_cas_orbitals: unknown cas_select='{cas_select}'. "
                         f"Valid options: 'energy', 'impurity', 'ao_character'")
@@ -500,6 +494,11 @@ def avas_active_space(mf, ao2eo, ao_mol_dumps, ao_labels, threshold=0.2,
     nocc = int(np.count_nonzero(occ != 0))
     if openshell_option is None:
         openshell_option = 3 if spin != 0 else 2
+    if openshell_option == 2 and spin != 0:
+        raise ValueError(
+            f"avas: openshell_option=2 mis-counts nelecas for open-shell systems (spin={spin}): "
+            f"SOMOs lie in the occupied block and are counted as doubly occupied. Use "
+            f"openshell_option=3 (the default for open-shell), which handles SOMOs separately.")
 
     # MO-space projector onto the named AOs (PySCF avas non-IAO construction).
     ao_mol = gto.loads(ao_mol_dumps)
