@@ -310,7 +310,6 @@ class DMET:
         _frag_meta    = []
         _sym_counters = set()
 
-        _src_path = os.path.dirname(os.path.abspath(__file__))
         _builder = FragmentBuilder(
             ints     = self.ints,
             helper   = self.helper,
@@ -412,7 +411,6 @@ class DMET:
             task = {
                 'counter'       : counter,
                 'method'        : _method_key,
-                'src_path'      : _src_path,
                 'const'         : 0.0,
                 'dmet_oei'       : dmet_oei,
                 'dmet_fock'      : dmet_fock,
