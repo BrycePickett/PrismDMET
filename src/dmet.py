@@ -379,13 +379,13 @@ class DMET:
                 cached = self.frag_caches[counter]
                 old_mo    = cached['mo_coeff']
                 _ci_guess = cached.get('ci', None)
-                _ncas_  = self.ncas    if self.ncas    is not None else norb_in_imp
-                _ncore_ = (nelec_in_imp - (self.nelecas if self.nelecas is not None
-                                            else nelec_in_imp)) // 2
+                _ncas  = self.ncas if self.ncas is not None else norb_in_imp
+                _ncore = (nelec_in_imp - (self.nelecas if self.nelecas is not None
+                                          else nelec_in_imp)) // 2
                 if old_mo.shape == (norb_in_imp, norb_in_imp):
                     from .solvers.qcsolver_utils import project_amo_manually
                     _mo_guess, fidelity = project_amo_manually(
-                        old_mo, _ncas_, _ncore_, dmet_fock, norb_in_imp)
+                        old_mo, _ncas, _ncore, dmet_fock, norb_in_imp)
                     if np.min(fidelity) < 0.5:
                         print("DMET::CASSCF : Low projection fidelity, discarding CI guess.")
                         _ci_guess = None
