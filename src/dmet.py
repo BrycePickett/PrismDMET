@@ -374,6 +374,23 @@ class DMET:
             })
 
             _mo_guess = None
+            _ci_guess = None
+            if _method_key == 'CASSCF' and self.frag_caches[counter] is not None:
+                cached = self.frag_caches[counter]
+                old_mo    = cached['mo_coeff']
+                _ci_guess = cached.get('ci', None)
+                _ncas_  = self.ncas    if self.ncas    is not None else norb_in_imp
+                _ncore_ = (nelec_in_imp - (self.nelecas if self.nelecas is not None
+                                            else nelec_in_imp)) // 2
+                if old_mo.shape == (norb_in_imp, norb_in_imp):
+                    from .solvers.qcsolver_utils import project_amo_manually
+                    _mo_guess, fidelity = project_amo_manually(
+                        old_mo, _ncas_, _ncore_, dmet_fock, norb_in_imp)
+                    if np.min(fidelity) < 0.5:
+                        print("DMET::CASSCF : Low projection fidelity, discarding CI guess.")
+                        _ci_guess = None
+                else:
+                    print("DMET::CASSCF : MO shape mismatch, starting fresh.")
 
             # Spin-dependent 1e potential; printed as diagnostic, injected only if include_spin_oei=True.
             _dmet_oei_s = None
@@ -443,6 +460,7 @@ class DMET:
                 'casscf_kwargs'   : self.casscf_kwargs,
                 'dmrg_kwargs'     : self.dmrg_kwargs,
                 'mo_guess'      : _mo_guess,
+                'ci_guess'      : _ci_guess,
                 'oei_s'         : _dmet_oei_s,
                 'nevpt2_kwargs' : self.nevpt2_kwargs,
                 'qdnevpt2_kwargs': self.qdnevpt2_kwargs,
@@ -465,7 +483,7 @@ class DMET:
                 _frag_meta[-1]['sequential_result'] = self._run_fragment_sequential(
                     counter, _method_key, dmet_oei, dmet_fock, dmet_tei,
                     norb_in_imp, nelec_in_imp, num_imp_orbs, chempot_imp,
-                    dm_guess_rhf, loc_2_dmet, mo_guess=_mo_guess, oei_s=_dmet_oei_s)
+                    dm_guess_rhf, loc_2_dmet, mo_guess=_mo_guess, ci_guess=_ci_guess, oei_s=_dmet_oei_s)
 
         _parallel_results = {}   # counter -> result dict
         if _frag_tasks:
@@ -593,25 +611,9 @@ class DMET:
                                    dmet_oei, dmet_fock, dmet_tei,
                                    norb_in_imp, nelec_in_imp, num_imp_orbs,
                                    chempot_imp, dm_guess_rhf, loc_2_dmet,
-                                   mo_guess=None, oei_s=None):
-        _mo_guess_cas, _ci_guess_cas = mo_guess, None
-        if method_key == 'CASSCF' and self.frag_caches[counter] is not None:
-            cached = self.frag_caches[counter]
-            old_mo    = cached['mo_coeff']
-            _ci_guess_cas = cached.get('ci', None)
-            _ncas  = self.ncas    if self.ncas    is not None else norb_in_imp
-            _ncore = (nelec_in_imp - (self.nelecas if self.nelecas is not None
-                                      else nelec_in_imp)) // 2
-            if old_mo.shape == (norb_in_imp, norb_in_imp):
-                from .solvers.qcsolver_utils import project_amo_manually
-                _mo_guess_cas, fidelity = project_amo_manually(
-                    old_mo, _ncas, _ncore, dmet_fock, norb_in_imp)
-                if np.min(fidelity) < 0.5:
-                    print("DMET::CASSCF : Low projection fidelity, discarding CI guess.")
-                    _ci_guess_cas = None
-            else:
-                print("DMET::CASSCF : MO shape mismatch, starting fresh.")
-                _mo_guess_cas = None
+                                   mo_guess=None, ci_guess=None, oei_s=None):
+        _mo_guess_cas = mo_guess
+        _ci_guess_cas = ci_guess
 
         task = {
             'counter'       : counter,
