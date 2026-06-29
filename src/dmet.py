@@ -93,6 +93,9 @@ class DMET:
         self.mm_coords  = np.asarray(mm_coords,  dtype=float) if mm_coords  is not None else None
         self.mm_charges = np.asarray(mm_charges, dtype=float) if mm_charges is not None else None
 
+        self._validate_config()
+        self._warn_inert_params()
+
         self.use_symmetry = use_symmetry
         self.symmetry_map = symmetry_map  # user-provided {child_idx: parent_idx} or None
         if self.use_symmetry and self.symmetry_map is None and not is_translation_invariant:
@@ -164,9 +167,6 @@ class DMET:
         # Auto-detect open-shell reference from localintegrals
         if hasattr(self.ints, 'loc_spin_oei'):
             self.oei_s = self.ints.loc_spin_oei()   # None for RHF, ndarray for ROHF/UHF
-
-        self._validate_config()
-        self._warn_inert_params()
 
     def _warn_inert_params( self ):
         '''Warn (not error) when a parameter is set but inert for the chosen method.'''
