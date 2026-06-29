@@ -38,28 +38,6 @@ class DMET:
                   embed_level_shift=0.0, rohf_stability=False, cas_multiseed=False,
                   cas_spin=None, cas_spin_shift=0.2 ):
 
-        if is_translation_invariant:
-            assert the_ints.TI_OK
-
-        _valid_methods = {'ED', 'FCI', 'DMRG', 'CC', 'MP2', 'RHF',
-                          'EOM-CC', 'CASSCF', 'QD-NEVPT2', 'NEVPT2',
-                          'UHF', 'ROHF', 'RKS', 'UKS', 'ROKS'}
-        assert method in _valid_methods, \
-            f"DMET: unknown method='{method}'. Valid: {sorted(_valid_methods)}"
-        if method in ('QD-NEVPT2', 'NEVPT2'):
-            if ncas is None or nelecas is None:
-                raise ValueError(
-                    f"method='{method}' requires ncas and nelecas (active space size)."
-                )
-        if method == 'QD-NEVPT2':
-            if sa_nstates < 2:
-                raise ValueError(
-                    "method='QD-NEVPT2' requires sa_nstates >= 2 for state-averaging."
-                )
-        assert sc_method in {'LSTSQ', 'BFGS', 'NONE'}
-        _valid_cc_etypes = {'LAMBDA', 'LAMBDA_AMP', 'LAMBDA_ZERO', 'CASCI', 'CCSD(T)', 'CCSD(T)_RDM', 'EOM-CCSD'}
-        assert CC_E_TYPE in _valid_cc_etypes, f"DMET: unknown CC_E_TYPE='{CC_E_TYPE}'. Valid: {_valid_cc_etypes}"
-
         self.ints       = the_ints
         self.norb       = self.ints.Norbs
         self.impClust   = impurity_clusters
@@ -135,20 +113,22 @@ class DMET:
         self.minFunc    = None
         if self.altcostfunc:
             self.minFunc = 'FOCK_INIT'  # 'oei'
-            assert not self.fit_imp_bath
-            assert not self.do_det
-            assert self.sc_method in {'BFGS', 'NONE'}
-
-        if (( self.method == 'CC' ) and ( self.CC_E_TYPE == 'CASCI' )):
-            assert( len( self.impClust ) == 1 )
-        if (( self.method == 'CC' ) and ( self.CC_E_TYPE == 'EOM-CCSD' )):
-            assert eom_nroots >= 1, "eom_nroots must be >= 1 when using CC_E_TYPE='EOM-CCSD'"
-        if self.method == 'EOM-CC':
-            from .solvers.eomcc import _VALID_EOM_TYPES as _EOM_SET
-            if eom_type not in _EOM_SET:
+            if self.fit_imp_bath:
                 raise ValueError(
-                    f"DMET: unknown eom_type='{eom_type}'. Valid: {sorted(_EOM_SET)}"
-                )
+                    "use_constrained_opt=True is incompatible with fit_imp_bath=True; "
+                    "set fit_imp_bath=False for constrained optimization.")
+            if self.do_det:
+                raise ValueError("use_constrained_opt=True is incompatible with do_det=True.")
+            if self.sc_method not in {'BFGS', 'NONE'}:
+                raise ValueError("use_constrained_opt=True requires sc_method in {'BFGS', 'NONE'}.")
+
+        if self.method == 'CC' and self.CC_E_TYPE == 'CASCI':
+            if len(self.impClust) != 1:
+                raise ValueError(
+                    "method='CC' with CC_E_TYPE='CASCI' requires a single impurity cluster.")
+        if self.method == 'CC' and self.CC_E_TYPE == 'EOM-CCSD':
+            if eom_nroots < 1:
+                raise ValueError("eom_nroots must be >= 1 when using CC_E_TYPE='EOM-CCSD'.")
 
         if self.do_det:
             self.fit_imp_bath = False
@@ -184,6 +164,55 @@ class DMET:
         # Auto-detect open-shell reference from localintegrals
         if hasattr(self.ints, 'loc_spin_oei'):
             self.oei_s = self.ints.loc_spin_oei()   # None for RHF, ndarray for ROHF/UHF
+
+        self._validate_config()
+
+    def _validate_config( self ):
+        '''Fail fast at construction on user-reachable misconfiguration.'''
+        if self.TransInv and not self.ints.TI_OK:
+            raise ValueError(
+                "translation-invariant DMET requires a TI-capable LocalIntegrals "
+                "(TI_OK=True); the chosen localization sets TI_OK=False.")
+
+        _valid_methods = {'ED', 'FCI', 'DMRG', 'CC', 'MP2', 'RHF',
+                          'EOM-CC', 'CASSCF', 'QD-NEVPT2', 'NEVPT2',
+                          'UHF', 'ROHF', 'RKS', 'UKS', 'ROKS'}
+        if self.method not in _valid_methods:
+            raise ValueError(
+                f"DMET: unknown method='{self.method}'. Valid: {sorted(_valid_methods)}")
+
+        if self.sc_method not in {'LSTSQ', 'BFGS', 'NONE'}:
+            raise ValueError(
+                f"DMET: unknown sc_method='{self.sc_method}'. Valid: ['BFGS', 'LSTSQ', 'NONE']")
+
+        _valid_cc_etypes = {'LAMBDA', 'LAMBDA_AMP', 'LAMBDA_ZERO', 'CASCI',
+                            'CCSD(T)', 'CCSD(T)_RDM', 'EOM-CCSD'}
+        if self.CC_E_TYPE not in _valid_cc_etypes:
+            raise ValueError(
+                f"DMET: unknown CC_E_TYPE='{self.CC_E_TYPE}'. Valid: {sorted(_valid_cc_etypes)}")
+
+        _valid_cas = {'energy', 'impurity', 'ao_character', 'avas', 'spade', 'natorb'}
+        if self.cas_select not in _valid_cas:
+            raise ValueError(
+                f"DMET: unknown cas_select='{self.cas_select}'. Valid: {sorted(_valid_cas)}")
+
+        if self.method in ('QD-NEVPT2', 'NEVPT2') and (self.ncas is None or self.nelecas is None):
+            raise ValueError(
+                f"method='{self.method}' requires ncas and nelecas (active space size).")
+
+        if self.method == 'QD-NEVPT2' and self.sa_nstates < 2:
+            raise ValueError(
+                "method='QD-NEVPT2' requires sa_nstates >= 2 for state-averaging.")
+
+        if self.cas_select in ('ao_character', 'avas') and self.ao_labels is None:
+            raise ValueError(
+                f"cas_select='{self.cas_select}' requires ao_labels.")
+
+        if self.method == 'EOM-CC':
+            from .solvers.eomcc import _VALID_EOM_TYPES as _EOM_SET
+            if self.eom_type not in _EOM_SET:
+                raise ValueError(
+                    f"DMET: unknown eom_type='{self.eom_type}'. Valid: {sorted(_EOM_SET)}")
 
     def testclusters( self ):
     
