@@ -1092,7 +1092,31 @@ class DMET:
         with open( filename, 'w' ) as thefile:
             molden.header( self.ints.mol, thefile )
             molden.orbital_coeff( self.ints.mol, thefile, np.dot( self.ints.ao2loc, self.dmetOrbs[impnumber] ) )
-    
+
+    def dump_natural_orbitals( self, filename, impnumber=0, fmt='molden', orbital_indices=None ):
+        # Natural orbitals of the impurity 1-RDM, back-transformed to AOs for molden/cube.
+        if not self.imp_1RDM:
+            raise RuntimeError("dump_natural_orbitals: run oneshot()/selfconsistent() first.")
+        occ, vecs = np.linalg.eigh( self.imp_1RDM[impnumber] )
+        order = np.argsort( occ )[::-1]
+        occ   = occ[order]
+        mo_ao = np.dot( self.ints.ao2loc, np.dot( self.dmetOrbs[impnumber], vecs[:, order] ) )
+        if fmt == 'molden':
+            from pyscf.tools import molden
+            with open( filename, 'w' ) as thefile:
+                molden.header( self.ints.mol, thefile )
+                molden.orbital_coeff( self.ints.mol, thefile, mo_ao, occ=occ )
+        elif fmt == 'cube':
+            from pyscf.tools import cubegen
+            if orbital_indices is None:
+                orbital_indices = [i for i, n in enumerate(occ) if 1e-2 < n < 2.0 - 1e-2]
+            base = filename[:-5] if filename.endswith('.cube') else filename
+            for i in orbital_indices:
+                cubegen.orbital( self.ints.mol, f"{base}_no{i}_occ{occ[i]:.3f}.cube", mo_ao[:, i] )
+        else:
+            raise ValueError(f"dump_natural_orbitals: unknown fmt='{fmt}'. Use 'molden' or 'cube'.")
+        return occ
+
     def onedm_solution_rhf(self):
         return self.helper.construct1RDM_loc( self.doSCF, self.umat )
 
