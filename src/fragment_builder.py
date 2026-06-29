@@ -7,27 +7,33 @@ class FragmentBuilder:
 
     _NEEDS_DM_METHODS = frozenset({'CC', 'MP2', 'EOM-CC', 'CASSCF', 'NEVPT2', 'QD-NEVPT2'})
 
-    def __init__(self, ints, helper, impClust, method, BATH_ORBS, NI_hack, umat, bath_tol):
+    def __init__(self, ints, helper, fragments, method, num_bath_orbs, NI_hack, umat, bath_tol):
         self._ints      = ints
         self._helper    = helper
-        self._impClust  = impClust
+        self._fragments = fragments
         self._method    = method
-        self._BATH_ORBS = BATH_ORBS
+        self._num_bath_orbs = num_bath_orbs
         self._NI_hack   = NI_hack
         self._umat      = umat
         self._bath_tol  = bath_tol
 
+    @staticmethod
+    def _fragment_is_rhf(fragment_mask):
+        # A negative orbital mask flags a fragment to be solved at RHF regardless of the global method.
+        return np.sum(fragment_mask) < 0
+
     def build(self, counter, one_rdm, chempot_imp):
-        flag_rhf     = np.sum(self._impClust[counter]) < 0
-        impurity_orbs = np.abs(self._impClust[counter])
+        fragment_mask = self._fragments[counter]
+        flag_rhf     = self._fragment_is_rhf(fragment_mask)
+        impurity_orbs = np.abs(fragment_mask)
         num_imp_orbs   = int(np.sum(impurity_orbs))
-        bath_request = num_imp_orbs if self._BATH_ORBS is None else self._BATH_ORBS[counter]
+        bath_request = num_imp_orbs if self._num_bath_orbs is None else self._num_bath_orbs[counter]
 
         numBathOrbs, loc_2_dmet, core_1rdm_dmet = self._helper.constructbath(
             one_rdm, impurity_orbs, bath_request, threshold=self._bath_tol)
 
         # Loose core-occupation cutoff when the bath is auto-sized, tight when fixed.
-        core_cutoff = 0.01 if self._BATH_ORBS is None else 0.5
+        core_cutoff = 0.01 if self._num_bath_orbs is None else 0.5
         for idx in range(len(core_1rdm_dmet)):
             occ = core_1rdm_dmet[idx]
             if occ < core_cutoff:
@@ -93,9 +99,9 @@ class FragmentBuilder:
         }
 
     def build_symmetry_bath(self, counter, one_rdm, sym_parent):
-        impurity_orbs = np.abs(self._impClust[counter])
+        impurity_orbs = np.abs(self._fragments[counter])
         num_imp_orbs   = int(np.sum(impurity_orbs))
-        bath_request = num_imp_orbs if self._BATH_ORBS is None else self._BATH_ORBS[counter]
+        bath_request = num_imp_orbs if self._num_bath_orbs is None else self._num_bath_orbs[counter]
         numBathOrbs, loc_2_dmet, _ = self._helper.constructbath(
             one_rdm, impurity_orbs, bath_request, threshold=self._bath_tol)
         norb_in_imp = num_imp_orbs + numBathOrbs

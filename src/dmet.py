@@ -21,7 +21,11 @@ def _fragment_worker(task):
 
 class DMET:
 
-    def __init__( self, the_ints, impurity_clusters, is_translation_invariant, method='ED',
+    ####################
+    # Construction and validation
+    ####################
+
+    def __init__( self, integrals, fragments, is_translation_invariant, method='ED',
                   sc_method='LSTSQ', fit_imp_bath=True, use_constrained_opt=False,
                   do_det=False, do_det_NO=False, CC_E_TYPE='LAMBDA',
                   print_u=True, print_rdm=True, eom_nroots=3,
@@ -38,9 +42,9 @@ class DMET:
                   embed_level_shift=0.0, rohf_stability=False, cas_multiseed=False,
                   cas_spin=None, cas_spin_shift=0.2 ):
 
-        self.ints       = the_ints
+        self.ints       = integrals
         self.norb       = self.ints.Norbs
-        self.impClust   = impurity_clusters
+        self.fragments  = fragments
         self.umat       = np.zeros([ self.norb, self.norb ], dtype=float)
         self.relaxation = 0.0
 
@@ -79,7 +83,7 @@ class DMET:
         self.nevpt2_kwargs     = nevpt2_kwargs or {}
         self.nevpt2_results    = []  # populated by doexact() when method='NEVPT2'
         self.dft_results       = []  # populated by doexact() when method is DFT
-        self.BATH_ORBS  = None
+        self.num_bath_orbs  = None
         self.fit_imp_bath = fit_imp_bath
         self.do_det      = do_det
         self.do_det_NO   = do_det_NO
@@ -110,7 +114,7 @@ class DMET:
                            os.environ.get('OMP_NUM_THREADS', '1')))
             self.max_workers = max(1, int(_env_threads))
 
-        maxiter_frags = 1 if is_translation_invariant else len(impurity_clusters)
+        maxiter_frags = 1 if is_translation_invariant else len(fragments)
         self.frag_caches = [None] * maxiter_frags
 
         self.minFunc    = None
@@ -126,7 +130,7 @@ class DMET:
                 raise ValueError("use_constrained_opt=True requires sc_method in {'BFGS', 'NONE'}.")
 
         if self.method == 'CC' and self.CC_E_TYPE == 'CASCI':
-            if len(self.impClust) != 1:
+            if len(self.fragments) != 1:
                 raise ValueError(
                     "method='CC' with CC_E_TYPE='CASCI' requires a single impurity cluster.")
         if self.method == 'CC' and self.CC_E_TYPE == 'EOM-CCSD':
@@ -167,6 +171,11 @@ class DMET:
         # Auto-detect open-shell reference from localintegrals
         if hasattr(self.ints, 'loc_spin_oei'):
             self.oei_s = self.ints.loc_spin_oei()   # None for RHF, ndarray for ROHF/UHF
+
+    @property
+    def impClust( self ):
+        # Backward-compatible alias for the renamed self.fragments.
+        return self.fragments
 
     def _warn_inert_params( self ):
         '''Warn (not error) when a parameter is set but inert for the chosen method.'''
@@ -237,10 +246,14 @@ class DMET:
                 raise ValueError(
                     f"DMET: unknown eom_type='{self.eom_type}'. Valid: {sorted(_EOM_SET)}")
 
+    ####################
+    # Cluster and mask setup
+    ####################
+
     def testclusters( self ):
     
         quicktest = np.zeros([ self.norb ], dtype=int)
-        for item in self.impClust:
+        for item in self.fragments:
             quicktest += np.abs(item)
         assert( np.all( quicktest >= 0 ) )
         assert( np.all( quicktest <= 1 ) )
@@ -250,93 +263,97 @@ class DMET:
     def _auto_detect_symmetry( self ):
         symmetry_map = {}
         seen = {}  # fingerprint -> first fragment index
-        for idx, cluster in enumerate(self.impClust):
+        for idx, cluster in enumerate(self.fragments):
             fingerprint = int(np.sum(np.abs(cluster)))
             if fingerprint in seen:
                 symmetry_map[idx] = seen[fingerprint]
             else:
                 seen[fingerprint] = idx
         if symmetry_map:
-            n_unique = len(self.impClust) - len(symmetry_map)
+            n_unique = len(self.fragments) - len(symmetry_map)
             print(f"Prismdmet :: symmetry : Auto-detected {n_unique} unique fragment(s) "
-                  f"out of {len(self.impClust)} total. "
+                  f"out of {len(self.fragments)} total. "
                   f"Skipping {len(symmetry_map)} equivalent fragment solve(s).")
         return symmetry_map
             
     def make_imp_size( self ):
-    
-        thearray = []
-        maxiter = len( self.impClust )
+
+        imp_sizes = []
+        maxiter = len( self.fragments )
         if self.TransInv:
             maxiter = 1
         for counter in range( maxiter ):
-            impurity_orbs = np.abs(self.impClust[ counter ])
+            impurity_orbs = np.abs(self.fragments[ counter ])
             num_imp_orbs = np.sum( impurity_orbs )
-            thearray.append( num_imp_orbs )
-        thearray = np.array( thearray )
-        return thearray
+            imp_sizes.append( num_imp_orbs )
+        imp_sizes = np.array( imp_sizes )
+        return imp_sizes
 
     def makelist_H1( self ):
-    
-        theH1 = []
+
+        h1_terms = []
         if self.do_det: # Do density embedding theory
             if self.TransInv: # Translational invariance assumed
                 localsize = self.imp_size[ 0 ]
                 for row in range( localsize ):
-                    H1 = np.zeros( [ self.norb, self.norb ], dtype=int )
+                    h1 = np.zeros( [ self.norb, self.norb ], dtype=int )
                     for jumper in range( self.norb // localsize ):
                         jumpsquare = localsize * jumper
-                        H1[ jumpsquare + row, jumpsquare + row ] = 1
-                    theH1.append( H1 )
+                        h1[ jumpsquare + row, jumpsquare + row ] = 1
+                    h1_terms.append( h1 )
             else: # NO translational invariance assumed
                 jumpsquare = 0
                 for localsize in self.imp_size:
                     for row in range( localsize ):
-                        H1 = np.zeros( [ self.norb, self.norb ], dtype=int )
-                        H1[ jumpsquare + row, jumpsquare + row ] = 1
-                        theH1.append( H1 )
+                        h1 = np.zeros( [ self.norb, self.norb ], dtype=int )
+                        h1[ jumpsquare + row, jumpsquare + row ] = 1
+                        h1_terms.append( h1 )
                     jumpsquare += localsize
         else: # Do density MATRIX embedding theory
             if self.TransInv: # Translational invariance assumed
                 localsize = self.imp_size[ 0 ]
                 for row in range( localsize ):
                     for col in range( row, localsize ):
-                        H1 = np.zeros( [ self.norb, self.norb ], dtype=int )
+                        h1 = np.zeros( [ self.norb, self.norb ], dtype=int )
                         for jumper in range( self.norb // localsize ):
                             jumpsquare = localsize * jumper
-                            H1[ jumpsquare + row, jumpsquare + col ] = 1
-                            H1[ jumpsquare + col, jumpsquare + row ] = 1
-                        theH1.append( H1 )
+                            h1[ jumpsquare + row, jumpsquare + col ] = 1
+                            h1[ jumpsquare + col, jumpsquare + row ] = 1
+                        h1_terms.append( h1 )
             else: # NO translational invariance assumed
                 jumpsquare = 0
                 for localsize in self.imp_size:
                     for row in range( localsize ):
                         for col in range( row, localsize ):
-                            H1 = np.zeros( [ self.norb, self.norb ], dtype=int )
-                            H1[ jumpsquare + row, jumpsquare + col ] = 1
-                            H1[ jumpsquare + col, jumpsquare + row ] = 1
-                            theH1.append( H1 )
+                            h1 = np.zeros( [ self.norb, self.norb ], dtype=int )
+                            h1[ jumpsquare + row, jumpsquare + col ] = 1
+                            h1[ jumpsquare + col, jumpsquare + row ] = 1
+                            h1_terms.append( h1 )
                     jumpsquare += localsize
-        return theH1
-        
+        return h1_terms
+
     def make_mask( self ):
-    
-        themask = np.zeros( [ self.norb, self.norb ], dtype=bool )
+
+        mask = np.zeros( [ self.norb, self.norb ], dtype=bool )
         if self.do_det: # Do density embedding theory
             jump = 0
             for localsize in self.imp_size: # self.imp_size has length 1 if self.TransInv
                 for row in range( localsize ):
-                    themask[ jump + row, jump + row ] = True
+                    mask[ jump + row, jump + row ] = True
                 jump += localsize
         else: # Do density MATRIX embedding theory
             jump = 0
             for localsize in self.imp_size: # self.imp_size has length 1 if self.TransInv
                 for row in range( localsize ):
                     for col in range( row, localsize ):
-                        themask[ jump + row, jump + col ] = True
+                        mask[ jump + row, jump + col ] = True
                 jump += localsize
-        return themask
-        
+        return mask
+
+    ####################
+    # DMET driver
+    ####################
+
     def doexact( self, chempot_imp=0.0 ):
     
         one_rdm = self.helper.construct1RDM_loc( self.doSCF, self.umat )
@@ -355,25 +372,25 @@ class DMET:
             self.NOvecs = []
             self.NOdiag = []
 
-        maxiter = len( self.impClust )
+        maxiter = len( self.fragments )
         if self.TransInv:
             maxiter = 1
             
-        remainingOrbs = np.ones( [ len( self.impClust[ 0 ] ) ], dtype=float )
+        remainingOrbs = np.ones( [ len( self.fragments[ 0 ] ) ], dtype=float )
 
         _frag_tasks   = []
         _frag_meta    = []
         _sym_counters = set()
 
         _builder = FragmentBuilder(
-            ints     = self.ints,
-            helper   = self.helper,
-            impClust = self.impClust,
-            method   = self.method,
-            BATH_ORBS= self.BATH_ORBS,
-            NI_hack  = self.NI_hack,
-            umat     = self.umat,
-            bath_tol = self.bath_tol,
+            ints      = self.ints,
+            helper    = self.helper,
+            fragments = self.fragments,
+            method    = self.method,
+            num_bath_orbs = self.num_bath_orbs,
+            NI_hack   = self.NI_hack,
+            umat      = self.umat,
+            bath_tol  = self.bath_tol,
         )
 
         for counter in range( maxiter ):
@@ -560,8 +577,8 @@ class DMET:
         for counter in range( maxiter ):
             Nelectrons += np.trace( self.imp_1RDM[counter][ :self.imp_size[counter], :self.imp_size[counter] ] )
         if self.TransInv:
-            Nelectrons = Nelectrons * len( self.impClust )
-            self.energy = self.energy * len( self.impClust )
+            Nelectrons = Nelectrons * len( self.fragments )
+            self.energy = self.energy * len( self.fragments )
             remainingOrbs[:] = 0
             
         # Augment energy with remaining HF contribution for incomplete impurity tilings
@@ -678,6 +695,10 @@ class DMET:
             }
         return result
 
+    ####################
+    # u-matrix fitting: cost functions and gradients
+    ####################
+
     def constructNOrotation( self ):
     
         myNOrotation = np.zeros( [ self.norb, self.norb ], dtype=float )
@@ -733,17 +754,17 @@ class DMET:
         newumatsquare_loc = self.flat2square( newumatflat )
         one_rdm_loc = self.helper.construct1RDM_loc( self.doSCF, newumatsquare_loc )
         
-        thesize = 0
+        n_cluster_orbs = 0
         for count in range(len(self.imp_size)):
             if self.do_det: # Do density embedding theory: fit only impurity
-                thesize += self.imp_size[ count ]
+                n_cluster_orbs += self.imp_size[ count ]
                 assert not self.fit_imp_bath
             else: # Do density MATRIX embedding theory
                 if self.fit_imp_bath:
-                    thesize += self.dmetOrbs[count].shape[1] * self.dmetOrbs[count].shape[1]
+                    n_cluster_orbs += self.dmetOrbs[count].shape[1] * self.dmetOrbs[count].shape[1]
                 else:
-                    thesize += self.imp_size[ count ] * self.imp_size[ count ]
-        errors = np.zeros( [ thesize ], dtype=float )
+                    n_cluster_orbs += self.imp_size[ count ] * self.imp_size[ count ]
+        errors = np.zeros( [ n_cluster_orbs ], dtype=float )
         
         jump = 0
         for count in range( len( self.imp_size ) ): # self.imp_size has length 1 if self.TransInv
@@ -751,21 +772,21 @@ class DMET:
                 mf_1RDM = np.dot( np.dot( self.dmetOrbs[ count ].T, one_rdm_loc ), self.dmetOrbs[ count ] )
                 ed_1RDM = self.imp_1RDM[count]
             else:
-                mf_1RDM = (one_rdm_loc[:,np.flatnonzero(self.impClust[count])])[np.flatnonzero(self.impClust[count]),:]
+                mf_1RDM = (one_rdm_loc[:,np.flatnonzero(self.fragments[count])])[np.flatnonzero(self.fragments[count]),:]
                 ed_1RDM = self.imp_1RDM[count][:self.imp_size[count],:self.imp_size[count]]
             if self.do_det: # Do density embedding theory
                 if self.do_det_NO: # Work in the NO basis
-                    theerror = np.diag( np.dot( np.dot( self.NOvecs[ count ].T, mf_1RDM ), self.NOvecs[ count ] ) ) - self.NOdiag[ count ]
+                    rdm_mismatch = np.diag( np.dot( np.dot( self.NOvecs[ count ].T, mf_1RDM ), self.NOvecs[ count ] ) ) - self.NOdiag[ count ]
                 else: # Work in the lattice basis
-                    theerror = np.diag( mf_1RDM - ed_1RDM )
-                errors[ jump : jump + len( theerror ) ] = theerror
-                jump += len( theerror )
+                    rdm_mismatch = np.diag( mf_1RDM - ed_1RDM )
+                errors[ jump : jump + len( rdm_mismatch ) ] = rdm_mismatch
+                jump += len( rdm_mismatch )
             else: # Do density MATRIX embedding theory
-                theerror = mf_1RDM - ed_1RDM
-                squaresize = theerror.shape[0] * theerror.shape[1]
-                errors[ jump : jump + squaresize ] = np.reshape( theerror, squaresize, order='F' )
+                rdm_mismatch = mf_1RDM - ed_1RDM
+                squaresize = rdm_mismatch.shape[0] * rdm_mismatch.shape[1]
+                errors[ jump : jump + squaresize ] = np.reshape( rdm_mismatch, squaresize, order='F' )
                 jump += squaresize
-        assert ( jump == thesize )
+        assert ( jump == n_cluster_orbs )
         
         stop_func = time.time()
         self.time_func += ( stop_func - start_func )
@@ -779,27 +800,27 @@ class DMET:
         newumatsquare_loc = self.flat2square( newumatflat )
         one_rdm_loc = self.helper.construct1RDM_loc( self.doSCF, newumatsquare_loc )
 
-        thesize = 0
+        n_cluster_orbs = 0
         jump = 0
         for count in range(len(self.imp_size)):
-            # thesize += self.imp_size[ count ] * self.imp_size[ count ]
+            # n_cluster_orbs += self.imp_size[ count ] * self.imp_size[ count ]
             mask_t = self.mask[ np.ix_(list(range(jump,jump+self.imp_size[count])),list(range(jump,jump+self.imp_size[count]))) ]
-            thesize += np.count_nonzero( mask_t )
+            n_cluster_orbs += np.count_nonzero( mask_t )
             jump += self.imp_size[count]
-        errors = np.zeros( [ thesize ], dtype=float )
+        errors = np.zeros( [ n_cluster_orbs ], dtype=float )
         
         jump = 0
         jumpc = 0
         for count in range( len( self.imp_size ) ): # self.imp_size has length 1 if self.TransInv
-            mf_1RDM = (one_rdm_loc[:,np.flatnonzero(self.impClust[count])])[np.flatnonzero(self.impClust[count]),:]
+            mf_1RDM = (one_rdm_loc[:,np.flatnonzero(self.fragments[count])])[np.flatnonzero(self.fragments[count]),:]
             ed_1RDM = self.imp_1RDM[count][:self.imp_size[count],:self.imp_size[count]]
-            theerror = mf_1RDM - ed_1RDM
+            rdm_mismatch = mf_1RDM - ed_1RDM
             mask_t = self.mask[ np.ix_(list(range(jumpc,jumpc+self.imp_size[count])),list(range(jumpc,jumpc+self.imp_size[count]))) ]
             squaresize = np.count_nonzero( mask_t )
-            errors[ jump : jump + squaresize ] = np.reshape( theerror[mask_t], squaresize, order='F' )
+            errors[ jump : jump + squaresize ] = np.reshape( rdm_mismatch[mask_t], squaresize, order='F' )
             jump  += squaresize
             jumpc += self.imp_size[count]
-        assert ( jump == thesize )
+        assert ( jump == n_cluster_orbs )
         
         stop_func = time.time()
         self.time_func += ( stop_func - start_func )
@@ -813,20 +834,20 @@ class DMET:
         newumatsquare_loc = self.flat2square( newumatflat )
         RDMderivs_rot = self.helper.construct1RDM_response( self.doSCF, newumatsquare_loc, self.NOrotation )
         
-        thesize = 0
+        n_cluster_orbs = 0
         for count in range(len(self.imp_size)):
             if self.do_det: # Do density embedding theory: fit only impurity
-                thesize += self.imp_size[ count ]
+                n_cluster_orbs += self.imp_size[ count ]
                 assert not self.fit_imp_bath
             else: # Do density MATRIX embedding theory
                 if self.fit_imp_bath:
-                    thesize += self.dmetOrbs[count].shape[1] * self.dmetOrbs[count].shape[1]
+                    n_cluster_orbs += self.dmetOrbs[count].shape[1] * self.dmetOrbs[count].shape[1]
                 else:
-                    thesize += self.imp_size[ count ] * self.imp_size[ count ]
+                    n_cluster_orbs += self.imp_size[ count ] * self.imp_size[ count ]
         
         gradient = []
         for countgr in range( len( newumatflat ) ):
-            error_deriv = np.zeros( [ thesize ], dtype=float )
+            error_deriv = np.zeros( [ n_cluster_orbs ], dtype=float )
             jump = 0
             jumpsquare = 0
             for count in range( len( self.imp_size ) ): # self.imp_size has length 1 if self.TransInv
@@ -838,7 +859,7 @@ class DMET:
                                                                    jumpsquare : jumpsquare + self.imp_size[ count ] ]
                         jumpsquare += self.imp_size[ count ]
                     else:
-                        local_derivative = ((RDMderivs_rot[ countgr, :, : ])[:,np.flatnonzero(self.impClust[count])])[np.flatnonzero(self.impClust[count]),:]
+                        local_derivative = ((RDMderivs_rot[ countgr, :, : ])[:,np.flatnonzero(self.fragments[count])])[np.flatnonzero(self.fragments[count]),:]
                 if self.do_det: # Do density embedding theory
                     local_derivative = np.diag( local_derivative )
                     error_deriv[ jump : jump + len( local_derivative ) ] = local_derivative
@@ -847,7 +868,7 @@ class DMET:
                     squaresize = local_derivative.shape[0] * local_derivative.shape[1]
                     error_deriv[ jump : jump + squaresize ] = np.reshape( local_derivative, squaresize, order='F' )
                     jump += squaresize
-            assert ( jump == thesize )
+            assert ( jump == n_cluster_orbs )
             gradient.append( error_deriv )
         gradient = np.array( gradient ).T
         
@@ -946,6 +967,10 @@ class DMET:
         print(f"      (mu_a, mu_b, N_a, N_b) = ({mu_a:.6f}, {mu_b:.6f}, "
               f"{Nelec_a:.4f}, {Nelec_b:.4f})")
         return np.array([Nelec_a - target_a, Nelec_b - target_b])
+
+    ####################
+    # Self-consistency, one-shot, and output
+    ####################
 
     def selfconsistent( self ):
 
