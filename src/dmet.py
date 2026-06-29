@@ -423,10 +423,7 @@ class DMET:
             if _is_parallel_eligible:
                 _frag_tasks.append(task)
             else:
-                _frag_meta[-1]['sequential_result'] = self._run_fragment_sequential(
-                    counter, _method_key, dmet_oei, dmet_fock, dmet_tei,
-                    norb_in_imp, nelec_in_imp, num_imp_orbs, chempot_imp,
-                    dm_guess_rhf, loc_2_dmet, mo_guess=_mo_guess, ci_guess=_ci_guess, oei_s=_dmet_oei_s)
+                _frag_meta[-1]['sequential_result'] = self._run_fragment_sequential(task)
 
         _parallel_results = {}   # counter -> result dict
         if _frag_tasks:
@@ -619,25 +616,14 @@ class DMET:
             **_dft_mol_info,
         }
 
-    def _run_fragment_sequential(self, counter, method_key,
-                                   dmet_oei, dmet_fock, dmet_tei,
-                                   norb_in_imp, nelec_in_imp, num_imp_orbs,
-                                   chempot_imp, dm_guess_rhf, loc_2_dmet,
-                                   mo_guess=None, ci_guess=None, oei_s=None):
-        task = self._build_task(
-            counter, method_key, dmet_oei, dmet_fock, dmet_tei,
-            norb_in_imp, nelec_in_imp, num_imp_orbs, chempot_imp,
-            dm_guess_rhf, loc_2_dmet,
-            mo_guess=mo_guess, ci_guess=ci_guess, oei_s=oei_s)
-
+    def _run_fragment_sequential(self, task):
         result = SolverDispatcher.execute(task)
         if 'cas_res' in result:
             cas_res = result['cas_res']
-            self.frag_caches[counter] = {
+            self.frag_caches[task['counter']] = {
                 'mo_coeff': cas_res['mo_coeff'],
                 'ci'      : cas_res['ci'],
             }
-
         return result
 
     def constructNOrotation( self ):
