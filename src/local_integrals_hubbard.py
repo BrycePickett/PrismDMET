@@ -36,7 +36,6 @@ class LocalIntegralsHubbard:
         assert( Nelectrons % 2 == 0 )
         numPairs = Nelectrons // 2
         assert( eigvals[ numPairs ] - eigvals[ numPairs-1 ] > 1e-8 )
-        #print "SP gap localint =", eigvals[ numPairs ] - eigvals[ numPairs-1 ]
         
         self.ao2loc = np.eye( self.Norbs )
         self.TI_OK  = True
