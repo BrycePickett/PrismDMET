@@ -35,6 +35,7 @@ def solve(const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
           cas_select='energy', ao_labels=None, ao2eo=None, ao_mol_dumps=None,
           avas_threshold=0.2, spade_gap_tol=0.3, spade_n_fallback=16,
           embed_level_shift=0.0, rohf_stability=False, cas_multiseed=False,
+          cas_spin=None, cas_spin_shift=0.2,
           printoutput=True):
     '''Run SA-CASSCF + QD-NEVPT2 via Prism on the DMET embedding cluster. Returns (e_tot, e_corr, None, mc, nevpt_obj).'''
     _check_prism()
@@ -110,7 +111,8 @@ def solve(const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
             mf, cas_select, ncas, nelecas, nimp, norb,
             ao2eo=ao2eo, ao_mol_dumps=ao_mol_dumps, ao_labels=ao_labels,
             sa_nstates=sa_nstates, avas_threshold=avas_threshold,
-            spade_gap_tol=spade_gap_tol, spade_n_fallback=spade_n_fallback)
+            spade_gap_tol=spade_gap_tol, spade_n_fallback=spade_n_fallback,
+            cas_spin=cas_spin, cas_spin_shift=cas_spin_shift)
 
         mc = mcscf.CASSCF(mf, ncas, nelecas)
         # Must swap FCI solver before state_average_; direct_uhf.FCI required for spin-asymmetric [h1e_a, h1e_b].
@@ -122,6 +124,9 @@ def solve(const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
         mc.verbose = 5 if printoutput else 0
         for key, val in casscf_kwargs.items():
             setattr(mc, key, val)
+        if cas_spin is not None and not (oei_s is not None and not np.all(np.abs(oei_s) < 1e-8)):
+            from .qcsolver_utils import fix_cas_spin
+            fix_cas_spin(mc.fcisolver, cas_spin, cas_spin_shift)
 
         if oei_s is not None:
             from .qcsolver_utils import fix_casscf_for_nonsinglet_env
@@ -217,6 +222,8 @@ def execute(task):
         embed_level_shift=task.get('embed_level_shift', 0.0),
         rohf_stability=task.get('rohf_stability', False),
         cas_multiseed=task.get('cas_multiseed', False),
+        cas_spin=task.get('cas_spin'),
+        cas_spin_shift=task.get('cas_spin_shift', 0.2),
     )
 
     rdm1 = mc.make_rdm1()

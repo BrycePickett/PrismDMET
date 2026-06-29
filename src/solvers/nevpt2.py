@@ -16,6 +16,7 @@ def solve(const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
           cas_select='energy', ao_labels=None, ao2eo=None, ao_mol_dumps=None,
           avas_threshold=0.2, spade_gap_tol=0.3, spade_n_fallback=16,
           embed_level_shift=0.0, rohf_stability=False, cas_multiseed=False,
+          cas_spin=None, cas_spin_shift=0.2,
           printoutput=True):
     '''Run CASSCF + NEVPT2 on the DMET embedding cluster. Returns (e_tot, e_corr, mc, nevpt_objs).'''
     casscf_kwargs = casscf_kwargs or {}
@@ -76,7 +77,8 @@ def solve(const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
                     mf, cas_select, ncas, nelecas, nimp, norb,
                     ao2eo=ao2eo, ao_mol_dumps=ao_mol_dumps, ao_labels=ao_labels,
                     sa_nstates=1, avas_threshold=avas_threshold,
-                    spade_gap_tol=spade_gap_tol, spade_n_fallback=spade_n_fallback)
+                    spade_gap_tol=spade_gap_tol, spade_n_fallback=spade_n_fallback,
+                    cas_spin=cas_spin, cas_spin_shift=cas_spin_shift)
 
             mc = mcscf.CASSCF(mf, ncas, nelecas)
             mc.verbose = 5 if printoutput else 0
@@ -87,6 +89,9 @@ def solve(const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
                 _uhf_fci = pyscf_fci.direct_uhf.FCI()
                 _uhf_fci.verbose = mc.fcisolver.verbose
                 mc.fcisolver = _uhf_fci
+            elif cas_spin is not None:
+                from .qcsolver_utils import fix_cas_spin
+                fix_cas_spin(mc.fcisolver, cas_spin, cas_spin_shift)
             if oei_s is not None:
                 from .qcsolver_utils import fix_casscf_for_nonsinglet_env
                 mc = fix_casscf_for_nonsinglet_env(mc, oei_s)
@@ -140,7 +145,8 @@ def solve(const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
                     mf, cas_select, ncas, nelecas, nimp, norb,
                     ao2eo=ao2eo, ao_mol_dumps=ao_mol_dumps, ao_labels=ao_labels,
                     sa_nstates=nstates, avas_threshold=avas_threshold,
-                    spade_gap_tol=spade_gap_tol, spade_n_fallback=spade_n_fallback)
+                    spade_gap_tol=spade_gap_tol, spade_n_fallback=spade_n_fallback,
+                    cas_spin=cas_spin, cas_spin_shift=cas_spin_shift)
 
             mc_sa = mcscf.CASSCF(mf, ncas, nelecas)
             # Swap base FCI solver BEFORE state_average_ so the SA wrapper inherits it.
@@ -153,6 +159,9 @@ def solve(const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
             mc_sa.verbose = 5 if printoutput else 0
             for key, val in casscf_kwargs.items():
                 setattr(mc_sa, key, val)
+            if cas_spin is not None and not (oei_s is not None and not np.all(np.abs(oei_s) < 1e-8)):
+                from .qcsolver_utils import fix_cas_spin
+                fix_cas_spin(mc_sa.fcisolver, cas_spin, cas_spin_shift)
             if oei_s is not None:
                 from .qcsolver_utils import fix_casscf_for_nonsinglet_env
                 mc_sa = fix_casscf_for_nonsinglet_env(mc_sa, oei_s)
@@ -181,6 +190,10 @@ def solve(const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
             mc = mcscf.CASCI(mf, ncas, nelecas)
             mc.verbose = 4 if printoutput else 0
             mc.fcisolver.nroots = nstates
+            if cas_spin is not None and not (oei_s is not None and not np.all(np.abs(oei_s) < 1e-8)):
+                from .qcsolver_utils import fix_cas_spin
+                fix_cas_spin(mc.fcisolver, cas_spin, cas_spin_shift)
+                mc.fcisolver.nroots = nstates
 
             if oei_s is not None:
                 from .qcsolver_utils import fix_casscf_for_nonsinglet_env
@@ -255,6 +268,8 @@ def execute(task):
         embed_level_shift=task.get('embed_level_shift', 0.0),
         rohf_stability=task.get('rohf_stability', False),
         cas_multiseed=task.get('cas_multiseed', False),
+        cas_spin=task.get('cas_spin'),
+        cas_spin_shift=task.get('cas_spin_shift', 0.2),
     )
 
     # 1-RDM (cluster orbital basis) for the dmet driver: prefer the NEVPT2

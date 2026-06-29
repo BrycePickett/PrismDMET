@@ -16,6 +16,7 @@ def solve(const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
           cas_select='energy', ao_labels=None, ao2eo=None, ao_mol_dumps=None,
           avas_threshold=0.2, spade_gap_tol=0.3, spade_n_fallback=16,
           embed_level_shift=0.0, rohf_stability=False, cas_multiseed=False,
+          cas_spin=None, cas_spin_shift=0.2,
           **casscf_kwargs):
     '''Solve a DMET impurity problem at the CASSCF level. Returns (impurity_energy, rdm1, cas_results).'''
     if ncas is None:
@@ -115,7 +116,8 @@ def solve(const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
                 mf, cas_select, ncas, nelecas, nimp, norb,
                 ao2eo=ao2eo, ao_mol_dumps=ao_mol_dumps, ao_labels=ao_labels,
                 sa_nstates=sa_nstates, avas_threshold=avas_threshold,
-                spade_gap_tol=spade_gap_tol, spade_n_fallback=spade_n_fallback)
+                spade_gap_tol=spade_gap_tol, spade_n_fallback=spade_n_fallback,
+                cas_spin=cas_spin, cas_spin_shift=cas_spin_shift)
 
         mc = mcscf.CASSCF(mf, ncas, nelecas)
         mc.verbose = 5 if printoutput else 0
@@ -132,6 +134,9 @@ def solve(const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
             _uhf_fci = pyscf_fci.direct_uhf.FCI()
             _uhf_fci.verbose = mc.fcisolver.verbose
             mc.fcisolver = _uhf_fci
+        elif cas_spin is not None:
+            from .qcsolver_utils import fix_cas_spin
+            fix_cas_spin(mc.fcisolver, cas_spin, cas_spin_shift)
 
         if sa_nstates > 1:
             mc = mcscf.state_average_(mc, weights=sa_weights.tolist())
@@ -278,5 +283,7 @@ def execute(task):
         embed_level_shift=task.get('embed_level_shift', 0.0),
         rohf_stability=task.get('rohf_stability', False),
         cas_multiseed=task.get('cas_multiseed', False),
+        cas_spin=task.get('cas_spin'),
+        cas_spin_shift=task.get('cas_spin_shift', 0.2),
         **task.get('casscf_kwargs', {}),
     )

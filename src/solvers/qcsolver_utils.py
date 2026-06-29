@@ -109,12 +109,13 @@ def plan_cas_active_space(mf, cas_select, ncas, nelecas, nimp, norb,
                           ao2eo=None, ao_mol_dumps=None, ao_labels=None,
                           close_degeneracy=True, natorb_occ_thresh=0.02,
                           natorb_max_superset=None, sa_nstates=1, avas_threshold=0.2,
-                          spade_gap_tol=0.3, spade_n_fallback=16):
+                          spade_gap_tol=0.3, spade_n_fallback=16, cas_spin=None,
+                          cas_spin_shift=0.2):
     '''Decide the CAS active space; returns (selected, ncas, nelecas, mo_coeff). See cas_determinism_fix_plan.md.'''
     if cas_select == 'natorb':
         mo_coeff, ncas, nelecas = natorb_active_space(
             mf, ncas, occ_thresh=natorb_occ_thresh, max_superset=natorb_max_superset,
-            sa_nstates=sa_nstates)
+            sa_nstates=sa_nstates, cas_spin=cas_spin, cas_spin_shift=cas_spin_shift)
         return None, ncas, nelecas, mo_coeff
 
     if cas_select == 'avas':
@@ -186,8 +187,17 @@ def canonicalize_degenerate_active_nos(cas_no, act_idx, no_occ, F_emb, deg_tol=1
     cas_no[:, act_idx] = act_cols
 
 
+def fix_cas_spin(fcisolver, cas_spin, shift=0.2):
+    '''Penalize CAS states outside spin 2S=cas_spin via pyscf fix_spin_ (ss=S(S+1)).'''
+    from pyscf.fci.addons import fix_spin_
+    s = cas_spin / 2.0
+    fcisolver.spin = cas_spin
+    fix_spin_(fcisolver, shift=shift, ss=s * (s + 1))
+    return fcisolver
+
+
 def natorb_active_space(mf, n_superset, occ_thresh=0.02, deg_tol=1e-3, max_superset=None,
-                        sa_nstates=1):
+                        sa_nstates=1, cas_spin=None, cas_spin_shift=0.2):
     '''Active space from CASCI natural-orbital occupations. See natorb_cas_select.md.'''
     from pyscf import mcscf
     from math import comb
@@ -218,6 +228,16 @@ def natorb_active_space(mf, n_superset, occ_thresh=0.02, deg_tol=1e-3, max_super
     na = int(np.sum(np.rint(win) >= 1))   # alpha occupied in window
     nb = int(np.sum(np.rint(win) >= 2))   # beta (doubly) occupied in window
 
+    # Optionally restrict the superset CASCI to a chosen spin (2S = na - nb):
+    # re-split the electrons and constrain S^2 via fix_spin_ (pyscf-style).
+    if cas_spin is not None:
+        ne_win = na + nb
+        if cas_spin < 0 or cas_spin > ne_win or (ne_win - cas_spin) % 2 != 0:
+            raise ValueError(
+                f"natorb_active_space: cas_spin={cas_spin} (2S) is incompatible with "
+                f"{ne_win} superset electrons; need 0 <= cas_spin <= {ne_win} with matching parity.")
+        na, nb = (ne_win + cas_spin) // 2, (ne_win - cas_spin) // 2
+
     # Report superset size and FCI cost before the (possibly multi-hour) CASCI.
     fci_dim = comb(ncas_s, na) * comb(ncas_s, nb)
     print(f"qcsolver_utils: natorb superset window [{lo}, {hi}) = {ncas_s} orbitals, "
@@ -227,6 +247,8 @@ def natorb_active_space(mf, n_superset, occ_thresh=0.02, deg_tol=1e-3, max_super
     mc = mcscf.CASCI(mf, ncas_s, (na, nb))
     mc.fcisolver.conv_tol = 1e-10
     mc.verbose = 0
+    if cas_spin is not None:
+        fix_cas_spin(mc.fcisolver, cas_spin, cas_spin_shift)
     if sa_nstates > 1:
         mc.fcisolver.nroots = sa_nstates
     mc.kernel()
