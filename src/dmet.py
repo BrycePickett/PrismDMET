@@ -166,6 +166,29 @@ class DMET:
             self.oei_s = self.ints.loc_spin_oei()   # None for RHF, ndarray for ROHF/UHF
 
         self._validate_config()
+        self._warn_inert_params()
+
+    def _warn_inert_params( self ):
+        '''Warn (not error) when a parameter is set but inert for the chosen method.'''
+        import warnings
+        _cas_methods = {'CASSCF', 'NEVPT2', 'QD-NEVPT2'}
+        if self.ao_labels is not None and self.cas_select not in ('ao_character', 'avas'):
+            warnings.warn(
+                f"ao_labels is set but cas_select='{self.cas_select}' ignores it "
+                "(only 'ao_character'/'avas' use ao_labels).", UserWarning)
+        if self.cas_multiseed and self.method not in _cas_methods:
+            warnings.warn(
+                f"cas_multiseed=True is inert for method='{self.method}' "
+                f"(only {sorted(_cas_methods)} use it).", UserWarning)
+        if (self.mm_coords is not None or self.mm_charges is not None) \
+                and self.method not in ('RKS', 'UKS', 'ROKS'):
+            warnings.warn(
+                f"mm_coords/mm_charges are set but method='{self.method}' is not a "
+                "QM/MM-capable DFT method; they will be ignored.", UserWarning)
+        if self.method in _cas_methods and self.cas_select == 'energy':
+            warnings.warn(
+                "cas_select='energy' (the legacy default) selects the active space by "
+                "orbital energy; for production use cas_select='natorb'.", UserWarning)
 
     def _validate_config( self ):
         '''Fail fast at construction on user-reachable misconfiguration.'''
