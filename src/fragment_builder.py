@@ -26,6 +26,7 @@ class FragmentBuilder:
         numBathOrbs, loc_2_dmet, core_1rdm_dmet = self._helper.constructbath(
             one_rdm, impurity_orbs, bath_request, threshold=self._bath_tol)
 
+        # Loose core-occupation cutoff when the bath is auto-sized, tight when fixed.
         core_cutoff = 0.01 if self._BATH_ORBS is None else 0.5
         for idx in range(len(core_1rdm_dmet)):
             occ = core_1rdm_dmet[idx]

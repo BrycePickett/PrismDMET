@@ -76,7 +76,8 @@ class LocalIntegrals:
                     )
                 self.ao2loc = the_mf.mo_coeff[:, self.active == 1]
             if self.Norbs == self.mol.nao_nr():
-                nao.AOSHELL[4] = ['1s0p0d0f', '2s1p0d0f']  # redefine Be valence shell
+                # Hardcoded Be (Z=4) valence-shell override; Phase 7 cleanup target.
+                nao.AOSHELL[4] = ['1s0p0d0f', '2s1p0d0f']
                 self.ao2loc = orth.orth_ao(self.mol, 'meta_lowdin')
                 if ao_rotation is not None:
                     self.ao2loc = np.dot(self.ao2loc, ao_rotation.T)
