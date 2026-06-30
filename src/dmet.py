@@ -41,7 +41,7 @@ class DMET:
                   avas_threshold=0.2, spade_gap_tol=0.3, spade_n_fallback=16,
                   embed_level_shift=0.0, rohf_stability=False, cas_multiseed=False,
                   cas_spin=None, cas_spin_shift=0.2, allow_solver_fallback=True,
-                  **deprecated_kwargs ):
+                  fragment_methods=None, **deprecated_kwargs ):
 
         import warnings
         # Deprecated keyword aliases (accepted for one release; map old -> new, warn).
@@ -113,6 +113,22 @@ class DMET:
         self.NOrotation = None
         self.altcostfunc = use_constrained_optimization
         self.allow_solver_fallback = allow_solver_fallback
+        self.fragment_methods = dict(fragment_methods) if fragment_methods else {}
+        for _idx, _m in self.fragment_methods.items():
+            if not (0 <= _idx < len(fragments)):
+                raise ValueError(
+                    f"fragment_methods: fragment index {_idx} out of range "
+                    f"(have {len(fragments)} fragments).")
+            if _m != 'RHF':
+                raise ValueError(
+                    f"fragment_methods: only 'RHF' is supported per fragment, got '{_m}' "
+                    f"for fragment {_idx}.")
+        for _i in range(len(fragments)):
+            if np.sum(np.asarray(fragments[_i])) < 0:
+                warnings.warn(
+                    f"RHF via a negative fragment mask (fragment {_i}) is deprecated; "
+                    f"pass fragment_methods={{{_i}: 'RHF'}} instead.",
+                    DeprecationWarning, stacklevel=2)
         self.oei_s      = None  # spin-dependent 1e potential for open-shell envs
         self.bath_tol   = bath_tol
         self.xc          = xc             # XC functional for DFT solvers
@@ -417,6 +433,7 @@ class DMET:
             NI_hack   = self.NI_hack,
             umat      = self.umat,
             bath_tol  = self.bath_tol,
+            fragment_methods = self.fragment_methods,
         )
 
         for counter in range( maxiter ):

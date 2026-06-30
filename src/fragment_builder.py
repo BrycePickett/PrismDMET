@@ -7,7 +7,8 @@ class FragmentBuilder:
 
     _NEEDS_DM_METHODS = frozenset({'CC', 'MP2', 'EOM-CC', 'CASSCF', 'NEVPT2', 'QD-NEVPT2'})
 
-    def __init__(self, ints, helper, fragments, method, num_bath_orbs, NI_hack, umat, bath_tol):
+    def __init__(self, ints, helper, fragments, method, num_bath_orbs, NI_hack, umat, bath_tol,
+                 fragment_methods=None):
         self._ints      = ints
         self._helper    = helper
         self._fragments = fragments
@@ -16,6 +17,7 @@ class FragmentBuilder:
         self._NI_hack   = NI_hack
         self._umat      = umat
         self._bath_tol  = bath_tol
+        self._fragment_methods = fragment_methods or {}
 
     @staticmethod
     def _fragment_is_rhf(fragment_mask):
@@ -24,7 +26,8 @@ class FragmentBuilder:
 
     def build(self, counter, one_rdm, chempot_imp):
         fragment_mask = self._fragments[counter]
-        flag_rhf     = self._fragment_is_rhf(fragment_mask)
+        flag_rhf     = (self._fragment_is_rhf(fragment_mask)
+                        or self._fragment_methods.get(counter) == 'RHF')
         impurity_orbs = np.abs(fragment_mask)
         num_imp_orbs   = int(np.sum(impurity_orbs))
         bath_request = num_imp_orbs if self._num_bath_orbs is None else self._num_bath_orbs[counter]
