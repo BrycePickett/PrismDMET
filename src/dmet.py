@@ -1117,6 +1117,87 @@ class DMET:
             raise ValueError(f"dump_natural_orbitals: unknown fmt='{fmt}'. Use 'molden' or 'cube'.")
         return occ
 
+    def dump_ntos( self, filename, impnumber=0, initial_state=0, target_state=1,
+                   fmt='molden', n_pairs=None, nx=60, ny=60, nz=60 ):
+        # NTOs for the initial_state -> target_state transition, back-transformed to AOs.
+        import pyscf.fci.direct_spin1 as fci_spin1
+        if self.qdnevpt2_results:
+            if impnumber >= len( self.qdnevpt2_results ):
+                raise IndexError( f"dump_ntos: impnumber={impnumber} out of range." )
+            res     = self.qdnevpt2_results[impnumber]
+            mc      = res['mc']
+            ci      = mc.ci if isinstance( mc.ci, list ) else [mc.ci]
+            mo      = mc.mo_coeff
+            ncore   = mc.ncore
+            ncas    = mc.ncas
+            nelecas = mc.nelecas
+        elif self.cas_results:
+            if impnumber >= len( self.cas_results ):
+                raise IndexError( f"dump_ntos: impnumber={impnumber} out of range." )
+            res     = self.cas_results[impnumber]
+            ci      = res['ci'] if isinstance( res['ci'], list ) else [res['ci']]
+            mo      = res['mo_coeff']
+            ncore   = res['ncore']
+            ncas    = res['ncas']
+            nelecas = res['nelecas']
+        else:
+            raise RuntimeError( "dump_ntos: run oneshot()/selfconsistent() with CASSCF or QD-NEVPT2 first." )
+        if initial_state >= len(ci) or target_state >= len(ci):
+            raise ValueError( f"dump_ntos: state index out of range (nstates={len(ci)})." )
+
+        tdm = fci_spin1.trans_rdm1( ci[target_state], ci[initial_state], ncas, nelecas )
+        U, s, Vh = np.linalg.svd( tdm, full_matrices=False )
+        weights  = s ** 2
+        omega    = np.sum( weights )
+        w_norm   = weights / ( omega + 1e-30 )
+        pr       = 1.0 / ( np.sum( w_norm ** 2 ) + 1e-30 )
+        entropy  = -np.sum( w_norm * np.log( w_norm + 1e-16 ) )
+
+        print( f"NTOs S{initial_state} -> S{target_state} (impurity {impnumber}):" )
+        print( f"  Singular values:         {np.round(s, 6).tolist()}" )
+        print( f"  Weights (s^2):           {np.round(weights, 6).tolist()}" )
+        print( f"  Sum of weights (Omega):  {omega:.6f}" )
+        print( f"  Participation ratio:     {pr:.6f}" )
+        print( f"  Entanglement entropy:    {entropy:.6f}" )
+        print( f"  Entangled states (Z):    {np.exp(entropy):.6f}" )
+
+        # Active-space MOs back-transformed to real AOs (same chain as dump_natural_orbitals).
+        cas_mo_ao  = self.ints.ao2loc @ self.dmetOrbs[impnumber] @ mo[:, ncore:ncore + ncas]
+        C_hole     = cas_mo_ao @ U        # hole NTOs (left singular vectors)
+        C_particle = cas_mo_ao @ Vh.T     # particle NTOs (right singular vectors)
+
+        # Phase consistency: largest-magnitude AO sets hole sign (PRISM convention).
+        for k in range( C_hole.shape[1] ):
+            idx = np.argmax( np.abs( C_hole[:, k] ) )
+            if C_hole[idx, k] < 0:
+                C_hole[:, k]     *= -1
+                C_particle[:, k] *= -1
+
+        n_write = C_hole.shape[1] if n_pairs is None else min( n_pairs, C_hole.shape[1] )
+
+        if fmt == 'molden':
+            from pyscf.tools import molden
+            C_nto   = np.zeros( (C_hole.shape[0], 2 * n_write) )
+            C_nto[:, 0::2] = C_hole[:, :n_write]
+            C_nto[:, 1::2] = C_particle[:, :n_write]
+            occ_nto = np.repeat( weights[:n_write], 2 )
+            with open( filename, 'w' ) as thefile:
+                molden.header( self.ints.mol, thefile )
+                molden.orbital_coeff( self.ints.mol, thefile, C_nto, occ=occ_nto )
+        elif fmt == 'cube':
+            from pyscf.tools import cubegen
+            base = filename[:-5] if filename.endswith( '.cube' ) else filename
+            for k in range( n_write ):
+                cubegen.orbital( self.ints.mol,
+                                 f"{base}_S{initial_state}S{target_state}_nto{k+1}_hole.cube",
+                                 C_hole[:, k], nx=nx, ny=ny, nz=nz )
+                cubegen.orbital( self.ints.mol,
+                                 f"{base}_S{initial_state}S{target_state}_nto{k+1}_particle.cube",
+                                 C_particle[:, k], nx=nx, ny=ny, nz=nz )
+        else:
+            raise ValueError( f"dump_ntos: unknown fmt='{fmt}'. Use 'molden' or 'cube'." )
+        return weights, C_hole, C_particle
+
     def onedm_solution_rhf(self):
         return self.helper.construct1RDM_loc( self.doSCF, self.umat )
 
