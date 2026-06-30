@@ -78,6 +78,9 @@ class SolverDispatcher:
             if not _is_oom_like(exc):
                 raise
 
+            if not task.get('allow_solver_fallback', True):
+                raise
+
             counter  = task.get('counter', '?')
             fallback = FALLBACK_CHAIN.get(method)
 

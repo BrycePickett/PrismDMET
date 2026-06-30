@@ -26,8 +26,8 @@ class DMET:
     ####################
 
     def __init__( self, integrals, fragments, is_translation_invariant, method='ED',
-                  sc_method='LSTSQ', fit_imp_bath=True, use_constrained_opt=False,
-                  do_det=False, do_det_NO=False, CC_E_TYPE='LAMBDA',
+                  sc_method='LSTSQ', fit_impurity_and_bath=True, use_constrained_optimization=False,
+                  use_density_embedding=False, use_density_embedding_no=False, CC_E_TYPE='LAMBDA',
                   print_u=True, print_rdm=True, eom_nroots=3,
                   eom_type='EE-Singlet', eom_koopmans=False, eom_kwargs=None,
                   ncas=None, nelecas=None, sa_nstates=1, sa_weights=None,
@@ -40,7 +40,30 @@ class DMET:
                   include_spin_oei=False, cas_select='energy', ao_labels=None,
                   avas_threshold=0.2, spade_gap_tol=0.3, spade_n_fallback=16,
                   embed_level_shift=0.0, rohf_stability=False, cas_multiseed=False,
-                  cas_spin=None, cas_spin_shift=0.2 ):
+                  cas_spin=None, cas_spin_shift=0.2, allow_solver_fallback=True,
+                  **deprecated_kwargs ):
+
+        import warnings
+        # Deprecated keyword aliases (accepted for one release; map old -> new, warn).
+        if 'do_det' in deprecated_kwargs:
+            warnings.warn("DMET keyword 'do_det' is deprecated; use 'use_density_embedding'.",
+                          DeprecationWarning, stacklevel=2)
+            use_density_embedding = deprecated_kwargs.pop('do_det')
+        if 'do_det_NO' in deprecated_kwargs:
+            warnings.warn("DMET keyword 'do_det_NO' is deprecated; use 'use_density_embedding_no'.",
+                          DeprecationWarning, stacklevel=2)
+            use_density_embedding_no = deprecated_kwargs.pop('do_det_NO')
+        if 'fit_imp_bath' in deprecated_kwargs:
+            warnings.warn("DMET keyword 'fit_imp_bath' is deprecated; use 'fit_impurity_and_bath'.",
+                          DeprecationWarning, stacklevel=2)
+            fit_impurity_and_bath = deprecated_kwargs.pop('fit_imp_bath')
+        if 'use_constrained_opt' in deprecated_kwargs:
+            warnings.warn("DMET keyword 'use_constrained_opt' is deprecated; "
+                          "use 'use_constrained_optimization'.",
+                          DeprecationWarning, stacklevel=2)
+            use_constrained_optimization = deprecated_kwargs.pop('use_constrained_opt')
+        if deprecated_kwargs:
+            raise TypeError(f"DMET.__init__ got unexpected keyword(s): {sorted(deprecated_kwargs)}")
 
         self.ints       = integrals
         self.norb       = self.ints.Norbs
@@ -84,11 +107,12 @@ class DMET:
         self.nevpt2_results    = []  # populated by doexact() when method='NEVPT2'
         self.dft_results       = []  # populated by doexact() when method is DFT
         self.num_bath_orbs  = None
-        self.fit_imp_bath = fit_imp_bath
-        self.do_det      = do_det
-        self.do_det_NO   = do_det_NO
+        self.fit_imp_bath = fit_impurity_and_bath
+        self.do_det      = use_density_embedding
+        self.do_det_NO   = use_density_embedding_no
         self.NOrotation = None
-        self.altcostfunc = use_constrained_opt
+        self.altcostfunc = use_constrained_optimization
+        self.allow_solver_fallback = allow_solver_fallback
         self.oei_s      = None  # spin-dependent 1e potential for open-shell envs
         self.bath_tol   = bath_tol
         self.xc          = xc             # XC functional for DFT solvers
@@ -122,12 +146,14 @@ class DMET:
             self.minFunc = 'FOCK_INIT'  # 'oei'
             if self.fit_imp_bath:
                 raise ValueError(
-                    "use_constrained_opt=True is incompatible with fit_imp_bath=True; "
-                    "set fit_imp_bath=False for constrained optimization.")
+                    "use_constrained_optimization=True is incompatible with fit_impurity_and_bath=True; "
+                    "set fit_impurity_and_bath=False for constrained optimization.")
             if self.do_det:
-                raise ValueError("use_constrained_opt=True is incompatible with do_det=True.")
+                raise ValueError(
+                    "use_constrained_optimization=True is incompatible with use_density_embedding=True.")
             if self.sc_method not in {'BFGS', 'NONE'}:
-                raise ValueError("use_constrained_opt=True requires sc_method in {'BFGS', 'NONE'}.")
+                raise ValueError(
+                    "use_constrained_optimization=True requires sc_method in {'BFGS', 'NONE'}.")
 
         if self.method == 'CC' and self.CC_E_TYPE == 'CASCI':
             if len(self.fragments) != 1:
@@ -682,6 +708,7 @@ class DMET:
             'xc'                : self.xc,
             'spin'              : self.ints.mol.spin,
             'spin_polarized'    : self.spin_polarized,
+            'allow_solver_fallback' : self.allow_solver_fallback,
             **_dft_mol_info,
         }
 
