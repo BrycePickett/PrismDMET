@@ -1,7 +1,6 @@
 """Public API for the PrismDMET QM/MM embedding module."""
 
 from .builder          import QMMMBuilder
-from .defect_builder    import DefectBuilder
 from .cluster          import (
     QMMMCluster, AtomRecord,
     REGION_QM, REGION_ECP, REGION_MM, REGION_GHOST,
@@ -13,8 +12,6 @@ from .pyscf_interface  import build_mol, build_meanfield
 __all__ = [
     # Main builder
     'QMMMBuilder',
-    # Lightweight defect-region selector from XYZ pairs
-    'DefectBuilder',
     # Data objects
     'QMMMCluster',
     'AtomRecord',
