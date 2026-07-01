@@ -98,7 +98,8 @@ def solve(const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
         if rohf_stability and _use_rohf:
             from .qcsolver_utils import _stabilize_rohf
             _stabilize_rohf(mf, tag='casscf::solve')
-            dm_loc = mf.make_rdm1()
+            # mf.make_rdm1() is spin-resolved (2,norb,norb) for ROHF; the einsum below needs 2D.
+            dm_loc = np.dot(np.dot(mf.mo_coeff, np.diag(mf.mo_occ)), mf.mo_coeff.T)
 
         numPairs = nel // 2
         fock_loc = (fock_copy
