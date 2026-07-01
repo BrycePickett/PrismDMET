@@ -76,9 +76,18 @@ class LocalIntegrals:
                     )
                 self.ao2loc = the_mf.mo_coeff[:, self.active == 1]
             if self.Norbs == self.mol.nao_nr():
-                # Hardcoded Be (Z=4) valence-shell override; Phase 7 cleanup target.
-                nao.AOSHELL[4] = ['1s0p0d0f', '2s1p0d0f']
-                self.ao2loc = orth.orth_ao(self.mol, 'meta_lowdin')
+                # Be (Z=4) needs an explicit valence-shell entry for meta_lowdin to span
+                # the minimal basis; only touch the global table when Be is present, and
+                # restore it after so other molecules in the same process are unaffected.
+                has_be = 4 in self.mol.atom_charges()
+                if has_be:
+                    _aoshell_be_saved = nao.AOSHELL[4]
+                    nao.AOSHELL[4] = ['1s0p0d0f', '2s1p0d0f']
+                try:
+                    self.ao2loc = orth.orth_ao(self.mol, 'meta_lowdin')
+                finally:
+                    if has_be:
+                        nao.AOSHELL[4] = _aoshell_be_saved
                 if ao_rotation is not None:
                     self.ao2loc = np.dot(self.ao2loc, ao_rotation.T)
             if self._which == 'boys':
