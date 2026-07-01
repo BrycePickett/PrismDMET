@@ -36,6 +36,8 @@ def solve(const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
           avas_threshold=0.2, spade_gap_tol=0.3, spade_n_fallback=16,
           embed_level_shift=0.0, rohf_stability=False, cas_multiseed=False,
           cas_spin=None, cas_spin_shift=0.2,
+          natorb_occ_thresh=0.02, natorb_max_superset=None,
+          deg_tol=1e-3, casci_conv_tol=1e-10,
           printoutput=True):
     '''Run SA-CASSCF + QD-NEVPT2 via Prism on the DMET embedding cluster. Returns (e_tot, e_corr, None, mc, nevpt_obj).'''
     _check_prism()
@@ -112,7 +114,9 @@ def solve(const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
             ao2eo=ao2eo, ao_mol_dumps=ao_mol_dumps, ao_labels=ao_labels,
             sa_nstates=sa_nstates, avas_threshold=avas_threshold,
             spade_gap_tol=spade_gap_tol, spade_n_fallback=spade_n_fallback,
-            cas_spin=cas_spin, cas_spin_shift=cas_spin_shift)
+            cas_spin=cas_spin, cas_spin_shift=cas_spin_shift,
+            natorb_occ_thresh=natorb_occ_thresh, natorb_max_superset=natorb_max_superset,
+            deg_tol=deg_tol, casci_conv_tol=casci_conv_tol)
 
         mc = mcscf.CASSCF(mf, ncas, nelecas)
         # Must swap FCI solver before state_average_; direct_uhf.FCI required for spin-asymmetric [h1e_a, h1e_b].
@@ -224,6 +228,10 @@ def execute(task):
         cas_multiseed=task.get('cas_multiseed', False),
         cas_spin=task.get('cas_spin'),
         cas_spin_shift=task.get('cas_spin_shift', 0.2),
+        natorb_occ_thresh=task.get('natorb_occ_thresh', 0.02),
+        natorb_max_superset=task.get('natorb_max_superset'),
+        deg_tol=task.get('deg_tol', 1e-3),
+        casci_conv_tol=task.get('casci_conv_tol', 1e-10),
     )
 
     rdm1 = mc.make_rdm1()

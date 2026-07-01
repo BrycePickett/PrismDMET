@@ -110,12 +110,13 @@ def plan_cas_active_space(mf, cas_select, ncas, nelecas, nimp, norb,
                           close_degeneracy=True, natorb_occ_thresh=0.02,
                           natorb_max_superset=None, sa_nstates=1, avas_threshold=0.2,
                           spade_gap_tol=0.3, spade_n_fallback=16, cas_spin=None,
-                          cas_spin_shift=0.2):
+                          cas_spin_shift=0.2, deg_tol=1e-3, casci_conv_tol=1e-10):
     '''Decide the CAS active space; returns (selected, ncas, nelecas, mo_coeff). See cas_determinism_fix_plan.md.'''
     if cas_select == 'natorb':
         mo_coeff, ncas, nelecas = natorb_active_space(
             mf, ncas, occ_thresh=natorb_occ_thresh, max_superset=natorb_max_superset,
-            sa_nstates=sa_nstates, cas_spin=cas_spin, cas_spin_shift=cas_spin_shift)
+            sa_nstates=sa_nstates, cas_spin=cas_spin, cas_spin_shift=cas_spin_shift,
+            deg_tol=deg_tol, conv_tol=casci_conv_tol)
         return None, ncas, nelecas, mo_coeff
 
     if cas_select == 'avas':
@@ -138,7 +139,7 @@ def plan_cas_active_space(mf, cas_select, ncas, nelecas, nimp, norb,
     if selected is None or not close_degeneracy:
         return selected, ncas, nelecas, None
 
-    closed = close_degenerate_manifolds(selected, mf.mo_energy)
+    closed = close_degenerate_manifolds(selected, mf.mo_energy, tol=deg_tol)
     added = sorted(set(closed) - set(selected))
     if added:
         d = cas_electron_delta(added, mf.mo_occ)
@@ -197,7 +198,7 @@ def fix_cas_spin(fcisolver, cas_spin, shift=0.2):
 
 
 def natorb_active_space(mf, n_superset, occ_thresh=0.02, deg_tol=1e-3, max_superset=None,
-                        sa_nstates=1, cas_spin=None, cas_spin_shift=0.2):
+                        sa_nstates=1, cas_spin=None, cas_spin_shift=0.2, conv_tol=1e-10):
     '''Active space from CASCI natural-orbital occupations. See natorb_cas_select.md.'''
     from pyscf import mcscf
     from math import comb
@@ -245,7 +246,7 @@ def natorb_active_space(mf, n_superset, occ_thresh=0.02, deg_tol=1e-3, max_super
           f"- starting CASCI...", flush=True)
 
     mc = mcscf.CASCI(mf, ncas_s, (na, nb))
-    mc.fcisolver.conv_tol = 1e-10
+    mc.fcisolver.conv_tol = conv_tol
     mc.verbose = 0
     if cas_spin is not None:
         fix_cas_spin(mc.fcisolver, cas_spin, cas_spin_shift)

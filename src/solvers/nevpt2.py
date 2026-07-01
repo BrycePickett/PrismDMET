@@ -17,6 +17,8 @@ def solve(const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
           avas_threshold=0.2, spade_gap_tol=0.3, spade_n_fallback=16,
           embed_level_shift=0.0, rohf_stability=False, cas_multiseed=False,
           cas_spin=None, cas_spin_shift=0.2,
+          natorb_occ_thresh=0.02, natorb_max_superset=None,
+          deg_tol=1e-3, casci_conv_tol=1e-10,
           printoutput=True):
     '''Run CASSCF + NEVPT2 on the DMET embedding cluster. Returns (e_tot, e_corr, mc, nevpt_objs).'''
     casscf_kwargs = casscf_kwargs or {}
@@ -78,7 +80,9 @@ def solve(const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
                     ao2eo=ao2eo, ao_mol_dumps=ao_mol_dumps, ao_labels=ao_labels,
                     sa_nstates=1, avas_threshold=avas_threshold,
                     spade_gap_tol=spade_gap_tol, spade_n_fallback=spade_n_fallback,
-                    cas_spin=cas_spin, cas_spin_shift=cas_spin_shift)
+                    cas_spin=cas_spin, cas_spin_shift=cas_spin_shift,
+                    natorb_occ_thresh=natorb_occ_thresh, natorb_max_superset=natorb_max_superset,
+                    deg_tol=deg_tol, casci_conv_tol=casci_conv_tol)
 
             mc = mcscf.CASSCF(mf, ncas, nelecas)
             mc.verbose = 5 if printoutput else 0
@@ -146,7 +150,9 @@ def solve(const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
                     ao2eo=ao2eo, ao_mol_dumps=ao_mol_dumps, ao_labels=ao_labels,
                     sa_nstates=nstates, avas_threshold=avas_threshold,
                     spade_gap_tol=spade_gap_tol, spade_n_fallback=spade_n_fallback,
-                    cas_spin=cas_spin, cas_spin_shift=cas_spin_shift)
+                    cas_spin=cas_spin, cas_spin_shift=cas_spin_shift,
+                    natorb_occ_thresh=natorb_occ_thresh, natorb_max_superset=natorb_max_superset,
+                    deg_tol=deg_tol, casci_conv_tol=casci_conv_tol)
 
             mc_sa = mcscf.CASSCF(mf, ncas, nelecas)
             # Swap base FCI solver BEFORE state_average_ so the SA wrapper inherits it.
@@ -270,6 +276,10 @@ def execute(task):
         cas_multiseed=task.get('cas_multiseed', False),
         cas_spin=task.get('cas_spin'),
         cas_spin_shift=task.get('cas_spin_shift', 0.2),
+        natorb_occ_thresh=task.get('natorb_occ_thresh', 0.02),
+        natorb_max_superset=task.get('natorb_max_superset'),
+        deg_tol=task.get('deg_tol', 1e-3),
+        casci_conv_tol=task.get('casci_conv_tol', 1e-10),
     )
 
     # 1-RDM (cluster orbital basis) for the dmet driver: prefer the NEVPT2

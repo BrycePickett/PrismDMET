@@ -41,7 +41,10 @@ class DMET:
                   avas_threshold=0.2, spade_gap_tol=0.3, spade_n_fallback=16,
                   embed_level_shift=0.0, rohf_stability=False, cas_multiseed=False,
                   cas_spin=None, cas_spin_shift=0.2, allow_solver_fallback=True,
-                  fragment_methods=None, **deprecated_kwargs ):
+                  fragment_methods=None,
+                  natorb_occ_thresh=0.02, natorb_max_superset=None,
+                  deg_tol=1e-3, casci_conv_tol=1e-10,
+                  **deprecated_kwargs ):
 
         import warnings
         # Deprecated keyword aliases (accepted for one release; map old -> new, warn).
@@ -97,6 +100,10 @@ class DMET:
         self.cas_multiseed = cas_multiseed
         self.cas_spin      = cas_spin   # target 2S for CAS states; None disables the spin penalty
         self.cas_spin_shift = cas_spin_shift   # fix_spin_ penalty strength for off-target spins
+        self.natorb_occ_thresh   = natorb_occ_thresh    # natorb/spade core-vs-active occupation cutoff
+        self.natorb_max_superset = natorb_max_superset  # cap on the natorb superset window size
+        self.deg_tol             = deg_tol              # near-degenerate orbital energy tolerance
+        self.casci_conv_tol      = casci_conv_tol       # natorb superset CASCI fcisolver.conv_tol
         self.cas_results   = []   # populated by doexact() when method='CASSCF'
         self.dmrg_kwargs   = dmrg_kwargs or {}
         self.dmrg_results  = []   # populated by doexact() when method='DMRG'
@@ -710,6 +717,10 @@ class DMET:
             'avas_threshold'    : self.avas_threshold,
             'spade_gap_tol'     : self.spade_gap_tol,
             'spade_n_fallback'  : self.spade_n_fallback,
+            'natorb_occ_thresh'   : self.natorb_occ_thresh,
+            'natorb_max_superset' : self.natorb_max_superset,
+            'deg_tol'             : self.deg_tol,
+            'casci_conv_tol'      : self.casci_conv_tol,
             'embed_level_shift' : self.embed_level_shift,
             'rohf_stability'    : self.rohf_stability,
             'cas_multiseed'     : self.cas_multiseed,
