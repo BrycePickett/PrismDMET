@@ -95,7 +95,7 @@ DMET(ints, fragments, False, method='FCI', sc_method='LSTSQ').selfconsistent()
 | `sc_method` | str | `'NONE'` (one-shot) or `'LSTSQ'` (self-consistent) |
 | `ncas` / `nelecas` | int | Active orbitals / electrons (CASSCF/NEVPT2) |
 | `sa_nstates` | int | Number of states for SA-CASSCF |
-| `cas_select` | str | Active-space selection: `'energy'` (default), `'impurity'`, `'ao_character'` |
+| `cas_select` | str | Active-space selection: `'natorb'` (recommended for production), `'impurity'`, `'ao_character'`, `'energy'` (legacy default) |
 | `ao_labels` | list | AO labels for `cas_select='ao_character'` (e.g. `['0 H 1s']`) |
 | `xc` | str | XC functional for DFT solvers (default `'pbe'`) |
 | `parallel` | bool | Enable parallel fragment execution |
@@ -118,8 +118,6 @@ DMET(ints, fragments, False, method='FCI', sc_method='LSTSQ').selfconsistent()
 | `h6_symmetry_test.py` | H6 ring symmetry detection | < 30 s |
 | `water_eomcc.py` | Water EOM-CCSD excited states | ~ 2 min |
 | `water_qdnevpt2.py` | Water QD-NEVPT2 (requires Prism) | ~ 5 min |
-
-Legacy QC-DMET examples are in `examples/legacy/`.
 
 ---
 
