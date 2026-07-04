@@ -21,6 +21,11 @@ from . import rhf
 import numpy as np
 
 class LocalIntegralsHubbard:
+    """Model-Hamiltonian integrals for a Hubbard lattice (non-ab-initio DMET extension).
+
+    Drop-in replacement for ``LocalIntegrals`` when running DMET on a Hubbard model
+    instead of a molecule.
+    """
 
     def __init__( self, hopping, HubbardU, Nelectrons ):
     

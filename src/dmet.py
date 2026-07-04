@@ -20,6 +20,22 @@ def _fragment_worker(task):
 
 
 class DMET:
+    """Density Matrix Embedding Theory driver for ab initio quantum chemistry.
+
+    Wraps a localized mean-field (``LocalIntegrals``) and a fragment definition
+    (``make_fragments``), solves each embedded impurity with a chosen post-HF solver,
+    and optionally optimizes a correlation potential to self-consistency.
+
+    Essential constructor args: ``integrals``, ``fragments``, ``is_translation_invariant``,
+    ``method``, ``sc_method`` (plus ``ncas``/``nelecas``/``cas_select`` for the CAS methods).
+    Everything else is an advanced knob with a working default -- see ``__init__`` and the
+    README "Key Parameters" table.
+
+    Example:
+        d = DMET(ints, fragments, False, method='FCI')
+        e = d.oneshot()            # one-shot embedding
+        e = d.selfconsistent()     # u-matrix self-consistency
+    """
 
     ####################
     # Construction and validation
@@ -45,6 +61,40 @@ class DMET:
                   natorb_occ_thresh=0.02, natorb_max_superset=None,
                   deg_tol=1e-3, casci_conv_tol=1e-10,
                   **deprecated_kwargs ):
+        """Construct a DMET driver.
+
+        Args:
+            integrals: ``LocalIntegrals`` object (localized mean-field + AO->loc transform).
+            fragments: list of orbital-membership masks from ``make_fragments`` (one per fragment).
+            is_translation_invariant: if True, solve only fragment 0 and replicate it.
+            method: embedded solver key -- 'FCI'/'ED', 'CC', 'MP2', 'CASSCF', 'NEVPT2',
+                'QD-NEVPT2', 'DMRG', 'EOM-CC', 'RHF', 'ROHF', 'UHF', 'RKS'/'UKS'/'ROKS'.
+            sc_method: 'NONE' (one-shot) or 'LSTSQ'/'BFGS' (self-consistent u-matrix fit).
+
+        Active space (CASSCF/NEVPT2/QD-NEVPT2):
+            ncas, nelecas: active orbitals / electrons.
+            cas_select: 'natorb' (recommended), 'impurity', 'ao_character', 'energy' (legacy).
+            sa_nstates, sa_weights: state averaging (QD-NEVPT2 requires sa_nstates >= 2).
+            cas_spin, cas_spin_shift: restrict the CAS to a target 2S.
+            ao_labels: AO labels for cas_select='ao_character'/'avas'.
+            natorb_occ_thresh, natorb_max_superset, deg_tol, casci_conv_tol: natorb selection tolerances.
+
+        Per-fragment and solver control:
+            fragment_methods: {index: 'RHF'} to solve one fragment at RHF (replaces the
+                deprecated negative-mask convention).
+            allow_solver_fallback: if False, an OOM re-raises instead of degrading the solver.
+            parallel, max_workers: parallel fragment execution.
+            use_symmetry, symmetry_map: reuse symmetry-equivalent fragments.
+
+        DFT / QM-MM / open-shell:
+            xc: functional for RKS/UKS/ROKS. level_shift, embed_level_shift: SCF level shifts.
+            spin_polarized: independent alpha/beta chemical potentials.
+            mm_coords, mm_charges: QM/MM point charges.
+
+        Deprecated keywords (accepted for one release, emit a DeprecationWarning):
+            do_det -> use_density_embedding, do_det_NO -> use_density_embedding_no,
+            fit_imp_bath -> fit_impurity_and_bath, use_constrained_opt -> use_constrained_optimization.
+        """
 
         import warnings
         # Deprecated keyword aliases (accepted for one release; map old -> new, warn).
@@ -1028,7 +1078,15 @@ class DMET:
     ####################
 
     def selfconsistent( self ):
+        """Run the DMET self-consistency loop, optimizing the correlation potential (u-matrix).
 
+        Iterates the embedding until the u-matrix converges under ``sc_method``
+        ('LSTSQ' or 'BFGS'). For excited-state methods (EOM-CC, NEVPT2, QD-NEVPT2)
+        a single embedding pass is performed instead.
+
+        Returns:
+            Total DMET energy (Hartree).
+        """
         if self.method in ('EOM-CC', 'QD-NEVPT2', 'NEVPT2'):
             _labels = {
                 'EOM-CC'    : ("EOM-CCSD",  "provides excited-state energies, not a ground-state u-matrix"),
@@ -1142,6 +1200,12 @@ class DMET:
         return result
         
     def dump_bath_orbs( self, filename, impnumber=0 ):
+        """Write the DMET bath orbitals of a fragment to a molden file (AO basis).
+
+        Args:
+            filename: output molden path.
+            impnumber: fragment index.
+        """
         from pyscf import tools
         from pyscf.tools import molden
         with open( filename, 'w' ) as thefile:
@@ -1149,7 +1213,21 @@ class DMET:
             molden.orbital_coeff( self.ints.mol, thefile, np.dot( self.ints.ao2loc, self.dmetOrbs[impnumber] ) )
 
     def dump_natural_orbitals( self, filename, impnumber=0, fmt='molden', orbital_indices=None ):
-        # Natural orbitals of the impurity 1-RDM, back-transformed to AOs for molden/cube.
+        """Write the natural orbitals of a fragment's 1-RDM, back-transformed to AOs.
+
+        Works for any solver (FCI/CC/CASSCF/NEVPT2/QD-NEVPT2); the correlated
+        1-RDM is diagonalized and the orbitals are written against the real molecule.
+
+        Args:
+            filename: output path (molden file, or cube basename).
+            impnumber: fragment index.
+            fmt: 'molden' (one file, all NOs) or 'cube' (one file per orbital).
+            orbital_indices: cube only; defaults to the fractionally-occupied NOs.
+
+        Returns:
+            Occupation numbers (1-RDM eigenvalues), descending. Run oneshot()/
+            selfconsistent() first.
+        """
         if not self.imp_1RDM:
             raise RuntimeError("dump_natural_orbitals: run oneshot()/selfconsistent() first.")
         occ, vecs = np.linalg.eigh( self.imp_1RDM[impnumber] )
@@ -1174,7 +1252,22 @@ class DMET:
 
     def dump_ntos( self, filename, impnumber=0, initial_state=0, target_state=1,
                    fmt='molden', n_pairs=None, nx=60, ny=60, nz=60 ):
-        # NTOs for the initial_state -> target_state transition, back-transformed to AOs.
+        """Write natural transition orbitals for a state-to-state transition (SA-CASSCF/QD-NEVPT2).
+
+        SVD of the transition 1-RDM gives hole/particle NTO pairs (PRISM convention),
+        back-transformed to real AOs.
+
+        Args:
+            filename: output path (molden file, or cube basename).
+            impnumber: fragment index.
+            initial_state, target_state: transition indices (0-based).
+            fmt: 'molden' (interleaved hole/particle pairs) or 'cube' (a file per orbital).
+            n_pairs: number of NTO pairs to write (default: all).
+            nx, ny, nz: cube grid dimensions.
+
+        Returns:
+            (weights, C_hole, C_particle). Requires a CASSCF or QD-NEVPT2 run first.
+        """
         import pyscf.fci.direct_spin1 as fci_spin1
         if self.qdnevpt2_results:
             if impnumber >= len( self.qdnevpt2_results ):
@@ -1257,6 +1350,16 @@ class DMET:
         return self.helper.construct1RDM_loc( self.doSCF, self.umat )
 
     def oneshot( self, mu_imp=0.0, optimize_mu=False ):
+        """Run a single embedding pass (no u-matrix self-consistency).
+
+        Args:
+            mu_imp: impurity chemical potential (float, or [alpha, beta] if spin_polarized).
+            optimize_mu: if True, adjust mu_imp to match the embedded electron count.
+
+        Returns:
+            Total DMET energy (Hartree). Per-fragment solver results are stored on the
+            instance (cas_results, qdnevpt2_results, imp_1RDM, ...).
+        """
         if optimize_mu:
             if self.spin_polarized:
                 mu0 = np.array(mu_imp) if hasattr(mu_imp, '__len__') \
@@ -1291,6 +1394,17 @@ class DMET:
 
 
 def make_fragments( mol, myInts, atom_groups ):
+    """Build DMET fragment masks by grouping atoms into impurities.
+
+    Args:
+        mol: the PySCF Mole.
+        myInts: the LocalIntegrals object (for the localized-orbital count).
+        atom_groups: list of atom-index lists; each list becomes one impurity fragment.
+
+    Returns:
+        List of 0/1 orbital-membership masks (one per group) for the DMET constructor.
+        Raises ValueError if the groups overlap.
+    """
     ao_slices = mol.aoslice_by_atom()  # shape (natm, 4): (shl0, shl1, ao0, ao1)
     Norbs = myInts.Norbs
     impurity_clusters = []

@@ -9,10 +9,27 @@ import numpy as np
 
 
 class LocalIntegrals:
+    """Localized-orbital integrals for DMET embedding, built from a PySCF mean-field.
+
+    Localizes the mean-field orbitals and exposes the one-/two-electron integrals,
+    Fock matrix, and AO->localized transform (``ao2loc``) that the DMET driver needs.
+
+    Example:
+        ints = LocalIntegrals(mf, list(range(mol.nao_nr())), 'meta_lowdin')
+    """
 
     def __init__(self, the_mf, active_orbs, localizationtype,
                  ao_rotation=None, use_full_hessian=True,
                  localization_threshold=1e-6):
+        """Build localized integrals from a converged mean-field.
+
+        Args:
+            the_mf: converged PySCF mean-field (RHF/ROHF/UHF/RKS/UKS/ROKS).
+            active_orbs: orbital indices kept active (usually range(mol.nao_nr())).
+            localizationtype: 'meta_lowdin', 'boys', 'lowdin', or 'iao'.
+            ao_rotation: optional AO rotation applied after localization.
+            localization_threshold: Boys convergence tolerance.
+        """
         assert localizationtype in ('meta_lowdin', 'boys', 'lowdin', 'iao')
 
         self.mol     = the_mf.mol
