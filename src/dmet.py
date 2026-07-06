@@ -50,7 +50,7 @@ class DMET:
                   casscf_kwargs=None, dmrg_kwargs=None,
                   mf_real=None, qdnevpt2_kwargs=None, nevpt2_kwargs=None,
                   use_symmetry=False, symmetry_map=None,
-                  parallel=False, max_workers=None, bath_tol=1e-13,
+                  parallel=False, max_workers=None, bath_tol=1e-13, n_bath_orbs=None,
                   xc='pbe', level_shift=0.0, spin_polarized=False,
                   mm_coords=None, mm_charges=None,
                   include_spin_oei=False, cas_select='energy', ao_labels=None,
@@ -83,6 +83,8 @@ class DMET:
             fragment_methods: {index: 'RHF'} to solve one fragment at RHF (replaces the
                 deprecated negative-mask convention).
             allow_solver_fallback: if False, an OOM re-raises instead of degrading the solver.
+            n_bath_orbs: truncate the bath to at most this many orbitals per fragment (int broadcast
+                to all fragments, or a per-fragment list); None = full symmetric bath.
             parallel, max_workers: parallel fragment execution.
             use_symmetry, symmetry_map: reuse symmetry-equivalent fragments.
 
@@ -163,7 +165,17 @@ class DMET:
         self.nevpt2_kwargs     = nevpt2_kwargs or {}
         self.nevpt2_results    = []  # populated by doexact() when method='NEVPT2'
         self.dft_results       = []  # populated by doexact() when method is DFT
-        self.num_bath_orbs  = None
+        # Bath truncation: None = full symmetric bath; int = keep at most that many per fragment.
+        if n_bath_orbs is None:
+            self.num_bath_orbs = None
+        elif hasattr(n_bath_orbs, '__len__'):
+            if len(n_bath_orbs) != len(fragments):
+                raise ValueError(
+                    f"n_bath_orbs: list length {len(n_bath_orbs)} must match the number of "
+                    f"fragments ({len(fragments)}); pass a single int to use one size for all.")
+            self.num_bath_orbs = [int(x) for x in n_bath_orbs]
+        else:
+            self.num_bath_orbs = [int(n_bath_orbs)] * len(fragments)
         self.fit_imp_bath = fit_impurity_and_bath
         self.do_det      = use_density_embedding
         self.do_det_NO   = use_density_embedding_no
