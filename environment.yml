@@ -9,7 +9,11 @@ dependencies:
   - scipy
   - pyscf>=2.0
   - opt_einsum   # Prism einsum backend (else Prism falls back to numpy)
-  - sympy        # required by Prism (spin-orbit coupling module)
+  - pytblis      # Prism's preferred einsum backend (pytblis > opt_einsum > numpy)
+  - sympy        # required by Prism's spin-orbit-coupling module
+  # NOTE: Prism SOC also needs `socutils`, which is NOT a pip/conda package -- it is a
+  # Prism git submodule: run `git submodule update --init socutils` in the Prism repo.
+  # SOC is not used by DMET, so this is only needed for Prism SOC features.
   # Optional: For developers/benchmark execution
   - jupyter
   - matplotlib
