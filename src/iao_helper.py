@@ -22,12 +22,25 @@ import scipy
 import scipy.linalg
 
 def construct_p_list(mol, pmol):
-    Norbs  = mol.nao_nr()
-    p_list = np.zeros([Norbs], dtype=int)
-    for ia, (_, _, ao_start, ao_stop) in enumerate(mol.aoslice_by_atom()):
-        if ao_stop > ao_start:
-            p_list[ao_start:ao_stop] = 1
-    assert np.sum(p_list) == pmol.nao_nr()
+    """Mark each working-basis AO 1 if it matches a reference (pmol) function, else 0.
+
+    The zeros are the extra working-basis AOs the complement branch of localize_iao spans.
+    pmol atom indices are remapped through the zero-width-atom filter so basis-bearing ghost
+    atoms (Cu2O vacancy) line up with their parent atom.
+    """
+    kept_atoms = [ia for ia, (_, _, ao_start, ao_stop) in enumerate(mol.aoslice_by_atom())
+                  if ao_stop > ao_start]
+    ref = set()
+    for atom_id, _, nl, m in pmol.ao_labels(fmt=None):
+        ref.add((kept_atoms[atom_id], nl, m))
+    p_list = np.zeros((mol.nao_nr(),), dtype=int)
+    for i, (atom_id, _, nl, m) in enumerate(mol.ao_labels(fmt=None)):
+        if (atom_id, nl, m) in ref:
+            p_list[i] = 1
+    if np.sum(p_list) != pmol.nao_nr():
+        raise RuntimeError(
+            f"IAO reference-basis orbital count mismatch: matched {int(np.sum(p_list))} of "
+            f"{pmol.nao_nr()} reference functions.")
     return p_list
 
 def orthogonalize_iao( coeff, ovlp ):
