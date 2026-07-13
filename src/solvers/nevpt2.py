@@ -131,7 +131,9 @@ def solve(const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
                 _mc_ref.canonicalize(mo, ci, eris, sort, False, casdm1, verbose)
             e_c = nevpt_obj.kernel()
 
-            e_tot  = np.array([nevpt_obj.e_tot])
+            # nevpt_obj.e_tot is stale (copied from mc.__dict__ at construction; kernel()
+            # only sets e_corr), so combine explicitly rather than reading nevpt_obj.e_tot.
+            e_tot  = np.array([mc.e_tot + e_c])
             e_corr = np.array([e_c])
             nevpt_objs = [nevpt_obj]
 
