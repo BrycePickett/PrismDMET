@@ -55,7 +55,8 @@ class DMET:
                   mm_coords=None, mm_charges=None,
                   include_spin_oei=False, cas_select='energy', ao_labels=None,
                   avas_threshold=0.2, spade_gap_tol=0.3, spade_n_fallback=16,
-                  embed_level_shift=0.0, rohf_stability=False, cas_multiseed=False,
+                  embed_level_shift=0.0, rohf_stability=False, rohf_stability_max_iter=5,
+                  cas_multiseed=False,
                   cas_spin=None, cas_spin_shift=0.2, allow_solver_fallback=True,
                   fragment_methods=None,
                   natorb_occ_thresh=0.02, natorb_max_superset=None,
@@ -92,6 +93,8 @@ class DMET:
             xc: functional for RKS/UKS/ROKS. level_shift, embed_level_shift: SCF level shifts.
             spin_polarized: independent alpha/beta chemical potentials.
             mm_coords, mm_charges: QM/MM point charges.
+            rohf_stability: follow internal ROHF instabilities and reconverge before the solver.
+            rohf_stability_max_iter: max reconverge attempts for rohf_stability (default 5).
 
         Deprecated keywords (accepted for one release, emit a DeprecationWarning):
             do_det -> use_density_embedding, do_det_NO -> use_density_embedding_no,
@@ -149,6 +152,7 @@ class DMET:
         self.spade_n_fallback = spade_n_fallback
         self.embed_level_shift = embed_level_shift   # static level shift on the embedded post-HF ROHF/RHF reference
         self.rohf_stability = rohf_stability
+        self.rohf_stability_max_iter = rohf_stability_max_iter
         self.cas_multiseed = cas_multiseed
         self.cas_spin      = cas_spin   # target 2S for CAS states; None disables the spin penalty
         self.cas_spin_shift = cas_spin_shift   # fix_spin_ penalty strength for off-target spins
@@ -785,6 +789,7 @@ class DMET:
             'casci_conv_tol'      : self.casci_conv_tol,
             'embed_level_shift' : self.embed_level_shift,
             'rohf_stability'    : self.rohf_stability,
+            'rohf_stability_max_iter' : self.rohf_stability_max_iter,
             'cas_multiseed'     : self.cas_multiseed,
             'cas_spin'          : self.cas_spin,
             'cas_spin_shift'    : self.cas_spin_shift,

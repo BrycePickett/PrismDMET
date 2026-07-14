@@ -34,7 +34,8 @@ def solve(const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
           oei_s=None,
           cas_select='energy', ao_labels=None, ao2eo=None, ao_mol_dumps=None,
           avas_threshold=0.2, spade_gap_tol=0.3, spade_n_fallback=16,
-          embed_level_shift=0.0, rohf_stability=False, cas_multiseed=False,
+          embed_level_shift=0.0, rohf_stability=False, rohf_stability_max_iter=5,
+          cas_multiseed=False,
           cas_spin=None, cas_spin_shift=0.2,
           natorb_occ_thresh=0.02, natorb_max_superset=None,
           deg_tol=1e-3, casci_conv_tol=1e-10,
@@ -104,7 +105,7 @@ def solve(const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
                   f"dE={abs(mf.e_tot - e_shifted):.2e} Ha")
         if rohf_stability and _use_rohf:
             from .qcsolver_utils import _stabilize_rohf
-            _stabilize_rohf(mf, tag='qdnevpt2::solve')
+            _stabilize_rohf(mf, max_iter=rohf_stability_max_iter, tag='qdnevpt2::solve')
         if _use_rohf:
             print(f"qdnevpt2::solve : embedded ROHF (spin={_spin}, nel={nel}, norb={norb})")
 
@@ -225,6 +226,7 @@ def execute(task):
         spade_n_fallback=task.get('spade_n_fallback', 16),
         embed_level_shift=task.get('embed_level_shift', 0.0),
         rohf_stability=task.get('rohf_stability', False),
+        rohf_stability_max_iter=task.get('rohf_stability_max_iter', 5),
         cas_multiseed=task.get('cas_multiseed', False),
         cas_spin=task.get('cas_spin'),
         cas_spin_shift=task.get('cas_spin_shift', 0.2),

@@ -15,7 +15,8 @@ def solve(const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
           oei_s=None, spin=None,
           cas_select='energy', ao_labels=None, ao2eo=None, ao_mol_dumps=None,
           avas_threshold=0.2, spade_gap_tol=0.3, spade_n_fallback=16,
-          embed_level_shift=0.0, rohf_stability=False, cas_multiseed=False,
+          embed_level_shift=0.0, rohf_stability=False, rohf_stability_max_iter=5,
+          cas_multiseed=False,
           cas_spin=None, cas_spin_shift=0.2,
           natorb_occ_thresh=0.02, natorb_max_superset=None,
           deg_tol=1e-3, casci_conv_tol=1e-10,
@@ -97,7 +98,7 @@ def solve(const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
 
         if rohf_stability and _use_rohf:
             from .qcsolver_utils import _stabilize_rohf
-            _stabilize_rohf(mf, tag='casscf::solve')
+            _stabilize_rohf(mf, max_iter=rohf_stability_max_iter, tag='casscf::solve')
             # mf.make_rdm1() is spin-resolved (2,norb,norb) for ROHF; the einsum below needs 2D.
             dm_loc = np.dot(np.dot(mf.mo_coeff, np.diag(mf.mo_occ)), mf.mo_coeff.T)
 
@@ -288,6 +289,7 @@ def execute(task):
         spade_n_fallback=task.get('spade_n_fallback', 16),
         embed_level_shift=task.get('embed_level_shift', 0.0),
         rohf_stability=task.get('rohf_stability', False),
+        rohf_stability_max_iter=task.get('rohf_stability_max_iter', 5),
         cas_multiseed=task.get('cas_multiseed', False),
         cas_spin=task.get('cas_spin'),
         cas_spin_shift=task.get('cas_spin_shift', 0.2),
