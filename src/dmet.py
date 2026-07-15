@@ -56,7 +56,7 @@ class DMET:
                   include_spin_oei=False, cas_select='energy', ao_labels=None,
                   avas_threshold=0.2, spade_gap_tol=0.3, spade_n_fallback=16,
                   embed_level_shift=0.0, rohf_stability=False, rohf_stability_max_iter=5,
-                  cas_multiseed=False,
+                  rohf_multiseed=False, cas_multiseed=False,
                   cas_spin=None, cas_spin_shift=0.2, allow_solver_fallback=True,
                   fragment_methods=None,
                   natorb_occ_thresh=0.02, natorb_max_superset=None,
@@ -95,6 +95,8 @@ class DMET:
             mm_coords, mm_charges: QM/MM point charges.
             rohf_stability: follow internal ROHF instabilities and reconverge before the solver.
             rohf_stability_max_iter: max reconverge attempts for rohf_stability (default 5).
+            rohf_multiseed: reconverge ROHF from rotated seeds across a degenerate SOMO manifold
+                (deg_tol) and keep the lowest-energy basin; runs before rohf_stability.
 
         Deprecated keywords (accepted for one release, emit a DeprecationWarning):
             do_det -> use_density_embedding, do_det_NO -> use_density_embedding_no,
@@ -153,6 +155,7 @@ class DMET:
         self.embed_level_shift = embed_level_shift   # static level shift on the embedded post-HF ROHF/RHF reference
         self.rohf_stability = rohf_stability
         self.rohf_stability_max_iter = rohf_stability_max_iter
+        self.rohf_multiseed = rohf_multiseed
         self.cas_multiseed = cas_multiseed
         self.cas_spin      = cas_spin   # target 2S for CAS states; None disables the spin penalty
         self.cas_spin_shift = cas_spin_shift   # fix_spin_ penalty strength for off-target spins
@@ -790,6 +793,7 @@ class DMET:
             'embed_level_shift' : self.embed_level_shift,
             'rohf_stability'    : self.rohf_stability,
             'rohf_stability_max_iter' : self.rohf_stability_max_iter,
+            'rohf_multiseed'    : self.rohf_multiseed,
             'cas_multiseed'     : self.cas_multiseed,
             'cas_spin'          : self.cas_spin,
             'cas_spin_shift'    : self.cas_spin_shift,

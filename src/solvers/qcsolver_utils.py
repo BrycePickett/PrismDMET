@@ -755,3 +755,68 @@ def _stabilize_rohf(mf, max_iter=5, tag=''):
         print(f"{tag}: ROHF internal instability (iter {i+1}), reconverging along unstable mode")
         mf.scf(mf.make_rdm1(mo_i, mf.mo_occ))
     print(f"{tag}: WARNING: ROHF stability not reached after {max_iter} reconverges  E={mf.e_tot:.10f}")
+
+
+def multiseed_rohf(mf, deg_tol=1e-3, angles=(0, 30, 60, 90), tag=''):
+    '''Reconverge ROHF from rotated seeds across the SOMO-containing degenerate manifold; keep the
+    lowest-energy basin. No-op for RHF. See cas_determinism_fix_plan.md (Part B, ROHF analog).'''
+    from pyscf import scf as _scf
+    if not isinstance(mf, _scf.rohf.ROHF):
+        return mf
+
+    mo_seed = mf.mo_coeff.copy()
+    mo_occ  = mf.mo_occ
+    mo_e    = mf.mo_energy
+    norb    = len(mo_e)
+
+    # Manifolds of orbitals within deg_tol of each other (same convention as
+    # close_degenerate_manifolds), restricted to the manifold(s) containing a SOMO -- that is
+    # where ROHF's occupation assignment is basin-ambiguous.
+    order = np.argsort(mo_e, kind='stable')
+    manifolds = []
+    current = [int(order[0])]
+    for k in range(1, norb):
+        if mo_e[order[k]] - mo_e[order[k - 1]] < deg_tol:
+            current.append(int(order[k]))
+        else:
+            manifolds.append(current)
+            current = [int(order[k])]
+    manifolds.append(current)
+
+    somo_idx = set(int(i) for i in np.where(mo_occ == 1)[0])
+    deg_pairs = []
+    for manifold in manifolds:
+        if len(manifold) > 1 and somo_idx.intersection(manifold):
+            deg_pairs.extend((manifold[i], manifold[i + 1]) for i in range(len(manifold) - 1))
+
+    if not deg_pairs:
+        print(f"{tag}: multiseed_rohf: no degenerate SOMO manifold "
+              f"(min frontier gap={np.min(np.abs(np.diff(mo_e))):.2e}); single scf call.")
+        mf.scf(mf.make_rdm1(mo_seed, mo_occ))
+        return mf
+
+    print(f"{tag}: multiseed_rohf: {len(deg_pairs)} degenerate SOMO pair(s) {deg_pairs}; "
+          f"running {len(angles)} seeds.", flush=True)
+
+    best_e  = np.inf
+    best_mo = None
+    for angle in angles:
+        mo = mo_seed.copy()
+        th = np.deg2rad(angle)
+        c_r, s_r = np.cos(th), np.sin(th)
+        for i, j in deg_pairs:
+            col_i = mo[:, i].copy()
+            col_j = mo[:, j].copy()
+            mo[:, i] =  c_r * col_i + s_r * col_j
+            mo[:, j] = -s_r * col_i + c_r * col_j
+        mf.scf(mf.make_rdm1(mo, mo_occ))
+        print(f"  seed {angle:3d}°: e_tot={mf.e_tot:.10f}  converged={mf.converged}")
+        if mf.e_tot < best_e:
+            best_e  = mf.e_tot
+            best_mo = mf.mo_coeff.copy()
+
+    # Re-run from the best seed so mf is fully consistent at that solution.
+    if abs(mf.e_tot - best_e) > 1e-10:
+        mf.scf(mf.make_rdm1(best_mo, mo_occ))
+    print(f"{tag}: multiseed_rohf -> best energy = {best_e:.10f} Ha")
+    return mf
