@@ -78,9 +78,7 @@ def build_meanfield(
     scf_obj.conv_tol  = conv_tol
     scf_obj.max_cycle = max_cycle
 
-    # Wrap with QM/MM point charge embedding
-    # mm_coords and mm_charges include both ECP and MM atoms — exactly
-    # matching the 'coords' / 'charges' arrays in Michael's PySCF scripts.
+    # Wrap with QM/MM point charge embedding; mm_coords/mm_charges include both ECP and MM atoms.
     mf = pyscf.qmmm.mm_charge(
         scf_obj,
         cluster.mm_coords,

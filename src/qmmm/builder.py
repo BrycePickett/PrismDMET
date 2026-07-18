@@ -75,7 +75,7 @@ class QMMMBuilder:
         if pc_layers is None and total_layers is None:
             raise ValueError(
                 "Provide either pc_layers (conformal shell) or "
-                "total_layers (origin-based, matches Michael's get_sphere)."
+                "total_layers (origin-based: one fixed sphere radius from the central atom)."
             )
         if ecp_shape not in _valid_ecp_shapes:
             raise ValueError(
