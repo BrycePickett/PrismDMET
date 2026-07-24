@@ -818,7 +818,7 @@ class DMET:
         return result
 
     ####################
-    # u-matrix fitting: cost functions and gradients
+    # U-matrix fitting: cost functions and gradients
     ####################
 
     def constructNOrotation( self ):
@@ -925,7 +925,6 @@ class DMET:
         n_cluster_orbs = 0
         jump = 0
         for count in range(len(self.imp_size)):
-            # n_cluster_orbs += self.imp_size[ count ] * self.imp_size[ count ]
             mask_t = self.mask[ np.ix_(list(range(jump,jump+self.imp_size[count])),list(range(jump,jump+self.imp_size[count]))) ]
             n_cluster_orbs += np.count_nonzero( mask_t )
             jump += self.imp_size[count]

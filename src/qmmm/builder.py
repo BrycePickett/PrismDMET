@@ -150,7 +150,7 @@ class QMMMBuilder:
         self.coordination_scaling   = coordination_scaling
         self.neutralize             = neutralize
         self.neutralize_target      = neutralize_target
-        self.robust_boundary = robust_boundary
+        self.robust_boundary        = robust_boundary
 
         self._qm_charge = 0.0
         self._qm_spin   = 0
@@ -268,7 +268,7 @@ class QMMMBuilder:
         dim = int(math.ceil(
             (1 / num_target_uc * upper_bound * (6 / math.pi)) ** (1/3) + 1
         ))
-        # ensure odd so center atom is at origin
+        # Ensure odd so center atom is at origin
         if dim % 2 == 0:
             dim += 1
 
@@ -395,10 +395,10 @@ class QMMMBuilder:
         cl  = cfg.characteristic_length
         tol = cfg.tol
 
-        # use characteristic_length for dimension estimate (safe for all lattices)
+        # Use characteristic_length for dimension estimate (safe for all lattices)
         dim = int(2 * ((rad + tol) // cl) + 3)
         if dim % 2 == 0:
-            dim += 1   # keep odd for symmetric centering
+            dim += 1   # Keep odd for symmetric centering
 
         lattice, central = self._make_supercell(
             unitcell, [dim]*3, center=center_type
@@ -518,7 +518,7 @@ class QMMMBuilder:
         p         = cfg.precision
         shell_rad = shell_layers * cl
 
-        # build a lattice large enough to contain the shell
+        # Build a lattice large enough to contain the shell
         central   = self._find_central_atom(cluster,
                                             atom_type=self.center_element)
         cluster_r = max(
@@ -533,7 +533,7 @@ class QMMMBuilder:
             cfg.unitcell, [dim]*3, center=self.center_element
         )
 
-        # realign lattice center onto the cluster center
+        # Realign lattice center onto the cluster center
         dx = [central[i+1] - lat_center[i+1] for i in range(3)]
         lattice = [
             [at[0]] + [round(at[i+1] + dx[i], p) for i in range(3)]
@@ -585,7 +585,7 @@ class QMMMBuilder:
             cfg.unitcell, [dim]*3, center=self.center_element
         )
 
-        # align the supercell center onto the exact central_atom position
+        # Align the supercell center onto the exact central_atom position
         dx = [central_atom[i+1] - lat_center[i+1] for i in range(3)]
         lattice = [
             [at[0]] + [round(at[i+1] + dx[i], p) for i in range(3)]

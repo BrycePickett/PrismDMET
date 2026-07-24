@@ -34,12 +34,12 @@ class MaterialConfig:
             if self.lattice_vectors.shape != (3, 3):
                 raise ValueError("lattice_vectors must be a (3, 3) array.")
             if self.lattice_constant is None:
-                # derive a representative scalar from the matrix norm
+                # Derive a representative scalar from the matrix norm
                 self.lattice_constant = float(
                     np.min(np.linalg.norm(self.lattice_vectors, axis=1))
                 )
         else:
-            # cubic shortcut — build diagonal matrix from lattice_constant
+            # Cubic shortcut — build diagonal matrix from lattice_constant
             a = self.lattice_constant
             self.lattice_vectors = np.diag([a, a, a]).astype(float)
 
