@@ -16,10 +16,7 @@ from .cluster import (
 )
 
 
-# Internal list format:
-#   [label: str, x, y, z]              length 4
-#   [label, x, y, z, charge]           length 5
-#   [label, x, y, z, charge, region]   length 6
+# Internal list format: [label, x, y, z] (len 4), + charge (len 5), + region (len 6).
 
 
 class QMMMBuilder:
@@ -53,7 +50,9 @@ class QMMMBuilder:
         coordination_scaling:   bool            = True,
         neutralize:             bool            = True,
         neutralize_target:      str             = 'qm_charge',
+        robust_boundary:        bool            = False,
     ):
+        # robust_boundary opts into a0-invariant _get_sphere_absolute/_get_coordinations boundary tests (known_issues.md Bug 1); default keeps legacy behavior for checkpoint reproducibility.
         _valid_methods    = ('SKZCAM',)
         _valid_defects    = ('pristine', 'vacancy', 'substitutional',
                              'interstitial')
@@ -151,6 +150,7 @@ class QMMMBuilder:
         self.coordination_scaling   = coordination_scaling
         self.neutralize             = neutralize
         self.neutralize_target      = neutralize_target
+        self.robust_boundary = robust_boundary
 
         self._qm_charge = 0.0
         self._qm_spin   = 0
@@ -188,9 +188,7 @@ class QMMMBuilder:
         )
 
         # --- 3. QM formal charge (canonical; sets mol.charge) --------------
-        # The quantum region's charge is fixed by its nuclei, so it always
-        # uses canonical charges, independent of any alt_charges applied to
-        # the classical embedding field below.
+        # The quantum region's charge is fixed by its nuclei, so it always uses canonical charges, independent of alt_charges below.
         qm_charged = self._assign_charges(qm_raw, cfg.canonical_charges,
                                           coordination_scaling=False)
         self._qm_charge = round(sum(a[4] for a in qm_charged), 6)
@@ -205,8 +203,7 @@ class QMMMBuilder:
 
         # --- 5. Full environment for neutralization ------------------------
         if self.total_layers is not None:
-            # Origin-based: one fixed sphere from the central atom.
-            # Matches: cluster = central + get_sphere(central, total_layers)
+            # Origin-based: one fixed sphere from the central atom (cluster = central + get_sphere(central, total_layers)).
             total_rad = self.total_layers * cfg.characteristic_length
             full_raw  = self._get_sphere_absolute(qm_center, total_rad)
         else:
@@ -253,8 +250,7 @@ class QMMMBuilder:
                 self.interstitial_position,
             )
 
-        # Charged defect: shift the QM charge (MM stays at the neutral bulk
-        # value, so the full system carries net charge = defect_charge).
+        # Charged defect: shift the QM charge; MM stays neutral, so the full system carries net charge = defect_charge.
         self._qm_charge += self.defect_charge
         if self.defect_spin is not None:
             self._qm_spin = self.defect_spin
@@ -305,6 +301,19 @@ class QMMMBuilder:
     def _dist2(c1, c2) -> float:
         return sum((x - y) ** 2 for x, y in zip(c1, c2))
 
+    def _frac_coords(self, cart) -> np.ndarray:
+        """Fractional (lattice-vector) coordinates: a0-invariant for a fixed relative structure."""
+        return np.asarray(cart, dtype=float) @ np.linalg.inv(self.config.lattice_vectors)
+
+    def _tie_key(self, at) -> tuple:
+        """a0-invariant sort key (element, rounded fractional coords) for deterministic tie-breaking."""
+        return (at[0], tuple(round(float(c), 6) for c in self._frac_coords(at[1:4])))
+
+    def _dist_sort_key(self, at, central) -> tuple:
+        """Distance-from-center order (fractional, a0-invariant) with a _tie_key tie-break."""
+        d_frac = round(float(np.linalg.norm(self._frac_coords(at[1:4]) - self._frac_coords(central[1:4]))), 6)
+        return (d_frac,) + self._tie_key(at)
+
     def _make_supercell(
         self,
         unitcell: list,
@@ -345,7 +354,7 @@ class QMMMBuilder:
         if center:
             ct      = center if isinstance(center, str) else None
             central = self._find_central_atom(result, atom_type=ct)
-            result.sort(key=lambda at: self._dist2(at[1:], central[1:]))
+            result.sort(key=lambda at: self._dist_sort_key(at, central))
             self._lattice_cache[cache_key] = (result, central)
             return result, central
 
@@ -410,14 +419,27 @@ class QMMMBuilder:
 
     def _get_coordinations(self, cluster: list) -> List[float]:
         """Port of get_coordinations() — fractional coordination per atom."""
-        cfg    = self.config
-        cutoff = cfg.bond_cutoff + cfg.tol
+        cfg     = self.config
         coords  = [at[1:4] for at in cluster]
         species = [at[0]   for at in cluster]
-        tree    = cKDTree(coords)
-        fracs   = []
-        for i, (sp, c) in enumerate(zip(species, coords)):
-            nbrs = [j for j in tree.query_ball_point(c, cutoff) if j != i]
+
+        if not self.robust_boundary:
+            cutoff = cfg.bond_cutoff + cfg.tol
+            tree   = cKDTree(coords)
+            fracs  = []
+            for i, (sp, c) in enumerate(zip(species, coords)):
+                nbrs = [j for j in tree.query_ball_point(c, cutoff) if j != i]
+                bulk = cfg.bulk_coordinations.get(sp, len(nbrs) or 1)
+                fracs.append(len(nbrs) / bulk)
+            return fracs
+
+        # a0-invariant neighbor cutoff: query in fractional units so a bond at exactly bond_cutoff is counted the same way at any lattice constant.
+        frac_coords  = [self._frac_coords(c) for c in coords]
+        frac_cutoff  = round(cfg.bond_cutoff / cfg.characteristic_length, 6) + 1e-6
+        tree         = cKDTree(frac_coords)
+        fracs        = []
+        for i, sp in enumerate(species):
+            nbrs = [j for j in tree.query_ball_point(frac_coords[i], frac_cutoff) if j != i]
             bulk = cfg.bulk_coordinations.get(sp, len(nbrs) or 1)
             fracs.append(len(nbrs) / bulk)
         return fracs
@@ -544,6 +566,8 @@ class QMMMBuilder:
                 if ct not in shell_coords:
                     shell_coords.add(ct)
                     shell_atoms.append([lab_f[idx]] + list(ct))
+        # Sort by an a0-invariant key: cKDTree.query_ball_point makes no ordering promise for exact ties (known_issues.md Bug 2).
+        shell_atoms.sort(key=self._tie_key)
         return shell_atoms
 
     def _get_sphere_absolute(self, central_atom: list, rad: float) -> list:
@@ -569,10 +593,21 @@ class QMMMBuilder:
         ]
 
         cx, cy, cz = central_atom[1], central_atom[2], central_atom[3]
-        return [
-            at for at in lattice
-            if self._dist2([cx, cy, cz], at[1:4]) < (rad + tol) ** 2
-        ]
+        if not self.robust_boundary:
+            return [
+                at for at in lattice
+                if self._dist2([cx, cy, cz], at[1:4]) < (rad + tol) ** 2
+            ]
+
+        # a0-invariant membership: fractional displacement from center, so an exact tie resolves the same way at any lattice constant.
+        center_frac = self._frac_coords([cx, cy, cz])
+        rad_frac    = round(rad / cl, 6)
+        result = []
+        for at in lattice:
+            d_frac = round(float(np.linalg.norm(self._frac_coords(at[1:4]) - center_frac)), 6)
+            if d_frac < rad_frac + 1e-6:
+                result.append(at)
+        return result
 
     def _get_layers(self, cluster: list, n_layers: int) -> Dict[int, list]:
         """Return {layer_index: [atoms]} from bond-layer traversal outward from cluster (layer 0)."""
@@ -613,6 +648,8 @@ class QMMMBuilder:
                     if ct not in seen:
                         seen.add(ct)
                         result[i].append(lattice[idx])
+            # Same a0-invariant tie-breaking as _get_shell (known_issues.md Bug 2); query_ball_point ties are unordered.
+            result[i].sort(key=self._tie_key)
 
         return result
 
@@ -620,8 +657,7 @@ class QMMMBuilder:
         """Dispatch ECP shell generation based on self.ecp_shape."""
         cfg = self.config
         if self.ecp_shape == 'shell':
-            # Thickness measured from the QM surface, so the ECP stays a
-            # constant physical width regardless of QM region size.
+            # Thickness measured from the QM surface, so the ECP stays a constant physical width regardless of QM region size.
             return self._get_shell(qm_raw, shell_layers=self.ecp_layers)
 
         if self.ecp_shape == 'bonds':
@@ -688,7 +724,7 @@ class QMMMBuilder:
                 result.append(at + [2])
 
         center = self._find_central_atom(qm_charged)
-        result.sort(key=lambda a: (a[5], self._dist2(a[1:4], center[1:4])))
+        result.sort(key=lambda a: (a[5],) + self._dist_sort_key(a, center))
         return result, round(qm_charge, 6)
 
     def _select_defect_index(
