@@ -17,7 +17,7 @@ build/
 *.log
 *.bak
 *~
-.block2_scratch/
+.block2_scratch*/
 *.chk
 *.h5
 
