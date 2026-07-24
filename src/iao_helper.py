@@ -123,9 +123,7 @@ def construct_iao(mol, mf):
 
     Norbs = mol.nao_nr()
 
-    # Knizia, JCTC 9, 4834-4843, 2013 -- appendix C
-    # For UKS/UHF (mo_coeff shape (2, nao, nmo)), build the spin-averaged
-    # density matrix and extract its effectively-occupied natural orbitals.
+    # Knizia, JCTC 9, 4834-4843, 2013 -- appendix C. For UKS/UHF, build the spin-averaged density matrix.
     if np.ndim(mf.mo_coeff) == 3:
         mo_a, mo_b   = mf.mo_coeff[0], mf.mo_coeff[1]
         occ_a, occ_b = mf.mo_occ[0],   mf.mo_occ[1]

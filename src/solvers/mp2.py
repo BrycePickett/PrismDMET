@@ -47,8 +47,7 @@ def solve( const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf, chempot_imp=0.0
         mf._eri = ao2mo.restore(8, tei, norb)
         mf.scf( dm_guess_rhf )
 
-        # Get the MP2 solution. PySCF's response densities include the HF
-        # reference, so E = Tr[h dm1] + 0.5*dm2.eri reproduces E(MP2) exactly.
+        # PySCF's response densities include the HF reference, so E = Tr[h dm1] + 0.5*dm2.eri reproduces E(MP2) exactly.
         myMP2 = mp.MP2( mf )
         E_MP2, T_MP2 = myMP2.kernel()
         OneRDM_mo = myMP2.make_rdm1()

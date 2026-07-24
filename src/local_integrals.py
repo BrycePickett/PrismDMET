@@ -1,6 +1,6 @@
 """Localized molecular orbital integrals for DMET embedding."""
 
-from pyscf import gto, scf, ao2mo, lo
+from pyscf import ao2mo, lo
 from pyscf.lo import nao, orth
 from pyscf.tools import molden
 from . import rhf
@@ -42,8 +42,7 @@ class LocalIntegrals:
             self.fullDMao       = _dm[0] + _dm[1]
             self.fullDMao_alpha = _dm[0]
             self.fullDMao_beta  = _dm[1]
-            # F = S C eps C.T S: invariant to degenerate-subspace eigenvector
-            # rotation; avoids BLAS non-determinism in get_veff ERI contraction.
+            # F = S C eps C.T S is invariant to degenerate-subspace rotation, avoiding BLAS non-determinism.
             SC_a = _S @ the_mf.mo_coeff[0]
             SC_b = _S @ the_mf.mo_coeff[1]
             self.fullFOCKao_alpha = SC_a @ np.diag(the_mf.mo_energy[0]) @ SC_a.T
@@ -93,9 +92,7 @@ class LocalIntegrals:
                     )
                 self.ao2loc = the_mf.mo_coeff[:, self.active == 1]
             if self.Norbs == self.mol.nao_nr():
-                # Be (Z=4) needs an explicit valence-shell entry for meta_lowdin to span
-                # the minimal basis; only touch the global table when Be is present, and
-                # restore it after so other molecules in the same process are unaffected.
+                # Be (Z=4) needs an explicit valence-shell entry for meta_lowdin; only patched when present, restored after.
                 has_be = 4 in self.mol.atom_charges()
                 if has_be:
                     _aoshell_be_saved = nao.AOSHELL[4]
@@ -123,8 +120,7 @@ class LocalIntegrals:
             self.TI_OK  = False
         if self._which == 'iao':
             assert self.Norbs == self.mol.nao_nr(), "iao requires full active space"
-            # ao2loc is non-deterministic when BLAS swaps near-degenerate HOMO/LUMO;
-            # pin num_threads before mf.kernel() to suppress (not guaranteed for very tight gaps).
+            # ao2loc can be non-deterministic near-degenerate HOMO/LUMO; pin num_threads before mf.kernel() to suppress.
             self.ao2loc = iao_helper.localize_iao(self.mol, the_mf)
             if ao_rotation is not None:
                 self.ao2loc = np.dot(self.ao2loc, ao_rotation.T)

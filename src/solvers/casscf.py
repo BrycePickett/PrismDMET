@@ -84,10 +84,7 @@ def solve(const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
             mf.scf(dm_loc)
             dm_loc = np.dot(np.dot(mf.mo_coeff, np.diag(mf.mo_occ)), mf.mo_coeff.T)
         if embed_level_shift != 0.0:
-            # Confirm the shifted fixed point is also a stationary point of the real
-            # (unshifted) Hamiltonian: reconverge with the shift removed and use that as
-            # the actual reference; if it moves, the shift masked rather than fixed the
-            # instability.
+            # Verify the shifted fixed point is also stationary for the real Hamiltonian: reconverge with the shift removed and use that as the reference.
             e_shifted = mf.e_tot
             mf.level_shift = 0.0
             mf.scf(dm_loc)
@@ -113,8 +110,7 @@ def solve(const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
         eigvals.sort()
         print("casscf::solve : RHF homo-lumo gap =", eigvals[numPairs] - eigvals[numPairs - 1])
 
-        # Skip selection when a warm-restart MO guess is supplied: mc.kernel(mo_guess)
-        # would overwrite the reordered mo_coeff anyway.
+        # Skip selection when a warm-restart MO guess is supplied: mc.kernel(mo_guess) would overwrite the reordered mo_coeff anyway.
         selected_orbs = None
         mo_natorb = None
         if cas_select != 'energy' and mo_guess is None:
@@ -135,10 +131,7 @@ def solve(const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
         for key, val in casscf_kwargs.items():
             setattr(mc, key, val)
 
-        # For ROHF+oei_s, swap the base FCI solver before state_average_ so the
-        # SA wrapper inherits direct_uhf.FCI instead of direct_spin1.FCI.
-        # direct_spin1.FCI cannot accept the [h1e_a, h1e_b] list that
-        # fix_casscf_for_nonsinglet_env injects; direct_uhf.FCI handles it.
+        # For ROHF+oei_s, swap the base FCI solver before state_average_ so the SA wrapper inherits direct_uhf.FCI (direct_spin1.FCI can't accept [h1e_a, h1e_b]).
         if _use_rohf and oei_s is not None and not np.all(np.abs(oei_s) < 1e-8):
             _uhf_fci = pyscf_fci.direct_uhf.FCI()
             _uhf_fci.verbose = mc.fcisolver.verbose

@@ -714,11 +714,7 @@ class DMET:
             else:
                 assert (np.array_equal(self.ints.active, np.ones([self.ints.mol.nao_nr()], dtype=int)))
 
-                # Global-Fock mean-field energy E = 0.5 Tr[gamma (h + F)] of the
-                # orbitals no fragment covers (as in libDMET/Vayesta/mrh).
-                # activeOEI and activeFOCK already carry the QM/MM potential and
-                # DFT veff, so no environment SCF is needed; running one on the
-                # bare molecule would drop the MM field and use HF exchange.
+                # Global-Fock mean-field energy (as in libDMET/Vayesta/mrh) for orbitals no fragment covers; activeOEI/activeFOCK already carry the QM/MM and DFT veff, so no separate environment SCF is needed.
                 impOrbs = remainingOrbs == 1
                 h_plus_F = self.ints.activeOEI + self.ints.activeFOCK
 
@@ -1056,9 +1052,7 @@ class DMET:
         umatflat = umatsquare_bis[ self.mask ]
         return umatflat
         
-    # Maximum physically reasonable chemical potential (Eh). Newton steps beyond
-    # this indicate the optimizer has lost contact with the electron-count response
-    # surface — common for DFT-in-DFT where impurity orbitals are fully occupied.
+    # Maximum physically reasonable chemical potential (Eh); beyond this the mu optimizer has diverged.
     _MU_MAX = 10.0
 
     def numeleccostfunction( self, chempot_imp ):

@@ -18,7 +18,6 @@
 '''
 
 import numpy as np
-import scipy.sparse.linalg
 from pyscf import gto, scf, ao2mo
 
 def solve_ERI( oei, tei, dm_guess, numPairs ):

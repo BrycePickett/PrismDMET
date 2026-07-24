@@ -17,9 +17,7 @@ def select_cas_orbitals(mc, cas_select, ncas, nimp, norb,
         weights = np.sum(np.abs(C[:nimp, :]) ** 2, axis=0)
         frontier = range(mc.ncore, norb)
     elif cas_select == 'ao_character':
-        # Raise rather than fall back: a silent switch to 'impurity' would hide a
-        # misspelled ao_labels behind a wrong active space. _ao_character_weights
-        # raises ValueError/KeyError with the available labels listed.
+        # Raise rather than fall back to 'impurity': a silent switch would hide a misspelled ao_labels behind a wrong active space.
         if ao_labels is None or ao2eo is None or ao_mol_dumps is None:
             raise ValueError(
                 "cas_select='ao_character' requires ao_labels, ao2eo, and ao_mol_dumps. "
@@ -229,8 +227,7 @@ def natorb_active_space(mf, n_superset, occ_thresh=0.02, deg_tol=1e-3, max_super
     na = int(np.sum(np.rint(win) >= 1))   # alpha occupied in window
     nb = int(np.sum(np.rint(win) >= 2))   # beta (doubly) occupied in window
 
-    # Optionally restrict the superset CASCI to a chosen spin (2S = na - nb):
-    # re-split the electrons and constrain S^2 via fix_spin_ (pyscf-style).
+    # Optionally restrict the superset CASCI to a chosen spin (2S = na - nb) via fix_spin_ (pyscf-style).
     if cas_spin is not None:
         ne_win = na + nb
         if cas_spin < 0 or cas_spin > ne_win or (ne_win - cas_spin) % 2 != 0:
@@ -533,8 +530,7 @@ def avas_active_space(mf, ao2eo, ao_mol_dumps, ao_labels, threshold=0.2,
     s2, s21 = s[idx][:, idx], s[idx] @ M
     sa = s21.T @ scipy.linalg.solve(s2, s21, assume_a='pos')
 
-    # Residual reproducibility risk: AVAS partitions occ/vir by occupation; a manifold
-    # straddling the Fermi level can move an orbital between blocks if occupation flips.
+    # Residual reproducibility risk: AVAS partitions occ/vir by occupation; a Fermi-level manifold can move blocks if occupation flips.
     if 0 < nocc < len(mo_e) and abs(mo_e[nocc] - mo_e[nocc - 1]) < deg_tol:
         print(f"WARNING: avas: near-degenerate manifold straddles the occ/vir boundary "
               f"(E[{nocc-1}]={mo_e[nocc-1]:.6f}, E[{nocc}]={mo_e[nocc]:.6f}, "
@@ -769,9 +765,7 @@ def multiseed_rohf(mf, deg_tol=1e-3, angles=(0, 30, 60, 90), tag=''):
     mo_e    = mf.mo_energy
     norb    = len(mo_e)
 
-    # Manifolds of orbitals within deg_tol of each other (same convention as
-    # close_degenerate_manifolds), restricted to the manifold(s) containing a SOMO -- that is
-    # where ROHF's occupation assignment is basin-ambiguous.
+    # Manifolds of orbitals within deg_tol (same convention as close_degenerate_manifolds), restricted to those containing a SOMO.
     order = np.argsort(mo_e, kind='stable')
     manifolds = []
     current = [int(order[0])]

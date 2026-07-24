@@ -83,8 +83,7 @@ def solve(const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
         mf._eri      = ao2mo.restore(8, tei, norb)
         # Make the embedded ROHF as visible as the CASSCF below (mc.verbose). Kept.
         mf.verbose   = 4 if printoutput else 0
-        # Level shift opens the near-degenerate trap gap so the embedded SCF lands in one
-        # basin deterministically rather than tipping on 16-thread BLAS noise (default 0 = off).
+        # Level shift opens a near-degenerate trap gap so the embedded SCF lands in one basin deterministically (default 0 = off).
         mf.level_shift = embed_level_shift
         mf.scf(dm_guess_rhf)
         if not mf.converged:
@@ -92,11 +91,7 @@ def solve(const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
             mf.diis_space = 12
             mf.scf(mf.make_rdm1())
         if embed_level_shift != 0.0:
-            # A level-shifted fixed point isn't automatically a stationary point of the
-            # real (unshifted) Hamiltonian -- the shift can mask rather than resolve a
-            # near-degenerate instability. Reconverge with the shift removed, starting
-            # from the shifted density, and use that as the actual reference; if it moves,
-            # the shift wasn't actually picking a stable basin.
+            # Verify the shifted fixed point is also stationary for the real Hamiltonian: reconverge with the shift removed and use that as the reference.
             e_shifted = mf.e_tot
             mf.level_shift = 0.0
             mf.scf(mf.make_rdm1())

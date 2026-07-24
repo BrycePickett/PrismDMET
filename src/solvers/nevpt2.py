@@ -55,10 +55,7 @@ def solve(const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
             mf.diis_space = 12
             mf.scf(mf.make_rdm1())
         if embed_level_shift != 0.0:
-            # Confirm the shifted fixed point is also a stationary point of the real
-            # (unshifted) Hamiltonian: reconverge with the shift removed and use that as
-            # the actual reference; if it moves, the shift masked rather than fixed the
-            # instability.
+            # Verify the shifted fixed point is also stationary for the real Hamiltonian: reconverge with the shift removed and use that as the reference.
             e_shifted = mf.e_tot
             mf.level_shift = 0.0
             mf.scf(mf.make_rdm1())
@@ -126,17 +123,13 @@ def solve(const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
             nevpt_obj.verbose = 5 if printoutput else 0
             for key, val in nevpt2_kwargs.items():
                 setattr(nevpt_obj, key, val)
-            # mrpt.NEVPT.kernel() calls self.canonicalize(..., cas_natorb=True), which
-            # invokes mc.cas_natorb() → orth.orth_ao(mc.mol, 'meta_lowdin') → fails on
-            # the dummy mol (no real AO basis). Override to skip the natorb step; Fock
-            # diagonalization still canonicalizes inactive/external orbitals correctly.
+            # mrpt.NEVPT.kernel()'s canonicalize(cas_natorb=True) fails on the dummy mol (no real AO basis); override to skip the natorb step.
             _mc_ref = mc
             nevpt_obj.canonicalize = lambda mo, ci, eris=None, sort=False, cas_natorb=True, casdm1=None, verbose=None: \
                 _mc_ref.canonicalize(mo, ci, eris, sort, False, casdm1, verbose)
             e_c = nevpt_obj.kernel()
 
-            # nevpt_obj.e_tot is stale (copied from mc.__dict__ at construction; kernel()
-            # only sets e_corr), so combine explicitly rather than reading nevpt_obj.e_tot.
+            # nevpt_obj.e_tot is stale (kernel() only sets e_corr), so combine explicitly instead.
             e_tot  = np.array([mc.e_tot + e_c])
             e_corr = np.array([e_c])
             nevpt_objs = [nevpt_obj]
@@ -161,8 +154,7 @@ def solve(const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
                     deg_tol=deg_tol, casci_conv_tol=casci_conv_tol)
 
             mc_sa = mcscf.CASSCF(mf, ncas, nelecas)
-            # Swap base FCI solver BEFORE state_average_ so the SA wrapper inherits it.
-            # direct_spin1.FCI cannot accept [h1e_a, h1e_b]; direct_uhf.FCI handles it.
+            # Swap base FCI solver before state_average_ so the SA wrapper inherits direct_uhf.FCI (direct_spin1.FCI can't accept [h1e_a, h1e_b]).
             if _use_rohf and oei_s is not None and not np.all(np.abs(oei_s) < 1e-8):
                 _uhf_fci = pyscf_fci.direct_uhf.FCI()
                 _uhf_fci.verbose = mc_sa.fcisolver.verbose
@@ -234,8 +226,7 @@ def solve(const, oei, fock, tei, norb, nel, nimp, dm_guess_rhf,
                 nevpt_i.canonicalize = lambda mo, ci, eris=None, sort=False, cas_natorb=True, casdm1=None, verbose=None: \
                     _mc_ref.canonicalize(mo, ci, eris, sort, False, casdm1, verbose)
                 e_c_i = nevpt_i.kernel()
-                # mc.e_tot is the full multi-root CASCI array; nevpt_i.e_tot would
-                # broadcast (e_corr + array). Take the scalar total for root i.
+                # mc.e_tot is the full multi-root CASCI array; take the scalar total for root i explicitly.
                 e_tot[i]  = mc.e_tot[i] + e_c_i
                 e_corr[i] = e_c_i
                 nevpt_objs.append(nevpt_i)
@@ -290,8 +281,7 @@ def execute(task):
         casci_conv_tol=task.get('casci_conv_tol', 1e-10),
     )
 
-    # 1-RDM (cluster orbital basis) for the dmet driver: prefer the NEVPT2
-    # relaxed density if available, else the CASSCF/CASCI density.
+    # 1-RDM (cluster orbital basis) for the dmet driver: prefer the NEVPT2 relaxed density, else CASSCF/CASCI.
     nevpt_gs = nevpt_objs[0]
     if hasattr(nevpt_gs, 'onerdm') and nevpt_gs.onerdm is not None:
         rdm1 = nevpt_gs.onerdm

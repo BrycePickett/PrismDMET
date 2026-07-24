@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import numpy as np
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import List, Tuple, Optional
 from pathlib import Path
 
@@ -156,12 +156,8 @@ class QMMMCluster:
             lbl = a.pyscf_label           # e.g. 'Cu0'
             if lbl not in basis:
                 basis[lbl] = qm_basis
-        # ECP boundary atoms — NOT included in mol.basis.
-        # PySCF accepts mol.atom entries with a mol.ecp but no mol.basis;
-        # it silently assigns no basis functions to those atoms (correct for
-        # nelec=0 repulsion-only ECPs).  Adding {} here causes mol.build()
-        # to throw an exception.
-        # Ghost atoms — must load basis explicitly; PySCF may not infer it
+        # ECP boundary atoms — omitted from mol.basis; PySCF assigns them no basis functions (adding {} would raise).
+        # Ghost atoms — must load basis explicitly; PySCF may not infer it.
 
         for a in self.ghost_atoms:
             lbl = a.pyscf_label           # e.g. 'ghost-Cu'
