@@ -52,7 +52,7 @@ class QMMMBuilder:
         neutralize_target:      str             = 'qm_charge',
         robust_boundary:        bool            = False,
     ):
-        # robust_boundary opts into a0-invariant _get_sphere_absolute/_get_coordinations boundary tests (known_issues.md Bug 1); default keeps legacy behavior for checkpoint reproducibility.
+        # robust_boundary opts into a0-invariant _get_sphere_absolute/_get_coordinations boundary tests; default keeps legacy behavior for checkpoint reproducibility.
         _valid_methods    = ('SKZCAM',)
         _valid_defects    = ('pristine', 'vacancy', 'substitutional',
                              'interstitial')
@@ -566,7 +566,7 @@ class QMMMBuilder:
                 if ct not in shell_coords:
                     shell_coords.add(ct)
                     shell_atoms.append([lab_f[idx]] + list(ct))
-        # Sort by an a0-invariant key: cKDTree.query_ball_point makes no ordering promise for exact ties (known_issues.md Bug 2).
+        # Sort by an a0-invariant key: cKDTree.query_ball_point makes no ordering promise for exact ties.
         shell_atoms.sort(key=self._tie_key)
         return shell_atoms
 
@@ -648,7 +648,7 @@ class QMMMBuilder:
                     if ct not in seen:
                         seen.add(ct)
                         result[i].append(lattice[idx])
-            # Same a0-invariant tie-breaking as _get_shell (known_issues.md Bug 2); query_ball_point ties are unordered.
+            # Same a0-invariant tie-breaking as _get_shell; query_ball_point ties are unordered.
             result[i].sort(key=self._tie_key)
 
         return result

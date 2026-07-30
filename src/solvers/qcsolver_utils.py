@@ -109,7 +109,7 @@ def plan_cas_active_space(mf, cas_select, ncas, nelecas, nimp, norb,
                           natorb_max_superset=None, sa_nstates=1, avas_threshold=0.2,
                           spade_gap_tol=0.3, spade_n_fallback=16, cas_spin=None,
                           cas_spin_shift=0.2, deg_tol=1e-3, casci_conv_tol=1e-10):
-    '''Decide the CAS active space; returns (selected, ncas, nelecas, mo_coeff). See cas_determinism_fix_plan.md.'''
+    '''Decide the CAS active space; returns (selected, ncas, nelecas, mo_coeff).'''
     if cas_select == 'natorb':
         mo_coeff, ncas, nelecas = natorb_active_space(
             mf, ncas, occ_thresh=natorb_occ_thresh, max_superset=natorb_max_superset,
@@ -167,7 +167,7 @@ def plan_cas_active_space(mf, cas_select, ncas, nelecas, nimp, norb,
 
 
 def canonicalize_degenerate_active_nos(cas_no, act_idx, no_occ, F_emb, deg_tol=1e-3):
-    '''Pin degenerate active-NO orientation; modifies cas_no in place. See cas_determinism_fix_plan.md (Part A).'''
+    '''Pin degenerate active-NO orientation; modifies cas_no in place.'''
     act_cols = cas_no[:, act_idx].copy()
     occ_vals = no_occ[act_idx]
     i = 0
@@ -197,7 +197,7 @@ def fix_cas_spin(fcisolver, cas_spin, shift=0.2):
 
 def natorb_active_space(mf, n_superset, occ_thresh=0.02, deg_tol=1e-3, max_superset=None,
                         sa_nstates=1, cas_spin=None, cas_spin_shift=0.2, conv_tol=1e-10):
-    '''Active space from CASCI natural-orbital occupations. See natorb_cas_select.md.'''
+    '''Active space from CASCI natural-orbital occupations.'''
     from pyscf import mcscf
     from math import comb
     C = np.asarray(mf.mo_coeff)
@@ -269,7 +269,7 @@ def natorb_active_space(mf, n_superset, occ_thresh=0.02, deg_tol=1e-3, max_super
             f"natorb_active_space: no fractionally occupied NOs in the CAS({na+nb},{ncas_s}) "
             f"superset (occupations {np.round(no_occ, 3).tolist()}). Increase n_superset.")
 
-    # Part A determinism fix: pin degenerate active-NO orientation (cas_determinism_fix_plan.md).
+    # Pin degenerate active-NO orientation for run-to-run determinism.
     F_emb = (mf.mo_coeff * mf.mo_energy) @ mf.mo_coeff.T
     act_idx = np.where(is_act)[0]
     if len(act_idx) > 1:
@@ -302,7 +302,7 @@ def natorb_active_space(mf, n_superset, occ_thresh=0.02, deg_tol=1e-3, max_super
 
 def spade_active_space(mf, nimp, gap_tol=0.3, n_fallback=16, occ_thresh=0.02,
                        deg_tol=1e-3, sa_nstates=1, max_superset=None):
-    '''SPADE active space from impurity-projection weight gaps. See spade_active_space_plan.md.'''
+    '''SPADE active space from impurity-projection weight gaps.'''
     from pyscf import mcscf
     from math import comb
 
@@ -440,7 +440,7 @@ def spade_active_space(mf, nimp, gap_tol=0.3, n_fallback=16, occ_thresh=0.02,
 
 
 def multiseed_casscf(mc, mo_seed, deg_tol=1e-3, angles=(0, 30, 60, 90)):
-    '''Run CASSCF from deterministic rotated seeds; keep the lowest-energy solution. See cas_determinism_fix_plan.md (Part B).'''
+    '''Run CASSCF from deterministic rotated seeds; keep the lowest-energy solution.'''
     from pyscf import mcscf as _mcscf
 
     ncore = mc.ncore
@@ -499,7 +499,7 @@ def multiseed_casscf(mc, mo_seed, deg_tol=1e-3, angles=(0, 30, 60, 90)):
 
 def avas_active_space(mf, ao2eo, ao_mol_dumps, ao_labels, threshold=0.2,
                       openshell_option=None, canonicalize=True, deg_tol=1e-3):
-    '''AVAS active space in the DMET embedding basis. See avas_cas_select_plan.md.'''
+    '''AVAS active space in the DMET embedding basis.'''
     from pyscf import gto
     import scipy.linalg
 
@@ -754,8 +754,7 @@ def _stabilize_rohf(mf, max_iter=5, tag=''):
 
 
 def multiseed_rohf(mf, deg_tol=1e-3, angles=(0, 30, 60, 90), tag=''):
-    '''Reconverge ROHF from rotated seeds across the SOMO-containing degenerate manifold; keep the
-    lowest-energy basin. No-op for RHF. See cas_determinism_fix_plan.md (Part B, ROHF analog).'''
+    '''Reconverge ROHF from rotated seeds across the SOMO-containing degenerate manifold; keep the lowest-energy basin. No-op for RHF.'''
     from pyscf import scf as _scf
     if not isinstance(mf, _scf.rohf.ROHF):
         return mf
